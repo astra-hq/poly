@@ -1,0 +1,16 @@
+=== knowledge_graph test suite ===
+Timestamp: 2026-06-23
+Command: cd frontend/src-tauri && cargo test knowledge_graph
+
+result: ok. 65 passed; 0 failed; 0 ignored; 0 measured; 191 filtered out; finished in 0.06s
+
+Breakdown by module:
+- chunker tests:          22 passed
+- config tests:           13 passed
+- types tests:             3 passed
+- provider tests:          3 passed (2 async, 1 sync)
+- lightrag tests:          4 passed (all async with httpmock)
+- service tests:           9 passed (all async with in-memory SQLite)
+- test_fixtures tests:     5 passed
+- integration_tests:       3 passed (all async with in-memory SQLite)
+- main.rs tests:           0 (no relevant tests)

@@ -1,0 +1,74 @@
+Task: Create knowledge_graph/config.rs with KG profile types using serde derives
+Date: 2026-06-23
+
+## Files Created/Modified
+
+1. frontend/src-tauri/src/knowledge_graph/config.rs (NEW, 369 lines)
+   - KnowledgeGraphSettings: top-level settings container with profiles and active_profile
+   - KnowledgeGraphProfile: named profile with name, embedding config, lightrag_url, api_key
+   - EmbeddingConfig: provider/model/dimensions with default mlx + BAAI/bge-m3
+   - KnowledgeGraphSelection: enum (None | Profile(String)) with default None
+   - Helper functions: load(), resolve(), validate(), fingerprint()
+   - Comprehensive test suite with 17 tests covering all types and helpers
+
+2. frontend/src-tauri/src/knowledge_graph/mod.rs (NEW, 6 lines)
+   - Exports config module and all public types/functions
+
+3. frontend/src-tauri/src/lib.rs (MODIFIED)
+   - Added `pub mod knowledge_graph;` declaration
+
+## Code Verification
+
+- rustfmt: Passed (file formatted successfully, no syntax errors)
+- Manual review: All serde derives present, defaults correct, helpers implemented
+- Test coverage: 17 tests covering defaults, serialization, load, resolve, validate, fingerprint
+
+## Test Execution Results
+
+Command: cargo test knowledge_graph::config
+Status: PASSED (17/17 tests passed)
+Environment workaround: Standalone test project with manually vendored dependencies
+
+Test output:
+```
+running 17 tests
+test config::tests::default_selection_is_none ... ok
+test config::tests::fingerprint_changes_with_content ... ok
+test config::tests::default_settings_has_one_profile ... ok
+test config::tests::fingerprint_is_stable ... ok
+test config::tests::default_embedding_config ... ok
+test config::tests::load_json_with_defaults ... ok
+test config::tests::load_invalid_json_fails ... ok
+test config::tests::resolve_active_profile ... ok
+test config::tests::resolve_none_returns_none ... ok
+test config::tests::load_valid_json ... ok
+test config::tests::roundtrip_serialization ... ok
+test config::tests::validate_empty_profile_name_fails ... ok
+test config::tests::validate_empty_profiles_fails ... ok
+test config::tests::validate_empty_url_fails ... ok
+test config::tests::validate_missing_active_profile_fails ... ok
+test config::tests::validate_valid_settings_succeeds ... ok
+test config::tests::validate_zero_dimensions_fails ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+## Test Coverage Details
+
+- default_embedding_config: verifies mlx + BAAI/bge-m3 defaults
+- default_selection_is_none: verifies KnowledgeGraphSelection::None default
+- default_settings_has_one_profile: verifies single default profile
+- load_valid_json: tests JSON parsing with explicit values
+- load_json_with_defaults: tests JSON parsing with missing fields using defaults
+- load_invalid_json_fails: tests error handling for bad JSON
+- resolve_active_profile: tests profile resolution by name
+- resolve_none_returns_none: tests None selection returns None
+- validate_empty_profiles_fails: tests empty profiles rejection
+- validate_empty_profile_name_fails: tests empty name rejection
+- validate_empty_url_fails: tests empty URL rejection
+- validate_zero_dimensions_fails: tests zero dimensions rejection
+- validate_missing_active_profile_fails: tests active profile existence
+- validate_valid_settings_succeeds: tests valid settings acceptance
+- fingerprint_is_stable: tests fingerprint stability
+- fingerprint_changes_with_content: tests fingerprint sensitivity
+- roundtrip_serialization: tests serialize/deserialize roundtrip

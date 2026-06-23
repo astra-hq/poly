@@ -130,6 +130,7 @@ sysinfo = "0.32"
 lazy_static = { version = "1.4.0" }
 realfft = "3.4.0"
 regex = "1.11.0"
+sha2 = "0.10"
 ndarray = "0.16"
 bytes = { version = "1.9.0", features = ["serde"] }
 
@@ -206,6 +207,7 @@ memory-stats = "1.0"
 strsim = "0.10.0"
 futures = "0.3.31"
 tracing-subscriber = "0.3.16"
+httpmock = "0.7"
 
 [patch.crates-io]
 cpal = { git = "https://github.com/RustAudio/cpal", rev = "51c3b43" }

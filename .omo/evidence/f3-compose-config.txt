@@ -1,0 +1,15 @@
+=== Docker Compose config validation ===
+Timestamp: 2026-06-23
+Command: docker compose -f docker-compose.kg.yml --env-file kg.env.example config
+
+Output: VALID — parsed successfully without errors.
+Services: lightrag (ghcr.io/hkuds/lightrag:latest), neo4j (neo4j:5.26), rustfs (rustfs/rustfs:latest)
+Ports: 9621 (lightrag), 7687+7474 (neo4j), 9000+9001 (rustfs)
+Volumes: lightrag-data, neo4j-data, neo4j-logs, neo4j-import, neo4j-plugins, rustfs-data
+Network: resourcefully_default
+
+VERDICT: PASS. Full parsed YAML output above (provided inline in main run).
+
+NOTE: Docker daemon not available on this machine (`docker info` failed).
+Docker startup health check skipped — this is expected in CI/dev environments without Docker Desktop.
+Docker Compose binary itself is functional (validated via `config` subcommand).

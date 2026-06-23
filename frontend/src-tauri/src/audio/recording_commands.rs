@@ -2,6 +2,11 @@
 //
 // Slim Tauri command layer for recording functionality.
 // Delegates to transcription and recording modules for actual implementation.
+//
+// NOTE: Automatic live ingestion into the knowledge graph is future work,
+// not Week 1. No knowledge_graph hooks exist in the recording lifecycle.
+// Ingestion is only triggered by the explicit Tauri command
+// `api_ingest_meeting_to_knowledge_graph`.
 
 use anyhow::Result;
 use log::{error, info, warn};

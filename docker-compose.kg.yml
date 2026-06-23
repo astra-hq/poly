@@ -1,0 +1,47 @@
+services:
+  rustfs:
+    image: rustfs/rustfs:latest
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - rustfs-data:/data
+
+  neo4j:
+    image: neo4j:5.26
+    restart: unless-stopped
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH}
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+      - neo4j-import:/var/lib/neo4j/import
+      - neo4j-plugins:/plugins
+
+  lightrag:
+    image: ghcr.io/hkuds/lightrag:latest
+    restart: unless-stopped
+    depends_on:
+      - neo4j
+      - rustfs
+    ports:
+      - "9621:9621"
+    env_file:
+      - kg.env.example
+    environment:
+      LIGHTRAG_HOST: 0.0.0.0
+      LIGHTRAG_PORT: 9621
+    volumes:
+      - lightrag-data:/data
+
+volumes:
+  rustfs-data:
+  neo4j-data:
+  neo4j-logs:
+  neo4j-import:
+  neo4j-plugins:
+  lightrag-data:

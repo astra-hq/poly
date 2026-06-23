@@ -1,6 +1,6 @@
 <div align="center" style="border-bottom: none">
     <h1>
-        <img src="docs/Meetily-6.png" style="border-radius: 10px;" />
+        <img src="docs/images/Meetily-6.png" style="border-radius: 10px;" />
         <br>
         Privacy-First AI Meeting Assistant
     </h1>
@@ -35,7 +35,7 @@ A privacy-first AI meeting assistant that captures, transcribes, and summarizes 
 </p>
 
 <p align="center">
-    <img src="docs/meetily_demo.gif" width="650" alt="Meetily Demo" />
+    <img src="docs/images/meetily_demo.gif" width="650" alt="Meetily Demo" />
     <br>
     <a href="https://youtu.be/6FnhSC_eSz8">View full Demo Video</a>
 </p>
@@ -119,8 +119,8 @@ Whether you're a defense consultant, enterprise executive, legal professional, o
 
 Build from source following our detailed guides:
 
-- [Building on Linux](docs/building_in_linux.md)
-- [General Build Instructions](docs/BUILDING.md)
+- [Building on Linux](docs/guides/building_in_linux.md)
+- [General Build Instructions](docs/guides/BUILDING.md)
 
 **Quick start:**
 
@@ -138,7 +138,7 @@ pnpm install
 Transcribe meetings entirely on your device using **Whisper** or **Parakeet** models. No cloud required.
 
 <p align="center">
-    <img src="docs/home.png" width="650" style="border-radius: 10px;" alt="Meetily Demo" />
+    <img src="docs/images/home.png" width="650" style="border-radius: 10px;" alt="Meetily Demo" />
 </p>
 
 ### 📥 Import & Enhance `Beta`
@@ -148,7 +148,7 @@ Import existing audio files to generate transcripts, or enhance to re-transcribe
 > Contributed by [Jeremi Joslin](https://github.com/jeremi), improved by [Vishnu P S](https://github.com/p-s-vishnu) and [Mohammed Safvan](https://github.com/mohammedsafvan)
 
 <p align="center">
-    <img src="docs/meetily-export.gif" width="650" style="border-radius: 10px;" alt="Import and Enhance" />
+    <img src="docs/images/meetily-export.gif" width="650" style="border-radius: 10px;" alt="Import and Enhance" />
 </p>
 
 ### 🤖 AI-Powered Summaries
@@ -156,11 +156,11 @@ Import existing audio files to generate transcripts, or enhance to re-transcribe
 Generate meeting summaries with your choice of AI provider. **Ollama** (local) is recommended, with support for Claude, Groq, OpenRouter, and OpenAI.
 
 <p align="center">
-    <img src="docs/summary.png" width="650" style="border-radius: 10px;" alt="Summary generation" />
+    <img src="docs/images/summary.png" width="650" style="border-radius: 10px;" alt="Summary generation" />
 </p>
 
 <p align="center">
-    <img src="docs/editor1.png" width="650" style="border-radius: 10px;" alt="Editor Summary generation" />
+    <img src="docs/images/editor1.png" width="650" style="border-radius: 10px;" alt="Editor Summary generation" />
 </p>
 
 ### 🔒 Privacy-First Design
@@ -168,7 +168,7 @@ Generate meeting summaries with your choice of AI provider. **Ollama** (local) i
 All data stays on your machine. Transcription models, recordings, and transcripts are stored locally.
 
 <p align="center">
-    <img src="docs/settings.png" width="650" style="border-radius: 10px;" alt="Local Transcription and storage" />
+    <img src="docs/images/settings.png" width="650" style="border-radius: 10px;" alt="Local Transcription and storage" />
 </p>
 
 ### 🌐 Custom OpenAI Endpoint Support
@@ -176,7 +176,7 @@ All data stays on your machine. Transcription models, recordings, and transcript
 Use your own OpenAI-compatible endpoint for AI summaries. Perfect for organizations with custom AI infrastructure or preferred providers.
 
 <p align="center">
-    <img src="docs/custom.png" width="650" style="border-radius: 10px;" alt="Custom OpenAI Endpoint Configuration" />
+    <img src="docs/images/custom.png" width="650" style="border-radius: 10px;" alt="Custom OpenAI Endpoint Configuration" />
 </p>
 
 ### 🎙️ Professional Audio Mixing
@@ -184,7 +184,7 @@ Use your own OpenAI-compatible endpoint for AI summaries. Perfect for organizati
 Capture microphone and system audio simultaneously with intelligent ducking and clipping prevention.
 
 <p align="center">
-    <img src="docs/audio.png" width="650" style="border-radius: 10px;" alt="Device selection" />
+    <img src="docs/images/audio.png" width="650" style="border-radius: 10px;" alt="Device selection" />
 </p>
 
 ### ⚡ GPU Acceleration
@@ -200,16 +200,16 @@ Automatically enabled at build time - no configuration needed.
 
 Meetily is a single, self-contained application built with [Tauri](https://tauri.app/). It uses a Rust-based backend to handle all the core logic, and a Next.js frontend for the user interface.
 
-For more details, see the [Architecture documentation](docs/architecture.md).
+For more details, see the [Architecture documentation](docs/guides/architecture.md).
 
 ## For Developers
 
-If you want to contribute to Meetily or build it from source, you'll need to have Rust and Node.js installed. For detailed build instructions, please see the [Building from Source guide](docs/BUILDING.md).
+If you want to contribute to Meetily or build it from source, you'll need to have Rust and Node.js installed. For detailed build instructions, please see the [Building from Source guide](docs/guides/BUILDING.md).
 
 ## Meetily Pro
 
 <p align="center">
-    <img src="docs/pv2.1.png" width="650" style="border-radius: 10px;" alt="Upcoming version" />
+    <img src="docs/images/pv2.1.png" width="650" style="border-radius: 10px;" alt="Upcoming version" />
 </p>
 
 **Meetily PRO** is a professional-grade solution with enhanced accuracy and advanced features for serious users and teams. Built on a different codebase with superior transcription models and enterprise-ready capabilities.

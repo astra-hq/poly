@@ -1,0 +1,8 @@
+3:Source pin: `4e1f95269b32cd803cb96e0acc24d922aa6b6932`
+7:- `POST /documents/text` — insert document text
+8:- `POST /query` — query the knowledge graph
+9:- `GET /health` — server health/status
+10:- `GET /documents/pipeline_status` — document pipeline status
+11:- `GET /documents/track_status/{track_id}` — track a document job by ID
+13:Auth, when configured, uses the `X-API-Key` request header. The default deployment may be open if no key is set.
+21:Use `POST /query` for all query flows. Do not add executable Rust logic in this note.
