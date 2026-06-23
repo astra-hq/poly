@@ -1,1 +1,0 @@
-EXIT 0: No excluded paths in diff

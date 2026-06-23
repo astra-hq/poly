@@ -1,5 +1,0 @@
-Cargo.lock
-frontend/src-tauri/Cargo.toml
-frontend/src-tauri/src/audio/recording_commands.rs
-frontend/src-tauri/src/audio/transcription/worker.rs
-frontend/src-tauri/src/lib.rs
