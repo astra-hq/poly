@@ -1,6 +1,11 @@
 // audio/transcription/worker.rs
 //
 // Parallel transcription worker pool and chunk processing logic.
+//
+// NOTE: Automatic live ingestion into the knowledge graph is future work,
+// not Week 1. No knowledge_graph hooks exist in the transcription pipeline.
+// Ingestion is only triggered by the explicit Tauri command
+// `api_ingest_meeting_to_knowledge_graph`.
 
 use super::engine::TranscriptionEngine;
 use super::provider::TranscriptionError;

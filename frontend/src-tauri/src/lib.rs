@@ -47,6 +47,7 @@ pub mod onboarding;
 pub mod openai;
 pub mod anthropic;
 pub mod groq;
+pub mod knowledge_graph;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub mod state;
@@ -748,6 +749,8 @@ pub fn run() {
             audio::import::start_import_audio_command,
             audio::import::cancel_import_command,
             audio::import::is_import_in_progress_command,
+            // Knowledge graph ingestion
+            knowledge_graph::commands::api_ingest_meeting_to_knowledge_graph,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
