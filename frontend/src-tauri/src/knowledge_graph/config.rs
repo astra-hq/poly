@@ -14,7 +14,7 @@ pub enum ProfileKind {
 }
 
 /// Top-level knowledge graph settings container.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct KnowledgeGraphSettings {
     pub profiles: Vec<KnowledgeGraphProfile>,
     #[serde(default)]
@@ -49,17 +49,12 @@ pub struct EmbeddingConfig {
 }
 
 /// Which profile is currently selected (keyed by stable profile `id`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum KnowledgeGraphSelection {
+    #[default]
     None,
     Profile(String),
-}
-
-impl Default for KnowledgeGraphSelection {
-    fn default() -> Self {
-        KnowledgeGraphSelection::None
-    }
 }
 
 impl Default for EmbeddingConfig {
@@ -82,15 +77,6 @@ impl Default for KnowledgeGraphProfile {
             lightrag_url: "http://localhost:9621".to_string(),
             api_key: None,
             notes: None,
-        }
-    }
-}
-
-impl Default for KnowledgeGraphSettings {
-    fn default() -> Self {
-        KnowledgeGraphSettings {
-            profiles: vec![],
-            active_profile: KnowledgeGraphSelection::default(),
         }
     }
 }

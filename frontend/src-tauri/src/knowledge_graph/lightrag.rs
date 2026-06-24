@@ -130,9 +130,9 @@ struct HealthResponse {
 
 impl From<HealthResponse> for KnowledgeGraphHealth {
     fn from(value: HealthResponse) -> Self {
-        let healthy = value.healthy.unwrap_or_else(|| {
+        let healthy = value.healthy.unwrap_or(
             matches!(value.status.as_deref(), Some("ok" | "healthy" | "up"))
-        });
+        );
         Self { healthy, version: value.version }
     }
 }

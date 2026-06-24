@@ -495,7 +495,7 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
     let lightrag_api_key: String = kg_env_raw
         .lines()
         .find(|l| l.starts_with("LIGHTRAG_API_KEY="))
-        .and_then(|l| l.splitn(2, '=').nth(1))
+        .and_then(|l| l.split_once('=').map(|x| x.1))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "meetily-lrag-default".to_string());
@@ -602,7 +602,7 @@ EMBEDDING_DIM=1024\n",
     let api_key: Option<String> = env_content
         .lines()
         .find(|l| l.starts_with("LIGHTRAG_API_KEY="))
-        .and_then(|l| l.splitn(2, '=').nth(1))
+        .and_then(|l| l.split_once('=').map(|x| x.1))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
@@ -674,7 +674,7 @@ EMBEDDING_DIM=1024\n",
     let embedding_model: String = env_content
         .lines()
         .find(|l| l.starts_with("LIGHTRAG_EMBEDDING_MODEL_NAME="))
-        .and_then(|l| l.splitn(2, '=').nth(1))
+        .and_then(|l| l.split_once('=').map(|x| x.1))
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "BAAI/bge-m3".to_string());

@@ -41,21 +41,16 @@ pub struct KnowledgeGraphInsertTextResponse {
     pub accepted: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryMode {
     Local,
     Global,
+    #[default]
     Hybrid,
     Naive,
     Mix,
     Bypass,
-}
-
-impl Default for QueryMode {
-    fn default() -> Self {
-        Self::Hybrid
-    }
 }
 
 fn default_query_mode() -> QueryMode {

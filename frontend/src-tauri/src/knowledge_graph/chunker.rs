@@ -35,17 +35,19 @@ pub struct TranscriptChunker {
     pub chunk_interval_secs: f64,
 }
 
+impl Default for TranscriptChunker {
+    /// Creates a chunker with the default interval of 20 seconds.
+    fn default() -> Self {
+        Self::new(DEFAULT_CHUNK_INTERVAL_SECS)
+    }
+}
+
 impl TranscriptChunker {
     /// Creates a new chunker. The interval is clamped to [5.0, 120.0].
     pub fn new(chunk_interval_secs: f64) -> Self {
         Self {
             chunk_interval_secs: chunk_interval_secs.clamp(MIN_CHUNK_INTERVAL_SECS, MAX_CHUNK_INTERVAL_SECS),
         }
-    }
-
-    /// Creates a chunker with the default interval of 20 seconds.
-    pub fn default() -> Self {
-        Self::new(DEFAULT_CHUNK_INTERVAL_SECS)
     }
 
     /// Accepts transcript rows and returns time-based chunks.
