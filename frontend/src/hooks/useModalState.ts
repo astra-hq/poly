@@ -9,7 +9,8 @@ export type ModalType =
   | 'languageSettings'
   | 'modelSelector'
   | 'errorAlert'
-  | 'chunkDropWarning';
+  | 'chunkDropWarning'
+  | 'recordingSettings';
 
 interface ModalState {
   modelSettings: boolean;
@@ -18,6 +19,7 @@ interface ModalState {
   modelSelector: boolean;
   errorAlert: boolean;
   chunkDropWarning: boolean;
+  recordingSettings: boolean;
 }
 
 interface ModalMessages {
@@ -52,6 +54,7 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
     modelSelector: false,
     errorAlert: false,
     chunkDropWarning: false,
+    recordingSettings: false,
   });
 
   // Modal messages
@@ -90,6 +93,7 @@ export function useModalState(transcriptModelConfig?: TranscriptModelProps): Use
       modelSelector: false,
       errorAlert: false,
       chunkDropWarning: false,
+      recordingSettings: false,
     });
     setMessages({
       errorAlert: '',

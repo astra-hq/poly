@@ -104,7 +104,8 @@ const GROQ_FALLBACK_MODELS = [
 interface ModelSettingsModalProps {
   modelConfig: ModelConfig;
   setModelConfig: (config: ModelConfig | ((prev: ModelConfig) => ModelConfig)) => void;
-  onSave: (config: ModelConfig) => void;
+  onSave: (config: ModelConfig) => void | Promise<void>;
+  onSaveReady?: (save: () => Promise<void>) => void;
   skipInitialFetch?: boolean; // Optional: skip fetching config from backend if parent manages it
   layout?: 'inline' | 'dialog';
 }
@@ -113,6 +114,7 @@ export function ModelSettingsModal({
   modelConfig: propsModelConfig,
   setModelConfig: propsSetModelConfig,
   onSave,
+  onSaveReady,
   skipInitialFetch = false,
   layout = 'inline',
 }: ModelSettingsModalProps) {
@@ -665,8 +667,12 @@ export function ModelSettingsModal({
       updateProviderApiKey(updatedConfig.provider, updatedConfig.apiKey);
     }
 
-    onSave(updatedConfig);
+    await onSave(updatedConfig);
   };
+
+  useEffect(() => {
+    onSaveReady?.(handleSave);
+  }, [onSaveReady, handleSave]);
 
   // Test custom OpenAI connection
   const testCustomOpenAIConnection = async () => {

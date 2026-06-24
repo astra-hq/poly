@@ -3,12 +3,14 @@ import { PreferenceSettings } from "@/components/PreferenceSettings";
 import { DeviceSelection } from "@/components/DeviceSelection";
 import { LanguageSelection } from "@/components/LanguageSelection";
 import { TranscriptSettings } from "@/components/TranscriptSettings";
+import { PreRecordingSettingsModal } from "@/components/PreRecordingSettingsModal";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { useConfig } from "@/contexts/ConfigContext";
 import { useRecordingState } from "@/contexts/RecordingStateContext";
+import type { MutableRefObject } from "react";
 
-type modalType = "modelSettings" | "deviceSettings" | "languageSettings" | "modelSelector" | "errorAlert" | "chunkDropWarning";
+type modalType = "modelSettings" | "deviceSettings" | "languageSettings" | "modelSelector" | "errorAlert" | "chunkDropWarning" | "recordingSettings";
 
 /**
  * SettingsModals Component
@@ -25,6 +27,7 @@ interface SettingsModalsProps {
     modelSelector: boolean;
     errorAlert: boolean;
     chunkDropWarning: boolean;
+    recordingSettings: boolean;
   };
   messages: {
     errorAlert: string;
@@ -32,12 +35,17 @@ interface SettingsModalsProps {
     modelSelector: string;
   };
   onClose: (name: modalType) => void;
+  recordingSettingsProps?: {
+    kgSelectionRef: MutableRefObject<string | null>;
+    onStartRecording: () => void | Promise<void>;
+  };
 }
 
 export function SettingsModals({
   modals,
   messages,
   onClose,
+  recordingSettingsProps,
 }: SettingsModalsProps) {
   // Contexts
   const {
@@ -333,6 +341,16 @@ export function SettingsModals({
           </AlertDescription>
         </Alert>
       </div>
+    )}
+
+    {/* Pre-Recording Settings Modal */}
+    {modals.recordingSettings && recordingSettingsProps && (
+      <PreRecordingSettingsModal
+        isOpen={modals.recordingSettings}
+        onClose={() => onClose('recordingSettings')}
+        onStartRecording={recordingSettingsProps.onStartRecording}
+        kgSelectionRef={recordingSettingsProps.kgSelectionRef}
+      />
     )}
   </>
 }

@@ -12,6 +12,7 @@ import {
   readMeetingSummaryLanguage,
   readCachedDetectedSummaryLanguage,
 } from '@/lib/summary-language-preferences';
+import { knowledgeGraphService } from '@/services/knowledgeGraphService';
 
 async function resolveSummaryLanguage(
   meetingId: string,
@@ -95,6 +96,38 @@ export function useSummaryGeneration({
         return '';
     }
   }, []);
+
+  const ingestSummaryAfterGeneration = useCallback(async () => {
+    try {
+      const result = await knowledgeGraphService.ingestSummaryToKnowledgeGraph(meeting.id);
+      if (result.ingested) {
+        console.log('Summary ingested to Knowledge Graph:', result);
+        toast.success('Summary sent to Knowledge Graph', {
+          description: `Profile: ${result.profile_id}`,
+          duration: 3000,
+        });
+        return;
+      }
+
+      if (result.profile_id === null) {
+        const msg = 'No KG profile selected, skipping summary ingest. Set a default profile in Settings > Knowledge Graph.';
+        console.log(msg);
+        toast.info('KG ingest skipped', { description: msg, duration: 5000 });
+        return;
+      }
+
+      const msg = `Summary ingest returned unexpected result: ${JSON.stringify(result)}`;
+      console.warn(msg);
+      toast.warning('KG ingest issue', { description: msg, duration: 5000 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('Failed to auto-ingest summary to KG:', err);
+      toast.error('Failed to send summary to Knowledge Graph', {
+        description: msg,
+        duration: 5000,
+      });
+    }
+  }, [meeting.id]);
 
   // Unified summary processing logic
   const processSummary = useCallback(async ({
@@ -292,6 +325,9 @@ export function useSummaryGeneration({
               modelConfig.model,
               true
             );
+
+            await ingestSummaryAfterGeneration();
+
             return;
           }
 
@@ -363,6 +399,8 @@ export function useSummaryGeneration({
             true
           );
 
+          await ingestSummaryAfterGeneration();
+
           if (meetingName && onMeetingUpdated) {
             await onMeetingUpdated();
           }
@@ -392,6 +430,7 @@ export function useSummaryGeneration({
     meeting.created_at,
     modelConfig,
     selectedTemplate,
+    ingestSummaryAfterGeneration,
     startSummaryPolling,
     setAiSummary,
     updateMeetingTitle,
@@ -624,6 +663,17 @@ export function useSummaryGeneration({
       console.error('No transcripts available for regeneration');
       toast.error('No transcripts available for summary regeneration');
       return;
+    }
+
+    try {
+      const deleteResult = await knowledgeGraphService.deleteSummaryFromKnowledgeGraph(meeting.id);
+      if (deleteResult.ingested) {
+        console.log('Old summary deleted from KG before regeneration');
+      } else if (deleteResult.profile_id === null) {
+        console.log('No KG profile — skipping delete before regeneration');
+      }
+    } catch (err) {
+      console.warn('Failed to delete summary from KG before regeneration:', err);
     }
 
     await processSummary({

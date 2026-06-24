@@ -89,7 +89,7 @@ impl Default for KnowledgeGraphProfile {
 impl Default for KnowledgeGraphSettings {
     fn default() -> Self {
         KnowledgeGraphSettings {
-            profiles: vec![KnowledgeGraphProfile::default()],
+            profiles: vec![],
             active_profile: KnowledgeGraphSelection::default(),
         }
     }
@@ -116,17 +116,15 @@ pub fn resolve(settings: &KnowledgeGraphSettings) -> Option<&KnowledgeGraphProfi
 /// Validate a `KnowledgeGraphSettings` value.
 ///
 /// Checks:
-/// - at least one profile exists
 /// - no duplicate profile IDs
 /// - no empty profile IDs
 /// - no empty profile names
 /// - no empty LightRAG URLs
 /// - embedding config is well-formed
 /// - the active profile (if set) exists in the profile list
+///
+/// Empty profiles are allowed — the user may not have configured any yet.
 pub fn validate(settings: &KnowledgeGraphSettings) -> Result<()> {
-    if settings.profiles.is_empty() {
-        return Err(anyhow!("At least one profile is required"));
-    }
 
     let mut seen_ids = HashSet::with_capacity(settings.profiles.len());
     for profile in &settings.profiles {
@@ -219,12 +217,9 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_has_one_profile() {
+    fn default_settings_has_no_profiles() {
         let s = KnowledgeGraphSettings::default();
-        assert_eq!(s.profiles.len(), 1);
-        assert_eq!(s.profiles[0].name, "default");
-        assert_eq!(s.profiles[0].id, "default");
-        assert_eq!(s.profiles[0].kind, ProfileKind::Local);
+        assert_eq!(s.profiles.len(), 0);
         assert_eq!(s.active_profile, KnowledgeGraphSelection::None);
     }
 
@@ -301,13 +296,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_empty_profiles_fails() {
+    fn validate_empty_profiles_is_ok() {
         let s = KnowledgeGraphSettings {
             profiles: vec![],
             active_profile: KnowledgeGraphSelection::None,
         };
-        let err = validate(&s).unwrap_err();
-        assert!(err.to_string().contains("At least one profile is required"));
+        assert!(validate(&s).is_ok());
     }
 
     #[test]

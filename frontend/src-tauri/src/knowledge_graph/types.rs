@@ -30,7 +30,8 @@ pub struct KnowledgeGraphEdge {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KnowledgeGraphInsertTextRequest {
     pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// LightRAG requires `file_source` — maps to this field via serde rename.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "file_source")]
     pub source: Option<String>,
 }
 
@@ -109,6 +110,26 @@ pub struct KnowledgeGraphTrackStatus {
     pub state: KnowledgeGraphJobState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SummaryDocumentState {
+    Pending,
+    Ingested,
+    Failed,
+    Deleted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SummaryDocumentStatus {
+    pub state: SummaryDocumentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
 }
 
 fn default_top_k() -> usize {

@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { RecordingControls } from '@/components/RecordingControls';
-import { RecordingKnowledgeGraphSelector } from '@/components/RecordingKnowledgeGraphSelector';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePermissionCheck } from '@/hooks/usePermissionCheck';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
@@ -22,6 +21,7 @@ import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { knowledgeGraphService } from '@/services/knowledgeGraphService';
 
 export default function Home() {
   // Local page state (not moved to contexts)
@@ -29,9 +29,20 @@ export default function Home() {
   const [barHeights, setBarHeights] = useState(['58%', '76%', '58%']);
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
 
-  // Knowledge Graph selection intent — default is always null (None).
-  // User must explicitly opt in via the selector. Persisted only after meeting save.
   const kgSelectionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    knowledgeGraphService.getSettings().then((settings) => {
+      const active = settings.active_profile;
+      if (typeof active === 'object' && active !== null && 'profile' in active) {
+        const profileId = active.profile;
+        const profile = settings.profiles.find((p) => p.id === profileId);
+        if (profile) {
+          kgSelectionRef.current = profileId;
+        }
+      }
+    }).catch(() => {});
+  }, []);
 
   // Use contexts for state management
   const { meetingTitle } = useTranscripts();
@@ -192,6 +203,24 @@ export default function Home() {
     }
   }, [recordingState.isRecording]);
 
+  useEffect(() => {
+    const handleOpenRecordingSettings = () => {
+      showModal('recordingSettings');
+    };
+    window.addEventListener('open-recording-settings', handleOpenRecordingSettings);
+    return () => {
+      window.removeEventListener('open-recording-settings', handleOpenRecordingSettings);
+    };
+  }, [showModal]);
+
+  useEffect(() => {
+    const flag = sessionStorage.getItem('openRecordingSettingsOnHome');
+    if (flag === 'true') {
+      sessionStorage.removeItem('openRecordingSettingsOnHome');
+      showModal('recordingSettings');
+    }
+  }, [showModal]);
+
   // Computed values using global status
   const isProcessingStop = status === RecordingStatus.PROCESSING_TRANSCRIPTS || isProcessing;
 
@@ -207,6 +236,10 @@ export default function Home() {
         modals={modals}
         messages={messages}
         onClose={hideModal}
+        recordingSettingsProps={{
+          kgSelectionRef,
+          onStartRecording: handleRecordingStart,
+        }}
       />
 
       {/* Recovery Dialog */}
@@ -230,24 +263,6 @@ export default function Home() {
           status !== RecordingStatus.PROCESSING_TRANSCRIPTS &&
           status !== RecordingStatus.SAVING && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
-              {/* Knowledge Graph selector — visible only when not recording */}
-              {!isRecording && (
-                <div
-                  className="flex justify-center pl-8 mb-3 transition-[margin] duration-300"
-                  style={{
-                    marginLeft: sidebarCollapsed ? '4rem' : '16rem'
-                  }}
-                >
-                  <div className="w-2/3 max-w-[750px] flex justify-center">
-                    <div className="bg-white rounded-lg shadow-md px-4 py-3 w-full max-w-[400px]">
-                      <RecordingKnowledgeGraphSelector
-                        kgSelectionRef={kgSelectionRef}
-                        meetingName={meetingTitle}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
               <div
                 className="flex justify-center pl-8 transition-[margin] duration-300"
                 style={{
@@ -270,6 +285,7 @@ export default function Home() {
                       isParentProcessing={isProcessingStop}
                       selectedDevices={selectedDevices}
                       meetingName={meetingTitle}
+                      onLongPressStart={() => showModal('recordingSettings')}
                     />
                   </div>
                 </div>

@@ -90,7 +90,7 @@ export interface KnowledgeGraphSettings {
 }
 
 export const DEFAULT_KG_SETTINGS: KnowledgeGraphSettings = {
-  profiles: [DEFAULT_KG_PROFILE],
+  profiles: [],
   active_profile: 'none',
 };
 
@@ -177,6 +177,15 @@ export interface MeetingKnowledgeGraphSelection {
   routing_reason: string | null;
 }
 
+export type SummaryDocumentState = 'pending' | 'ingested' | 'failed' | 'deleted';
+
+export interface SummaryDocumentStatus {
+  state: SummaryDocumentState;
+  file_source?: string;
+  error?: string;
+  updated_at?: string;
+}
+
 // ── Meeting Knowledge Graph Status (service.rs) ──────────────────────
 
 export interface MeetingKnowledgeGraphStatus {
@@ -188,6 +197,18 @@ export interface MeetingKnowledgeGraphStatus {
   pending_count: number;
   total_chunks: number;
   last_errors: string[];
+  summary_document?: SummaryDocumentStatus;
+  pipeline_status?: KnowledgeGraphPipelineStatus;
+  lightrag_url?: string;
+}
+
+// ── Summary Ingest Result (commands.rs) ──────────────────────────────
+
+export interface SummaryIngestResult {
+  meeting_id: string;
+  profile_id: string | null;
+  ingested: boolean;
+  error: string | null;
 }
 
 // ── Status States (for UI consumption) ────────────────────────────────

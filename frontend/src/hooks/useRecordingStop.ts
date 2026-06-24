@@ -296,7 +296,6 @@ export function useRecordingStop(
           console.log('   folder_path:', folderPath);
 
           // Persist KG selection intent AFTER meeting save (not at recording start).
-          // Default is null (None) unless user explicitly opted in via the selector.
           if (kgSelectionRef) {
             try {
               await knowledgeGraphService.setMeetingKnowledgeGraphSelection(
@@ -337,6 +336,7 @@ export function useRecordingStop(
 
           // Mark as completed
           setStatus(RecordingStatus.COMPLETED);
+          sessionStorage.setItem('pending_auto_summary_meeting_id', meetingId);
 
           // Show success toast with navigation option
           toast.success('Recording saved successfully!', {
@@ -344,7 +344,7 @@ export function useRecordingStop(
             action: {
               label: 'View Meeting',
               onClick: () => {
-                router.push(`/meeting-details?id=${meetingId}`);
+                router.push(`/meeting-details?id=${meetingId}&source=recording`);
                 Analytics.trackButtonClick('view_meeting_from_toast', 'recording_complete');
               }
             },

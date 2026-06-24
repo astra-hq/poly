@@ -28,6 +28,11 @@ pub trait KnowledgeGraphProvider: Send + Sync {
         request: KnowledgeGraphInsertTextRequest,
     ) -> KnowledgeGraphResult<KnowledgeGraphInsertTextResponse>;
 
+    async fn delete_by_file_source(
+        &self,
+        file_source: &str,
+    ) -> KnowledgeGraphResult<()>;
+
     async fn query(
         &self,
         request: KnowledgeGraphQueryRequest,
@@ -62,6 +67,13 @@ mod tests {
                 healthy: true,
                 version: Some("1.0.0".into()),
             })
+        }
+
+        async fn delete_by_file_source(
+            &self,
+            _file_source: &str,
+        ) -> KnowledgeGraphResult<()> {
+            Ok(())
         }
 
         async fn insert_text(

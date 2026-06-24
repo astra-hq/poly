@@ -15,12 +15,14 @@ import { invoke } from '@tauri-apps/api/core';
 import type {
   IngestionSummary,
   KnowledgeGraphHealth,
+  KnowledgeGraphPipelineStatus,
   KnowledgeGraphQueryResponse,
   KnowledgeGraphSelection,
   KnowledgeGraphSettings,
   MeetingKnowledgeGraphSelection,
   MeetingKnowledgeGraphStatus,
   QueryMode,
+  SummaryIngestResult,
 } from '@/types/knowledgeGraph';
 import { DEFAULT_QUERY_MODE, DEFAULT_TOP_K } from '@/types/knowledgeGraph';
 
@@ -185,6 +187,84 @@ export class KnowledgeGraphService {
       'api_get_meeting_knowledge_graph_status',
       { meetingId }
     );
+  }
+
+  async getPipelineStatus(
+    profileId: string
+  ): Promise<KnowledgeGraphPipelineStatus> {
+    return invoke<KnowledgeGraphPipelineStatus>(
+      'api_get_knowledge_graph_pipeline_status',
+      { profileId }
+    );
+  }
+
+  /**
+   * Auto-ingest the meeting summary into the configured Knowledge Graph.
+   * Backend: `api_ingest_summary_to_knowledge_graph(meeting_id)`
+   * Uses the meeting's KG profile selection (or the global active profile).
+   * Returns ingest result with profile info and success/failure status.
+   */
+  async ingestSummaryToKnowledgeGraph(
+    meetingId: string
+  ): Promise<SummaryIngestResult> {
+    return invoke<SummaryIngestResult>(
+      'api_ingest_summary_to_knowledge_graph',
+      { meetingId }
+    );
+  }
+
+  /**
+   * Delete the summary document from the Knowledge Graph (for regeneration).
+   * Backend: `api_delete_summary_from_knowledge_graph(meeting_id)`
+   * Non-fatal — deletion may fail if the document doesn't exist yet.
+   */
+  async deleteSummaryFromKnowledgeGraph(
+    meetingId: string
+  ): Promise<SummaryIngestResult> {
+    return invoke<SummaryIngestResult>(
+      'api_delete_summary_from_knowledge_graph',
+      { meetingId }
+    );
+  }
+
+  /**
+   * Auto-provision a local knowledge graph stack via docker compose.
+   * Backend: `api_setup_local_knowledge_graph()`
+   * Returns a status message on success.
+   */
+  async setupLocalKnowledgeGraph(): Promise<string> {
+    return invoke<string>('api_setup_local_knowledge_graph');
+  }
+
+  /**
+   * Phase 1: Check system dependencies for local knowledge graph setup.
+   * Backend: `api_setup_kg_check_deps()`
+   * Returns dependency info for Docker and Ollama.
+   */
+  async checkDeps(): Promise<{
+    docker: { installed: boolean; version: string | null };
+    ollama: { installed: boolean; version: string | null };
+  }> {
+    return invoke('api_setup_kg_check_deps');
+  }
+
+  /**
+   * Phase 2: Pull an Ollama model for local knowledge graph use.
+   * Backend: `api_setup_kg_pull_model(model: String)`
+   * Progress is streamed via `setup-progress` events (stage: pull-model).
+   */
+  async pullModel(model: string): Promise<void> {
+    return invoke('api_setup_kg_pull_model', { model });
+  }
+
+  /**
+   * Phase 3: Start the knowledge graph docker compose stack.
+   * Backend: `api_setup_local_knowledge_graph()`
+   * Progress is streamed via `setup-progress` events.
+   * Returns a status message on success.
+   */
+  async startStack(): Promise<string> {
+    return invoke<string>('api_setup_local_knowledge_graph');
   }
 }
 

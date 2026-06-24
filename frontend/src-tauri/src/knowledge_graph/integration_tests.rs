@@ -76,18 +76,20 @@ mod integration {
             })
         }
 
+        async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "delete_by_file_source",
+            })
+        }
+
         async fn query(
             &self,
             _request: KnowledgeGraphQueryRequest,
         ) -> KnowledgeGraphResult<KnowledgeGraphQueryResponse> {
-            Err(KnowledgeGraphProviderError::UnsupportedOperation {
-                operation: "query",
-            })
+            Err(KnowledgeGraphProviderError::UnsupportedOperation { operation: "query" })
         }
 
-        async fn pipeline_status(
-            &self,
-        ) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
+        async fn pipeline_status(&self) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "pipeline_status",
             })
@@ -189,7 +191,9 @@ mod integration {
             // This simulates normal recording/transcription flow where
             // the KG module is loaded but never explicitly invoked.
             assert_eq!(
-                provider.call_count.load(std::sync::atomic::Ordering::Relaxed),
+                provider
+                    .call_count
+                    .load(std::sync::atomic::Ordering::Relaxed),
                 0,
                 "provider must not be called without explicit ingestion command"
             );
@@ -204,9 +208,15 @@ mod integration {
                 .ingest_meeting(&provider, "meeting-safety-1", "default")
                 .await
                 .expect("ingestion");
-            assert!(summary.submitted_count >= 1, "expected at least one chunk submitted");
             assert!(
-                provider.call_count.load(std::sync::atomic::Ordering::Relaxed) >= 1,
+                summary.submitted_count >= 1,
+                "expected at least one chunk submitted"
+            );
+            assert!(
+                provider
+                    .call_count
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                    >= 1,
                 "provider must be called when ingest_meeting is explicitly invoked"
             );
         }
@@ -218,14 +228,18 @@ mod integration {
             // Simply constructing the service does NOT trigger ingestion.
             // The provider has zero calls.
             assert_eq!(
-                provider.call_count.load(std::sync::atomic::Ordering::Relaxed),
+                provider
+                    .call_count
+                    .load(std::sync::atomic::Ordering::Relaxed),
                 0,
                 "constructing service must not call provider"
             );
             // Drop to verify no hidden Drop-side-effect calls provider
             drop(service);
             assert_eq!(
-                provider.call_count.load(std::sync::atomic::Ordering::Relaxed),
+                provider
+                    .call_count
+                    .load(std::sync::atomic::Ordering::Relaxed),
                 0,
                 "dropping service must not call provider"
             );
@@ -247,7 +261,11 @@ mod integration {
         // Record pre-ingestion state
         let pre_title = read_meeting_title(&pool, meeting_id).await;
         let pre_texts = read_transcript_texts(&pool, meeting_id).await;
-        assert_eq!(pre_texts.len(), 3, "expected 3 transcripts before ingestion");
+        assert_eq!(
+            pre_texts.len(),
+            3,
+            "expected 3 transcripts before ingestion"
+        );
 
         // ── Attempt ingestion with a failing provider ────────────
         let service = KnowledgeGraphIngestionService::new(pool.clone());
@@ -341,6 +359,12 @@ mod integration {
             })
         }
 
+        async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "delete_by_file_source",
+            })
+        }
+
         async fn query(
             &self,
             request: KnowledgeGraphQueryRequest,
@@ -365,9 +389,7 @@ mod integration {
             })
         }
 
-        async fn pipeline_status(
-            &self,
-        ) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
+        async fn pipeline_status(&self) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "pipeline_status",
             })

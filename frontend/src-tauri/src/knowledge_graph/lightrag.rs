@@ -161,6 +161,30 @@ impl KnowledgeGraphProvider for LightRagProvider {
         self.get::<HealthResponse>(&["health"]).await.map(Into::into)
     }
 
+    async fn delete_by_file_source(
+        &self,
+        file_source: &str,
+    ) -> KnowledgeGraphResult<()> {
+        use serde::Serialize;
+
+        #[derive(Serialize)]
+        struct DeleteRequest {
+            file_source: String,
+        }
+
+        #[derive(Deserialize)]
+        struct DeleteResponse {}
+
+        self.post::<DeleteRequest, DeleteResponse>(
+            &["documents", "delete"],
+            &DeleteRequest {
+                file_source: file_source.to_string(),
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn insert_text(
         &self,
         request: KnowledgeGraphInsertTextRequest,

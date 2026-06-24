@@ -20,7 +20,6 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  Info,
   Activity,
 } from 'lucide-react';
 import { knowledgeGraphService } from '@/services/knowledgeGraphService';
@@ -39,57 +38,19 @@ interface RecordingKnowledgeGraphSelectorProps {
    * Default is always null — user must explicitly opt in.
    */
   kgSelectionRef: MutableRefObject<string | null>;
-  /** Optional meeting name for suggestion text. Advisory only. */
-  meetingName?: string;
   /** Disable the entire selector (e.g. while recording). */
   disabled?: boolean;
+  defaultToActiveProfile?: boolean;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────
 
-/**
- * Generate advisory suggestion text based on meeting name / time heuristics.
- * This is SUGGESTION ONLY — it never auto-selects a profile.
- */
-function getSuggestionText(meetingName?: string): string {
-  // If the meeting name contains keywords, use them for suggestions
-  const name = (meetingName ?? '').toLowerCase();
-
-  if (name.includes('standup') || name.includes('daily')) {
-    return 'This looks like a standup — would you like to use a Knowledge Graph?';
-  }
-  if (name.includes('sync') || name.includes('team')) {
-    return 'This looks like a team sync — would you like to use a Knowledge Graph?';
-  }
-  if (name.includes('1:1') || name.includes('one-on-one')) {
-    return 'This looks like a 1:1 — would you like to use a Knowledge Graph?';
-  }
-  if (name.includes('review') || name.includes('retro')) {
-    return 'This looks like a review meeting — would you like to use a Knowledge Graph?';
-  }
-
-  // Fall back to time-of-day heuristic from the auto-generated title
-  // Titles are "Meeting DD_MM_YY_HH_MM_SS"
-  const hourMatch = meetingName?.match(/(\d{2})_\d{2}_\d{2}$/);
-  if (hourMatch) {
-    const hour = parseInt(hourMatch[1], 10);
-    if (hour >= 5 && hour < 12) {
-      return 'This looks like a morning meeting — would you like to use a Knowledge Graph?';
-    }
-    if (hour >= 12 && hour < 17) {
-      return 'This looks like an afternoon meeting — would you like to use a Knowledge Graph?';
-    }
-  }
-
-  return 'Would you like to use a Knowledge Graph for this meeting?';
-}
 
 // ── Component ─────────────────────────────────────────────────────────
 
 export function RecordingKnowledgeGraphSelector({
   kgSelectionRef,
-  meetingName,
   disabled = false,
+  defaultToActiveProfile = false,
 }: RecordingKnowledgeGraphSelectorProps) {
   const [settings, setSettings] = useState<KnowledgeGraphSettings | null>(null);
   const [loading, setLoading] = useState(true);
@@ -111,6 +72,24 @@ export function RecordingKnowledgeGraphSelector({
     try {
       const data = await knowledgeGraphService.getSettings();
       setSettings(data);
+
+      if (defaultToActiveProfile && !initializedRef.current) {
+        const active = data.active_profile;
+        if (typeof active === 'object' && active !== null && 'profile' in active) {
+          const profileId = active.profile;
+          const profile = data.profiles.find((p) => p.id === profileId);
+          if (profile) {
+            setSelectedProfileId(profileId);
+            setOptedIn(true);
+            kgSelectionRef.current = profileId;
+          } else {
+            kgSelectionRef.current = null;
+          }
+        } else {
+          kgSelectionRef.current = null;
+        }
+        initializedRef.current = true;
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
@@ -118,19 +97,18 @@ export function RecordingKnowledgeGraphSelector({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [defaultToActiveProfile, kgSelectionRef]);
 
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
 
-  // Ensure default is always None on mount
   useEffect(() => {
-    if (!initializedRef.current) {
+    if (!defaultToActiveProfile && !initializedRef.current) {
       kgSelectionRef.current = null;
       initializedRef.current = true;
     }
-  }, [kgSelectionRef]);
+  }, [defaultToActiveProfile, kgSelectionRef]);
 
   // ── Health check ────────────────────────────────────────────────────
 
@@ -211,16 +189,9 @@ export function RecordingKnowledgeGraphSelector({
   const profiles = settings.profiles;
   const hasProfiles = profiles.length > 0;
   const selectedProfile = profiles.find((p) => p.id === selectedProfileId) ?? null;
-  const suggestionText = getSuggestionText(meetingName);
 
   return (
     <div className="space-y-2" data-testid="kg-selector">
-      {/* Suggestion text — advisory only, never auto-selects */}
-      <div className="flex items-start gap-2 text-xs text-gray-500">
-        <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-        <span>{suggestionText}</span>
-      </div>
-
       {/* Opt-in toggle */}
       <div className="flex items-center gap-3">
         <Switch
@@ -233,7 +204,7 @@ export function RecordingKnowledgeGraphSelector({
           htmlFor="kg-opt-in"
           className={`text-sm cursor-pointer ${disabled ? 'opacity-50' : ''}`}
         >
-          Use Knowledge Graph
+          Use knowledge graph
         </Label>
       </div>
 
@@ -354,7 +325,7 @@ export function RecordingKnowledgeGraphSelector({
       {!optedIn && (
         <div className="flex items-center gap-1.5 text-xs text-gray-400">
           <Network className="h-3.5 w-3.5" />
-          <span>No Knowledge Graph selected</span>
+          <span>No knowledge graph selected</span>
         </div>
       )}
     </div>

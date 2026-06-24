@@ -757,11 +757,18 @@ pub fn run() {
             knowledge_graph::settings_commands::api_get_knowledge_graph_settings,
             knowledge_graph::settings_commands::api_save_knowledge_graph_settings,
             knowledge_graph::settings_commands::api_test_knowledge_graph_profile,
+            knowledge_graph::settings_commands::api_setup_local_knowledge_graph,
+            knowledge_graph::settings_commands::api_setup_kg_check_deps,
+            knowledge_graph::settings_commands::api_setup_kg_pull_model,
             // Knowledge graph meeting selection
             knowledge_graph::selection_commands::api_get_meeting_knowledge_graph_selection,
             knowledge_graph::selection_commands::api_set_meeting_knowledge_graph_selection,
             // Knowledge graph status
             knowledge_graph::commands::api_get_meeting_knowledge_graph_status,
+            knowledge_graph::commands::api_get_knowledge_graph_pipeline_status,
+            // Knowledge graph summary ingest
+            knowledge_graph::commands::api_ingest_summary_to_knowledge_graph,
+            knowledge_graph::commands::api_delete_summary_from_knowledge_graph,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
