@@ -11,12 +11,13 @@ CREATE TABLE IF NOT EXISTS settings_new (
     openaiApiKey TEXT,
     anthropicApiKey TEXT,
     ollamaApiKey TEXT,
+    knowledge_graph_settings TEXT,
     openRouterApiKey TEXT
 );
 
 -- Copy data from old table to new table
-INSERT INTO settings_new 
-SELECT *, NULL as openRouterApiKey 
+INSERT INTO settings_new
+SELECT *, NULL as openRouterApiKey
 FROM settings;
 
 -- Drop the old table

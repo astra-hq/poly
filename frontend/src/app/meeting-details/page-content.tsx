@@ -8,6 +8,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { TranscriptPanel } from '@/components/MeetingDetails/TranscriptPanel';
 import { SummaryPanel } from '@/components/MeetingDetails/SummaryPanel';
+import { KnowledgeGraphPanel } from '@/components/MeetingDetails/KnowledgeGraphPanel';
+import { KnowledgeGraphQueryBar } from '@/components/KnowledgeGraph/KnowledgeGraphQueryBar';
 import { ModelConfig } from '@/components/ModelSettingsModal';
 
 // Custom hooks
@@ -228,6 +230,8 @@ export default function PageContent({
           onOpenModelSettings={handleRegisterModalOpen}
         />
       </div>
+      <KnowledgeGraphPanel meetingId={meeting.id} />
+      <KnowledgeGraphQueryBar meetingId={meeting.id} />
     </motion.div>
   );
 }

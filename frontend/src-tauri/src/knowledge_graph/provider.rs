@@ -128,6 +128,7 @@ mod tests {
         let response = provider
             .query(KnowledgeGraphQueryRequest {
                 query: "meeting summary".into(),
+                mode: Default::default(),
                 top_k: 3,
             })
             .await

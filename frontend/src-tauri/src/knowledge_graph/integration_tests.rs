@@ -21,8 +21,9 @@ mod integration {
     use crate::knowledge_graph::service::KnowledgeGraphIngestionService;
     use crate::knowledge_graph::types::{
         KnowledgeGraphHealth, KnowledgeGraphInsertTextRequest, KnowledgeGraphInsertTextResponse,
-        KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse,
-        KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
+        KnowledgeGraphNode, KnowledgeGraphNodeId, KnowledgeGraphPipelineStatus,
+        KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId,
+        KnowledgeGraphTrackStatus, QueryMode,
     };
 
     // ── Mock provider (simple version for integration tests) ──────
@@ -302,5 +303,152 @@ mod integration {
             KnowledgeGraphSelection::None,
             "default KnowledgeGraphSelection must be None to prevent auto-ingestion"
         );
+    }
+
+    // ── Mock-provider query tests ────────────────────────────────
+
+    use std::collections::BTreeMap;
+
+    struct QueryMockProvider {
+        fail: bool,
+    }
+
+    impl QueryMockProvider {
+        fn new() -> Self {
+            Self { fail: false }
+        }
+
+        fn failing() -> Self {
+            Self { fail: true }
+        }
+    }
+
+    #[async_trait]
+    impl KnowledgeGraphProvider for QueryMockProvider {
+        async fn health(&self) -> KnowledgeGraphResult<KnowledgeGraphHealth> {
+            Ok(KnowledgeGraphHealth {
+                healthy: true,
+                version: Some("query-mock".into()),
+            })
+        }
+
+        async fn insert_text(
+            &self,
+            _request: KnowledgeGraphInsertTextRequest,
+        ) -> KnowledgeGraphResult<KnowledgeGraphInsertTextResponse> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "insert_text",
+            })
+        }
+
+        async fn query(
+            &self,
+            request: KnowledgeGraphQueryRequest,
+        ) -> KnowledgeGraphResult<KnowledgeGraphQueryResponse> {
+            if self.fail {
+                return Err(KnowledgeGraphProviderError::RequestFailed {
+                    message: "simulated query failure".into(),
+                });
+            }
+
+            let mut properties = BTreeMap::new();
+            properties.insert("mode".into(), format!("{:?}", request.mode));
+
+            Ok(KnowledgeGraphQueryResponse {
+                answer: Some(format!("results for: {}", request.query)),
+                nodes: vec![KnowledgeGraphNode {
+                    id: KnowledgeGraphNodeId("q-node-1".into()),
+                    label: "QueryResult".into(),
+                    properties,
+                }],
+                edges: vec![],
+            })
+        }
+
+        async fn pipeline_status(
+            &self,
+        ) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "pipeline_status",
+            })
+        }
+
+        async fn track_status(
+            &self,
+            _track_id: KnowledgeGraphTrackId,
+        ) -> KnowledgeGraphResult<KnowledgeGraphTrackStatus> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "track_status",
+            })
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "query-mock"
+        }
+    }
+
+    #[tokio::test]
+    async fn given_query_provider_when_query_succeeds_then_returns_results() {
+        let provider = QueryMockProvider::new();
+
+        let response = provider
+            .query(KnowledgeGraphQueryRequest {
+                query: "action items".into(),
+                mode: QueryMode::Hybrid,
+                top_k: 5,
+            })
+            .await
+            .expect("query should succeed");
+
+        assert_eq!(
+            response.answer.as_deref(),
+            Some("results for: action items")
+        );
+        assert_eq!(response.nodes.len(), 1);
+        assert_eq!(response.nodes[0].label, "QueryResult");
+    }
+
+    #[tokio::test]
+    async fn given_failing_query_provider_when_query_called_then_returns_error() {
+        let provider = QueryMockProvider::failing();
+
+        let result = provider
+            .query(KnowledgeGraphQueryRequest {
+                query: "action items".into(),
+                mode: QueryMode::Local,
+                top_k: 10,
+            })
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "request failed: simulated query failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn given_query_provider_when_query_with_different_modes_then_works() {
+        let provider = QueryMockProvider::new();
+
+        for mode in [
+            QueryMode::Local,
+            QueryMode::Global,
+            QueryMode::Hybrid,
+            QueryMode::Naive,
+            QueryMode::Mix,
+            QueryMode::Bypass,
+        ] {
+            let response = provider
+                .query(KnowledgeGraphQueryRequest {
+                    query: "test".into(),
+                    mode,
+                    top_k: 3,
+                })
+                .await
+                .expect("query should succeed");
+
+            assert!(response.answer.is_some());
+        }
     }
 }

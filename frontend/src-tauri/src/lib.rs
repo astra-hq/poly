@@ -408,6 +408,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -751,6 +752,16 @@ pub fn run() {
             audio::import::is_import_in_progress_command,
             // Knowledge graph ingestion
             knowledge_graph::commands::api_ingest_meeting_to_knowledge_graph,
+            knowledge_graph::commands::api_query_knowledge_graph,
+            // Knowledge graph settings
+            knowledge_graph::settings_commands::api_get_knowledge_graph_settings,
+            knowledge_graph::settings_commands::api_save_knowledge_graph_settings,
+            knowledge_graph::settings_commands::api_test_knowledge_graph_profile,
+            // Knowledge graph meeting selection
+            knowledge_graph::selection_commands::api_get_meeting_knowledge_graph_selection,
+            knowledge_graph::selection_commands::api_set_meeting_knowledge_graph_selection,
+            // Knowledge graph status
+            knowledge_graph::commands::api_get_meeting_knowledge_graph_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

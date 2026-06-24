@@ -205,6 +205,7 @@ impl KnowledgeGraphProvider for LightRagProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::knowledge_graph::types::QueryMode;
     use httpmock::Method::{GET, POST};
     use httpmock::MockServer;
     use serde_json::json;
@@ -256,7 +257,7 @@ mod tests {
         let provider = LightRagProvider::new(server.base_url(), None).unwrap();
 
         let query = provider
-            .query(KnowledgeGraphQueryRequest { query: "find".into(), top_k: 3 })
+            .query(KnowledgeGraphQueryRequest { query: "find".into(), mode: Default::default(), top_k: 3 })
             .await
             .unwrap();
         let status = provider.pipeline_status().await.unwrap();
@@ -264,6 +265,52 @@ mod tests {
         status_mock.assert();
         assert_eq!(query.answer.as_deref(), Some("ok"));
         assert_eq!(status.pending_documents, 1);
+    }
+
+    #[tokio::test]
+    async fn query_posts_mode_hybrid_in_request_body() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/query")
+                .json_body(json!({"query":"find items","mode":"hybrid","top_k":5}));
+            then.status(200).json_body(json!({"nodes": [], "edges": [], "answer": "ok"}));
+        });
+        let provider = LightRagProvider::new(server.base_url(), None).unwrap();
+
+        provider
+            .query(KnowledgeGraphQueryRequest {
+                query: "find items".into(),
+                mode: QueryMode::Hybrid,
+                top_k: 5,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn query_posts_mode_local_in_request_body() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/query")
+                .json_body(json!({"query":"local search","mode":"local","top_k":10}));
+            then.status(200).json_body(json!({"nodes": [], "edges": [], "answer": "local"}));
+        });
+        let provider = LightRagProvider::new(server.base_url(), None).unwrap();
+
+        provider
+            .query(KnowledgeGraphQueryRequest {
+                query: "local search".into(),
+                mode: QueryMode::Local,
+                top_k: 10,
+            })
+            .await
+            .unwrap();
+
+        mock.assert();
     }
 
     #[tokio::test]

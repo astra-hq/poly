@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { RecordingControls } from '@/components/RecordingControls';
+import { RecordingKnowledgeGraphSelector } from '@/components/RecordingKnowledgeGraphSelector';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { usePermissionCheck } from '@/hooks/usePermissionCheck';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
@@ -28,6 +29,10 @@ export default function Home() {
   const [barHeights, setBarHeights] = useState(['58%', '76%', '58%']);
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
 
+  // Knowledge Graph selection intent — default is always null (None).
+  // User must explicitly opt in via the selector. Persisted only after meeting save.
+  const kgSelectionRef = useRef<string | null>(null);
+
   // Use contexts for state management
   const { meetingTitle } = useTranscripts();
   const { transcriptModelConfig, selectedDevices } = useConfig();
@@ -46,7 +51,8 @@ export default function Home() {
   // Get handleRecordingStop function and setIsStopping (state comes from global context)
   const { handleRecordingStop, setIsStopping } = useRecordingStop(
     setIsRecordingState,
-    setIsRecordingDisabled
+    setIsRecordingDisabled,
+    kgSelectionRef
   );
 
   // Recovery hook
@@ -224,6 +230,24 @@ export default function Home() {
           status !== RecordingStatus.PROCESSING_TRANSCRIPTS &&
           status !== RecordingStatus.SAVING && (
             <div className="fixed bottom-12 left-0 right-0 z-10">
+              {/* Knowledge Graph selector — visible only when not recording */}
+              {!isRecording && (
+                <div
+                  className="flex justify-center pl-8 mb-3 transition-[margin] duration-300"
+                  style={{
+                    marginLeft: sidebarCollapsed ? '4rem' : '16rem'
+                  }}
+                >
+                  <div className="w-2/3 max-w-[750px] flex justify-center">
+                    <div className="bg-white rounded-lg shadow-md px-4 py-3 w-full max-w-[400px]">
+                      <RecordingKnowledgeGraphSelector
+                        kgSelectionRef={kgSelectionRef}
+                        meetingName={meetingTitle}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               <div
                 className="flex justify-center pl-8 transition-[margin] duration-300"
                 style={{

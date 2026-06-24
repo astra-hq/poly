@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, type MutableRefObject } from 'react';
 import { useRouter } from 'next/navigation';
 import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
@@ -7,6 +7,7 @@ import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateContext';
 import { storageService } from '@/services/storageService';
 import { transcriptService } from '@/services/transcriptService';
+import { knowledgeGraphService } from '@/services/knowledgeGraphService';
 import Analytics from '@/lib/analytics';
 import {
   applyPinnedSummaryLanguageToMeeting,
@@ -39,7 +40,8 @@ interface UseRecordingStopReturn {
  */
 export function useRecordingStop(
   setIsRecording: (value: boolean) => void,
-  setIsRecordingDisabled: (value: boolean) => void
+  setIsRecordingDisabled: (value: boolean) => void,
+  kgSelectionRef?: MutableRefObject<string | null>
 ): UseRecordingStopReturn {
   // USE global state instead
   const recordingState = useRecordingState();
@@ -292,6 +294,20 @@ export function useRecordingStop(
           console.log('✅ Successfully saved COMPLETE meeting with ID:', meetingId);
           console.log('   Transcripts:', freshTranscripts.length);
           console.log('   folder_path:', folderPath);
+
+          // Persist KG selection intent AFTER meeting save (not at recording start).
+          // Default is null (None) unless user explicitly opted in via the selector.
+          if (kgSelectionRef) {
+            try {
+              await knowledgeGraphService.setMeetingKnowledgeGraphSelection(
+                meetingId,
+                kgSelectionRef.current
+              );
+              console.log('✅ KG selection persisted:', kgSelectionRef.current ?? 'none');
+            } catch (kgError) {
+              console.warn('Failed to persist KG selection:', kgError);
+            }
+          }
 
           // Mark meeting as saved in IndexedDB (for recovery system)
           await markMeetingAsSaved();

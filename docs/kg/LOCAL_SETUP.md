@@ -2,6 +2,8 @@
 
 This guide walks you through running the LightRAG knowledge-graph stack locally for development and testing. The stack is **completely optional** — Meetily works without it, and KG ingestion is disabled by default.
 
+> **Week 2 scope:** This guide covers the local Docker stack and all UI features implemented in Week 2. The Live Insight Engine (real-time ingestion during recording) is **not** implemented yet.
+
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) + Docker Compose v2
@@ -68,15 +70,76 @@ This guide walks you through running the LightRAG knowledge-graph stack locally 
 
 ## Meetily Integration
 
-1. Open Meetily **Settings** → **Knowledge Graph**
-2. Add a profile:
-   - **Name:** `local` (or any label)
-   - **LightRAG URL:** `http://localhost:9621`
-   - **API Key:** the same value you set for `LIGHTRAG_API_KEY` in `kg.env`
-3. Save and select the profile
-4. After a meeting is recorded, open the meeting and click **"Index to Knowledge Graph"** to explicitly ingest it
+### Settings — Knowledge Graph Profiles
 
-> **KG is opt-in.** No meeting is indexed automatically. The app remains fully functional without the KG stack running.
+Open **Settings** → **Knowledge Graph** to manage LightRAG profiles.
+
+**What you can do:**
+
+- **Add a profile** — Click **Add Profile**. Enter a display name, LightRAG URL (for example `http://localhost:9621`), and optional API key. Choose **Local** or **Remote** kind. You can also set embedding configuration (provider, model, dimensions).
+- **Edit a profile** — Click the pencil icon next to any profile.
+- **Delete a profile** — Click the trash icon. If the profile was set as default, the default resets to **None**.
+- **Test connectivity** — Click **Test** on any profile to run a health check against its LightRAG endpoint. Results show as Healthy, Unreachable, or Not tested.
+- **Set a default** — Toggle the **Default** switch on a profile. This profile becomes the suggested choice in the pre-recording selector, but you still must explicitly opt in every time.
+
+> **Important:** The default profile is always **None** until you explicitly set one. Even with a default, no meeting is indexed automatically.
+
+### Pre-Recording Opt-In Selector
+
+Before you start recording, a **Knowledge Graph** selector appears near the recording controls (only when you are not already recording).
+
+**Behavior:**
+
+- The selector defaults to **off** (None). You must explicitly toggle **Use Knowledge Graph** to opt in.
+- When you opt in, the first available profile is auto-selected, but you can change it via the dropdown.
+- A suggestion text appears based on your meeting name (for example "This looks like a standup — would you like to use a Knowledge Graph?"). This is advisory only and never auto-selects.
+- If no profiles are configured, a warning message tells you to add one in Settings.
+- Your selection is persisted only after the meeting is saved. It does not trigger any indexing during recording.
+
+### Meeting Detail — Index to Knowledge Graph
+
+After a meeting is recorded and saved, open the meeting detail page. Two KG components appear below the transcript and summary:
+
+#### Knowledge Graph Panel
+
+A collapsible panel labeled **Knowledge Graph** shows:
+
+- **Profile selection** — If no profile was chosen pre-recording, pick one from the available profiles.
+- **Index to Knowledge Graph** button — Click to explicitly ingest the meeting transcript. This submits transcript chunks to LightRAG. The button is disabled when there are no transcripts to index.
+- **Status counts** — Submitted, Failed, and Total chunk counts update after each indexing attempt.
+- **Retry failed** — If some chunks fail, a **Retry** button appears to re-submit only the failed chunks.
+- **Last errors** — Any recent errors are shown in a scrollable list for debugging.
+
+> **Indexing is explicit only.** No meeting is ever indexed automatically, even if you selected a profile before recording.
+
+#### Live KG Query Bar
+
+Below the Knowledge Graph panel is a **Search indexed Knowledge Graph content** bar.
+
+**What you can do:**
+
+- Type a natural-language question about the meeting's indexed content.
+- Choose a **query mode** from the dropdown: `local`, `global`, `hybrid` (default), `naive`, `mix`, or `bypass`.
+- If you have multiple profiles, a profile selector appears next to the mode dropdown.
+- Press **Enter** or click **Search** to run the query.
+
+**Results display:**
+
+- **Answer** — A generated answer from LightRAG (if available).
+- **Source counts** — Number of source nodes and edges that contributed to the answer.
+- **Empty result** — If nothing matches, a "No results found" message appears with a suggestion to try a different query or mode.
+- **Error state** — Query failures are shown inline with the error message.
+
+The query bar is disabled when no profile is selected or when the meeting has no indexed chunks yet.
+
+## What is NOT Implemented (Week 2)
+
+The following features are **not** part of the Week 2 release:
+
+- **Live Insight Engine** — Real-time ingestion of transcript chunks during recording. Indexing only happens after the meeting is saved, via the explicit **Index to Knowledge Graph** button.
+- **Automatic ingestion** — No meeting is ever indexed without explicit user action.
+- **Graph visualization** — No visual graph explorer of nodes and edges.
+- **Live query during recording** — The query bar only works on already-indexed meetings.
 
 ## Daily Commands
 
@@ -119,10 +182,10 @@ This recreates the named volumes from scratch.
 ```
 Meetily Desktop App
    └── Knowledge Graph Module
-        └── LightRagProvider ──HTTP──> LightRAG (port 9621)
-                                              │
-                                              ├──> Neo4j (port 7687)
-                                              └──> RustFS (port 9000)
+        └── LightRagProvider --HTTP--> LightRAG (port 9621)
+                                              |
+                                              |--> Neo4j (port 7687)
+                                              |--> RustFS (port 9000)
 ```
 
-For the overall Meetily architecture, see [guides/architecture.md](guides/architecture.md).
+For the overall Meetily architecture, see [../guides/architecture.md](../guides/architecture.md).

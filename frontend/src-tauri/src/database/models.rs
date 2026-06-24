@@ -108,6 +108,16 @@ impl Setting {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct KnowledgeGraphMeetingSelection {
+    pub meeting_id: String,
+    pub profile_id: Option<String>,
+    pub meeting_type: Option<String>,
+    pub routing_reason: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct TranscriptSetting {
     pub id: String,
     pub provider: String,
