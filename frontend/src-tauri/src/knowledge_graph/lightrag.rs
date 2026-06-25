@@ -270,11 +270,21 @@ impl KnowledgeGraphProvider for LightRagProvider {
     ) -> KnowledgeGraphResult<KnowledgeGraphTrackStatus> {
         self.get::<TrackStatusResponse>(&["documents", "track_status", &track_id.0])
             .await
-            .map(|response| KnowledgeGraphTrackStatus {
-                track_id: response.track_id,
-                documents: response.documents,
-                total_count: response.total_count,
-                status_summary: response.status_summary,
+            .map(|response| {
+                let status_summary = response
+                    .status_summary
+                    .into_iter()
+                    .map(|(k, v)| {
+                        let normalized = k.strip_prefix("DocStatus.").unwrap_or(&k).to_string();
+                        (normalized, v)
+                    })
+                    .collect();
+                KnowledgeGraphTrackStatus {
+                    track_id: response.track_id,
+                    documents: response.documents,
+                    total_count: response.total_count,
+                    status_summary,
+                }
             })
     }
 

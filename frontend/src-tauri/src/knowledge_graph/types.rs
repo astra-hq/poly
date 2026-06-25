@@ -118,7 +118,7 @@ pub struct TrackStatusDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_msg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<BTreeMap<String, String>>,
+    pub metadata: Option<serde_json::Value>,
     pub file_path: String,
 }
 
@@ -203,7 +203,7 @@ pub struct DocumentStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_msg: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<BTreeMap<String, String>>,
+    pub metadata: Option<serde_json::Value>,
     pub file_path: String,
 }
 

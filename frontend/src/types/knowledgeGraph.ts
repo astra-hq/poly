@@ -144,7 +144,7 @@ export interface TrackStatusDocument {
   track_id?: string;
   chunks_count?: number;
   error_msg?: string;
-  metadata?: Record<string, string>;
+  metadata?: unknown;
   file_path: string;
 }
 
