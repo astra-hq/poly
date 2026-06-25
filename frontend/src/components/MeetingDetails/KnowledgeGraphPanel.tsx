@@ -10,7 +10,6 @@ import {
   XCircle,
   AlertCircle,
   FileText,
-  ExternalLink,
   Settings,
 } from 'lucide-react';
 import { knowledgeGraphService } from '@/services/knowledgeGraphService';
@@ -43,63 +42,61 @@ function StatusDot({ status }: { status: string }) {
   );
 }
 
-function SummaryDocBadge({ doc, lightragUrl }: { doc: SummaryDocumentStatus | undefined; lightragUrl: string | undefined }) {
+function SummaryDocRow({ doc }: { doc: SummaryDocumentStatus | undefined }) {
   if (!doc) {
     return (
-      <span className="inline-flex items-center gap-1 text-gray-400 text-sm">
+      <div className="flex items-center gap-2 text-gray-400 text-sm py-2">
         <FileText size={16} />
-        No summary document
-      </span>
+        <span>No summary document</span>
+      </div>
     );
   }
 
-  const { state, error } = doc;
+  const { state, error, file_source, track_id, document_id } = doc;
 
-  if (state === 'ingested') {
-    return (
-      <span className="inline-flex items-center gap-1 text-green-600 text-sm">
-        <CheckCircle2 size={16} />
-        Summary ingested
-        {lightragUrl && doc.file_source && (
-          <a
-            href={`${lightragUrl}/documents?file_source=${encodeURIComponent(doc.file_source)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 text-green-700 hover:underline ml-1"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <ExternalLink size={12} />
-            View
-          </a>
-        )}
-      </span>
-    );
-  }
+  const stateConfig: Record<string, { icon: React.ReactNode; className: string; label: string }> = {
+    ingested: { icon: <CheckCircle2 size={16} />, className: 'text-green-600', label: 'Ingested' },
+    failed: { icon: <XCircle size={16} />, className: 'text-red-600', label: 'Failed' },
+    deleted: { icon: <FileText size={16} />, className: 'text-gray-400', label: 'Deleted' },
+    pending: { icon: <Loader2 size={16} className="animate-spin" />, className: 'text-amber-600', label: 'Pending' },
+  };
 
-  if (state === 'failed') {
-    return (
-      <span className="inline-flex items-center gap-1 text-red-600 text-sm">
-        <XCircle size={16} />
-        Summary failed
-        {error && <span className="text-xs text-red-500 ml-1">({error})</span>}
-      </span>
-    );
-  }
-
-  if (state === 'deleted') {
-    return (
-      <span className="inline-flex items-center gap-1 text-gray-400 text-sm">
-        <FileText size={16} />
-        Summary deleted
-      </span>
-    );
-  }
+  const cfg = stateConfig[state] ?? stateConfig.pending;
 
   return (
-    <span className="inline-flex items-center gap-1 text-amber-600 text-sm">
-      <Loader2 size={16} className="animate-spin" />
-      Summary pending
-    </span>
+    <div className="space-y-2">
+      <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1 text-sm">
+        <span className="text-gray-500">Status</span>
+        <span className={`inline-flex items-center gap-1.5 font-medium ${cfg.className}`}>
+          {cfg.icon}
+          {cfg.label}
+          {error && state === 'failed' && (
+            <span className="text-xs font-normal text-red-500 ml-1">({error})</span>
+          )}
+        </span>
+
+        {file_source && (
+          <>
+            <span className="text-gray-500">File source</span>
+            <span className="font-mono text-xs text-gray-700 break-all">{file_source}</span>
+          </>
+        )}
+
+        {track_id && (
+          <>
+            <span className="text-gray-500">Track ID</span>
+            <span className="font-mono text-xs text-gray-700 break-all">{track_id}</span>
+          </>
+        )}
+
+        {document_id && (
+          <>
+            <span className="text-gray-500">Document ID</span>
+            <span className="font-mono text-xs text-gray-700 break-all">{document_id}</span>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -167,7 +164,8 @@ export function KnowledgeGraphPanel({ meetingId, defaultExpanded = false }: Know
         try {
           const ts = await knowledgeGraphService.getSummaryTrackStatus(meetingId);
           setTrackStatus(ts);
-        } catch {
+        } catch (err) {
+          console.error('Failed to fetch summary track status:', err);
           setTrackStatus(null);
         }
       }
@@ -290,12 +288,7 @@ export function KnowledgeGraphPanel({ meetingId, defaultExpanded = false }: Know
         <div>
           <h4 className="text-lg font-semibold text-gray-900 mb-3">Summary Document</h4>
           <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-            <SummaryDocBadge doc={status?.summary_document} lightragUrl={status?.lightrag_url} />
-            {status?.summary_document?.file_source && (
-              <p className="text-xs text-gray-500 mt-2 font-mono break-all">
-                {status.summary_document.file_source}
-              </p>
-            )}
+            <SummaryDocRow doc={status?.summary_document} />
           </div>
         </div>
       )}
