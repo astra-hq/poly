@@ -107,6 +107,16 @@ impl LightRagProvider {
         self.execute(request, Method::GET, url).await
     }
 
+    async fn delete<B, T>(&self, segments: &[&str], body: &B) -> KnowledgeGraphResult<T>
+    where
+        B: Serialize + ?Sized,
+        T: DeserializeOwned,
+    {
+        let url = self.build_url(segments)?;
+        let request = self.auth(self.client.delete(url.clone()).json(body));
+        self.execute(request, Method::DELETE, url).await
+    }
+
     async fn post<B, T>(&self, segments: &[&str], body: &B) -> KnowledgeGraphResult<T>
     where
         B: Serialize + ?Sized,
@@ -169,16 +179,22 @@ impl KnowledgeGraphProvider for LightRagProvider {
 
         #[derive(Serialize)]
         struct DeleteRequest {
-            file_source: String,
+            doc_ids: Vec<String>,
+            #[serde(rename = "delete_file")]
+            delete_file: bool,
+            #[serde(rename = "delete_llm_cache")]
+            delete_llm_cache: bool,
         }
 
         #[derive(Deserialize)]
         struct DeleteResponse {}
 
-        self.post::<DeleteRequest, DeleteResponse>(
-            &["documents", "delete"],
+        self.delete::<DeleteRequest, DeleteResponse>(
+            &["documents", "delete_document"],
             &DeleteRequest {
-                file_source: file_source.to_string(),
+                doc_ids: vec![file_source.to_string()],
+                delete_file: false,
+                delete_llm_cache: false,
             },
         )
         .await?;
@@ -230,7 +246,7 @@ impl KnowledgeGraphProvider for LightRagProvider {
 mod tests {
     use super::*;
     use crate::knowledge_graph::types::QueryMode;
-    use httpmock::Method::{GET, POST};
+    use httpmock::Method::{DELETE, GET, POST};
     use httpmock::MockServer;
     use serde_json::json;
 
@@ -334,6 +350,26 @@ mod tests {
             .await
             .unwrap();
 
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn delete_by_file_source_sends_delete_with_doc_ids() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/documents/delete_document")
+                .header("X-API-Key", "secret")
+                .json_body(json!({
+                    "doc_ids": ["meeting-summary-123"],
+                    "delete_file": false,
+                    "delete_llm_cache": false
+                }));
+            then.status(200).json_body(json!({}));
+        });
+        let provider = LightRagProvider::new(server.base_url(), Some("secret".into())).unwrap();
+
+        provider.delete_by_file_source("meeting-summary-123").await.unwrap();
         mock.assert();
     }
 
