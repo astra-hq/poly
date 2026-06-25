@@ -786,6 +786,11 @@ pub async fn api_get_summary_track_status<R: Runtime>(
         .map_err(|e| format!("Failed to fetch summary document status: {}", e))?
         .ok_or_else(|| format!("No summary document record found for meeting {}", meeting_id))?;
 
+    info!(
+        "api_get_summary_track_status: meeting={} profile={} doc_state={:?} track_id={:?} document_id={:?}",
+        meeting_id, profile_id, doc_status.state, doc_status.track_id, doc_status.document_id
+    );
+
     let track_id = doc_status
         .track_id
         .ok_or_else(|| format!("Summary document for meeting {} has no track_id yet", meeting_id))?;
@@ -800,10 +805,21 @@ pub async fn api_get_summary_track_status<R: Runtime>(
     let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
+    info!(
+        "api_get_summary_track_status: fetching track_status for track_id={} from url={}",
+        track_id, profile.lightrag_url
+    );
+
     provider
-        .track_status(KnowledgeGraphTrackId(track_id))
+        .track_status(KnowledgeGraphTrackId(track_id.clone()))
         .await
-        .map_err(|e| format!("Failed to fetch track status: {}", e))
+        .map_err(|e| {
+            log::error!(
+                "api_get_summary_track_status: track_status failed for meeting={} track_id={}: {}",
+                meeting_id, track_id, e
+            );
+            format!("Failed to fetch track status: {}", e)
+        })
 }
 
 #[cfg(test)]

@@ -160,6 +160,7 @@ struct InsertTextResponse {
 struct TrackStatusResponse {
     track_id: String,
     documents: Vec<crate::knowledge_graph::types::TrackStatusDocument>,
+    #[serde(default)]
     total_count: usize,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     status_summary: BTreeMap<String, usize>,
@@ -455,5 +456,37 @@ mod tests {
         assert!(matches!(error, KnowledgeGraphProviderError::ProtocolError { .. }));
         assert!(error.to_string().contains("500"));
         assert!(error.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn track_status_parses_minimal_lightrag_response() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(GET).path("/documents/track_status/track-123");
+            then.status(200).json_body(json!({
+                "track_id": "track-123",
+                "documents": [
+                    {
+                        "id": "doc_abc",
+                        "status": "PROCESSED",
+                        "file_path": "meeting-summary-123"
+                    }
+                ],
+                "total_count": 1,
+                "status_summary": {"PROCESSED": 1}
+            }));
+        });
+        let provider = LightRagProvider::new(server.base_url(), None).unwrap();
+
+        let status = provider.track_status(KnowledgeGraphTrackId("track-123".into())).await.unwrap();
+        mock.assert();
+        assert_eq!(status.track_id, "track-123");
+        assert_eq!(status.total_count, 1);
+        assert_eq!(status.documents.len(), 1);
+        assert_eq!(status.documents[0].id, "doc_abc");
+        assert_eq!(status.documents[0].status, "PROCESSED");
+        assert_eq!(status.documents[0].file_path, "meeting-summary-123");
+        assert_eq!(status.documents[0].content_summary, "");
+        assert_eq!(status.documents[0].content_length, 0);
     }
 }

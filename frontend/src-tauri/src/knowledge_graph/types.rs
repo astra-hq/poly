@@ -102,10 +102,14 @@ pub enum KnowledgeGraphJobState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrackStatusDocument {
     pub id: String,
+    #[serde(default)]
     pub content_summary: String,
+    #[serde(default)]
     pub content_length: usize,
     pub status: String,
+    #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_id: Option<String>,
