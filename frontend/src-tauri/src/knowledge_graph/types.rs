@@ -100,11 +100,31 @@ pub enum KnowledgeGraphJobState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KnowledgeGraphTrackStatus {
-    pub track_id: KnowledgeGraphTrackId,
-    pub state: KnowledgeGraphJobState,
+pub struct TrackStatusDocument {
+    pub id: String,
+    pub content_summary: String,
+    pub content_length: usize,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunks_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_msg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<BTreeMap<String, String>>,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeGraphTrackStatus {
+    pub track_id: String,
+    pub documents: Vec<TrackStatusDocument>,
+    pub total_count: usize,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub status_summary: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,6 +145,10 @@ pub struct SummaryDocumentStatus {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
 }
 
 fn default_top_k() -> usize {

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use reqwest::{Client, Method, RequestBuilder, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::knowledge_graph::provider::{
@@ -157,12 +158,11 @@ struct InsertTextResponse {
 
 #[derive(Debug, Deserialize)]
 struct TrackStatusResponse {
-    #[serde(alias = "id")]
-    track_id: KnowledgeGraphTrackId,
-    #[serde(alias = "status")]
-    state: KnowledgeGraphJobState,
-    #[serde(default, alias = "message", alias = "error")]
-    detail: Option<String>,
+    track_id: String,
+    documents: Vec<crate::knowledge_graph::types::TrackStatusDocument>,
+    total_count: usize,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    status_summary: BTreeMap<String, usize>,
 }
 
 #[async_trait]
@@ -175,8 +175,6 @@ impl KnowledgeGraphProvider for LightRagProvider {
         &self,
         file_source: &str,
     ) -> KnowledgeGraphResult<()> {
-        use serde::Serialize;
-
         let query_request = crate::knowledge_graph::types::DocumentQueryRequest {
             status_filter: None,
             status_filters: None,
@@ -209,6 +207,15 @@ impl KnowledgeGraphProvider for LightRagProvider {
             }
         };
 
+        self.delete_by_doc_ids(&[doc_id]).await
+    }
+
+    async fn delete_by_doc_ids(
+        &self,
+        doc_ids: &[String],
+    ) -> KnowledgeGraphResult<()> {
+        use serde::Serialize;
+
         #[derive(Serialize)]
         struct DeleteRequest {
             doc_ids: Vec<String>,
@@ -224,7 +231,7 @@ impl KnowledgeGraphProvider for LightRagProvider {
         self.delete::<DeleteRequest, DeleteResponse>(
             &["documents", "delete_document"],
             &DeleteRequest {
-                doc_ids: vec![doc_id],
+                doc_ids: doc_ids.to_vec(),
                 delete_file: false,
                 delete_llm_cache: false,
             },
@@ -264,8 +271,9 @@ impl KnowledgeGraphProvider for LightRagProvider {
             .await
             .map(|response| KnowledgeGraphTrackStatus {
                 track_id: response.track_id,
-                state: response.state,
-                detail: response.detail,
+                documents: response.documents,
+                total_count: response.total_count,
+                status_summary: response.status_summary,
             })
     }
 

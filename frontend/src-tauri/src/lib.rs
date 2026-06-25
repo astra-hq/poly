@@ -775,6 +775,7 @@ pub fn run() {
             // Knowledge graph summary ingest
             knowledge_graph::commands::api_ingest_summary_to_knowledge_graph,
             knowledge_graph::commands::api_delete_summary_from_knowledge_graph,
+            knowledge_graph::commands::api_get_summary_track_status,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

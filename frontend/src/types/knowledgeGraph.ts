@@ -132,6 +132,31 @@ export interface KnowledgeGraphPipelineStatus {
   failed_documents: number;
 }
 
+// ── Track Status Document (types.rs) ─────────────────────────────────
+
+export interface TrackStatusDocument {
+  id: string;
+  content_summary: string;
+  content_length: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  track_id?: string;
+  chunks_count?: number;
+  error_msg?: string;
+  metadata?: Record<string, string>;
+  file_path: string;
+}
+
+// ── Track Status (types.rs) ──────────────────────────────────────────
+
+export interface KnowledgeGraphTrackStatus {
+  track_id: string;
+  documents: TrackStatusDocument[];
+  total_count: number;
+  status_summary?: Record<string, number>;
+}
+
 // ── Job State (types.rs) ─────────────────────────────────────────────
 
 /**
@@ -142,14 +167,6 @@ export type KnowledgeGraphJobState =
   | 'running'
   | 'completed'
   | 'failed';
-
-// ── Track Status (types.rs) ──────────────────────────────────────────
-
-export interface KnowledgeGraphTrackStatus {
-  track_id: string;
-  state: KnowledgeGraphJobState;
-  detail?: string;
-}
 
 // ── Ingestion Summary (service.rs) ───────────────────────────────────
 
@@ -184,6 +201,8 @@ export interface SummaryDocumentStatus {
   file_source?: string;
   error?: string;
   updated_at?: string;
+  track_id?: string;
+  document_id?: string;
 }
 
 // ── Meeting Knowledge Graph Status (service.rs) ──────────────────────

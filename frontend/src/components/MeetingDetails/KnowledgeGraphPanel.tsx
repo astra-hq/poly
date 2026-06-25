@@ -9,10 +9,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
-  ChevronDown,
-  ChevronUp,
   FileText,
-  Activity,
   ExternalLink,
   Settings,
 } from 'lucide-react';
@@ -20,13 +17,30 @@ import { knowledgeGraphService } from '@/services/knowledgeGraphService';
 import type {
   KnowledgeGraphProfile,
   MeetingKnowledgeGraphStatus,
-  KnowledgeGraphPipelineStatus,
   SummaryDocumentStatus,
+  KnowledgeGraphTrackStatus,
+  TrackStatusDocument,
 } from '@/types/knowledgeGraph';
 
 interface KnowledgeGraphPanelProps {
   meetingId: string;
   defaultExpanded?: boolean;
+}
+
+function statusColor(status: string): string {
+  const s = status.toLowerCase();
+  if (s === 'processed') return 'text-green-600';
+  if (s === 'failed') return 'text-red-600';
+  if (s === 'pending') return 'text-amber-600';
+  if (s === 'preprocessed') return 'text-blue-600';
+  if (s === 'parsing' || s === 'analyzing') return 'text-purple-600';
+  return 'text-gray-500';
+}
+
+function StatusDot({ status }: { status: string }) {
+  return (
+    <span className={`inline-block w-2 h-2 rounded-full mr-2 ${statusColor(status).replace('text-', 'bg-')}`} />
+  );
 }
 
 function SummaryDocBadge({ doc, lightragUrl }: { doc: SummaryDocumentStatus | undefined; lightragUrl: string | undefined }) {
@@ -89,51 +103,49 @@ function SummaryDocBadge({ doc, lightragUrl }: { doc: SummaryDocumentStatus | un
   );
 }
 
-function PipelineBadge({
-  pipeline,
-  lightragUrl,
-}: {
-  pipeline: KnowledgeGraphPipelineStatus | undefined;
-  lightragUrl: string | undefined;
-}) {
-  if (!pipeline) {
+function TrackStatusDocuments({ trackStatus }: { trackStatus: KnowledgeGraphTrackStatus | null }) {
+  if (!trackStatus) {
     return (
-      <span className="inline-flex items-center gap-1 text-gray-400 text-sm">
-        <Activity size={16} />
-        Pipeline status unavailable
+      <span className="text-sm text-gray-400">
+        Track status unavailable
       </span>
     );
   }
 
-  const { pending_documents, indexing_documents, failed_documents } = pipeline;
-  const total = pending_documents + indexing_documents + failed_documents;
-
-  if (total === 0) {
+  if (trackStatus.documents.length === 0) {
     return (
-      <span className="inline-flex items-center gap-1 text-green-600 text-sm">
-        <CheckCircle2 size={16} />
-        Pipeline idle
+      <span className="text-sm text-gray-400">
+        No documents in track
       </span>
     );
   }
 
   return (
-    <span className="inline-flex items-center gap-1 text-blue-600 text-sm">
-      <Activity size={16} />
-      Pipeline: {pending_documents} pending, {indexing_documents} indexing, {failed_documents} failed
-      {lightragUrl && (
-        <a
-          href={`${lightragUrl}/documents/pipeline_status`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-0.5 text-blue-700 hover:underline ml-1"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <ExternalLink size={12} />
-          View
-        </a>
+    <div className="space-y-2">
+      {trackStatus.documents.map((doc: TrackStatusDocument) => (
+        <div key={doc.id} className="flex items-center justify-between text-sm">
+          <div className="flex items-center min-w-0">
+            <StatusDot status={doc.status} />
+            <span className="truncate max-w-[200px]" title={doc.file_path}>
+              {doc.file_path}
+            </span>
+          </div>
+          <span className={`text-xs font-medium uppercase ${statusColor(doc.status)}`}>
+            {doc.status}
+          </span>
+        </div>
+      ))}
+      {trackStatus.status_summary && (
+        <div className="pt-2 mt-2 border-t border-gray-200 flex flex-wrap gap-3 text-xs text-gray-500">
+          {Object.entries(trackStatus.status_summary).map(([status, count]) => (
+            <span key={status} className="flex items-center gap-1">
+              <StatusDot status={status} />
+              {status}: {count}
+            </span>
+          ))}
+        </div>
       )}
-    </span>
+    </div>
   );
 }
 
@@ -143,7 +155,7 @@ export function KnowledgeGraphPanel({ meetingId, defaultExpanded = false }: Know
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [profiles, setProfiles] = useState<KnowledgeGraphProfile[]>([]);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
-  const [pipeline, setPipeline] = useState<KnowledgeGraphPipelineStatus | null>(null);
+  const [trackStatus, setTrackStatus] = useState<KnowledgeGraphTrackStatus | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -151,12 +163,12 @@ export function KnowledgeGraphPanel({ meetingId, defaultExpanded = false }: Know
       setStatus(fresh);
       setSelectedProfileId(fresh.selected_profile_id);
 
-      if (fresh.selected_profile_id) {
+      if (fresh.selected_profile_id && fresh.summary_document?.track_id) {
         try {
-          const pipe = await knowledgeGraphService.getPipelineStatus(fresh.selected_profile_id);
-          setPipeline(pipe);
+          const ts = await knowledgeGraphService.getSummaryTrackStatus(meetingId);
+          setTrackStatus(ts);
         } catch {
-          setPipeline(null);
+          setTrackStatus(null);
         }
       }
     } catch {
@@ -288,12 +300,12 @@ export function KnowledgeGraphPanel({ meetingId, defaultExpanded = false }: Know
         </div>
       )}
 
-      {/* Pipeline Status */}
-      {hasProfile && (
+      {/* Track Status */}
+      {hasProfile && status?.summary_document?.track_id && (
         <div>
-          <h4 className="text-lg font-semibold text-gray-900 mb-3">Pipeline Status</h4>
+          <h4 className="text-lg font-semibold text-gray-900 mb-3">Track Status</h4>
           <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-            <PipelineBadge pipeline={pipeline ?? undefined} lightragUrl={status?.lightrag_url} />
+            <TrackStatusDocuments trackStatus={trackStatus} />
           </div>
         </div>
       )}

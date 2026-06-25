@@ -1,9 +1,11 @@
 use log::info;
+use std::time::Duration;
 use tauri::{AppHandle, Runtime};
+use tokio::time::interval;
 
 use crate::knowledge_graph::config::KnowledgeGraphSelection;
 use crate::knowledge_graph::lightrag::LightRagProvider;
-use crate::knowledge_graph::provider::KnowledgeGraphProvider;
+use crate::knowledge_graph::provider::{KnowledgeGraphProvider, KnowledgeGraphProviderError};
 use crate::knowledge_graph::service::{
     IngestionSummary, KnowledgeGraphIngestionService, MeetingKnowledgeGraphStatus,
 };
@@ -13,9 +15,92 @@ use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::secrets::refs::knowledge_graph_profile_key;
 use crate::secrets::store::SecretStore;
 use crate::knowledge_graph::types::{
-    KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, QueryMode,
+    KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, QueryMode,
 };
 use crate::state::AppState;
+
+const TRACK_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const TRACK_STATUS_MAX_WAIT: Duration = Duration::from_secs(120);
+
+fn is_final_status(status: &str) -> bool {
+    matches!(status.to_uppercase().as_str(), "PROCESSED" | "FAILED")
+}
+
+async fn poll_track_status_until_final(
+    provider: &dyn KnowledgeGraphProvider,
+    track_id: &str,
+) -> Result<crate::knowledge_graph::types::KnowledgeGraphTrackStatus, String> {
+    let start = std::time::Instant::now();
+    let mut ticker = interval(TRACK_STATUS_POLL_INTERVAL);
+
+    loop {
+        ticker.tick().await;
+
+        if start.elapsed() > TRACK_STATUS_MAX_WAIT {
+            return Err(format!(
+                "Timeout waiting for track {} to reach final status after {:?}",
+                track_id, TRACK_STATUS_MAX_WAIT
+            ));
+        }
+
+        match provider
+            .track_status(KnowledgeGraphTrackId(track_id.to_string()))
+            .await
+        {
+            Ok(status) => {
+                let all_final = status.documents.iter().all(|doc| is_final_status(&doc.status));
+                if all_final {
+                    return Ok(status);
+                }
+            }
+            Err(e) => {
+                log::warn!("Track status poll failed for {}: {}", track_id, e);
+            }
+        }
+    }
+}
+
+async fn wait_for_document_deletion(
+    provider: &dyn KnowledgeGraphProvider,
+    track_id: &str,
+    document_id: &str,
+) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let mut ticker = interval(TRACK_STATUS_POLL_INTERVAL);
+
+    loop {
+        ticker.tick().await;
+
+        if start.elapsed() > TRACK_STATUS_MAX_WAIT {
+            return Err(format!(
+                "Timeout waiting for document {} deletion after {:?}",
+                document_id, TRACK_STATUS_MAX_WAIT
+            ));
+        }
+
+        match provider
+            .track_status(KnowledgeGraphTrackId(track_id.to_string()))
+            .await
+        {
+            Ok(status) => {
+                let still_exists = status.documents.iter().any(|doc| doc.id == document_id);
+                if !still_exists {
+                    log::info!("Document {} no longer in track {} — deletion confirmed", document_id, track_id);
+                    return Ok(());
+                }
+            }
+            Err(KnowledgeGraphProviderError::ProtocolError { message })
+                if message.contains("404") || message.contains("Not Found") =>
+            {
+                log::info!("Track {} returned 404 — deletion confirmed", track_id);
+                return Ok(());
+            }
+            Err(e) => {
+                log::warn!("Track status poll during delete failed for {}: {}", track_id, e);
+            }
+        }
+    }
+}
 
 #[tauri::command]
 pub async fn api_ingest_meeting_to_knowledge_graph<R: Runtime>(
@@ -422,11 +507,40 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
     };
 
     match provider.insert_text(request).await {
-        Ok(_) => {
+        Ok(insert_response) => {
+            let track_id = insert_response.track_id.0.clone();
             info!(
-                "Summary ingested to knowledge graph for meeting {} (profile: {})",
-                meeting_id, profile_id
+                "Summary insert accepted for meeting {} (profile: {}) track_id={}",
+                meeting_id, profile_id, track_id
             );
+
+            let track_status = match poll_track_status_until_final(&provider, &track_id).await {
+                Ok(status) => status,
+                Err(e) => {
+                    let error_msg = e;
+                    let service = KnowledgeGraphIngestionService::new(pool.clone());
+                    let _ = service
+                        .track_summary_document(
+                            &meeting_id,
+                            &profile_id,
+                            &file_source,
+                            crate::knowledge_graph::types::SummaryDocumentState::Failed,
+                            Some(&error_msg),
+                            Some(&track_id),
+                            None,
+                        )
+                        .await;
+                    return Err(format!(
+                        "Failed to insert summary to knowledge graph: {}",
+                        error_msg
+                    ));
+                }
+            };
+
+            let document_id = track_status
+                .documents
+                .first()
+                .map(|doc| doc.id.clone());
 
             let service = KnowledgeGraphIngestionService::new(pool.clone());
             let _ = service
@@ -436,8 +550,15 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                     &file_source,
                     crate::knowledge_graph::types::SummaryDocumentState::Ingested,
                     None,
+                    Some(&track_id),
+                    document_id.as_deref(),
                 )
                 .await;
+
+            info!(
+                "Summary ingested to knowledge graph for meeting {} (profile: {}) track_id={} document_id={:?}",
+                meeting_id, profile_id, track_id, document_id
+            );
 
             Ok(SummaryIngestResult {
                 meeting_id,
@@ -456,6 +577,8 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                     &file_source,
                     crate::knowledge_graph::types::SummaryDocumentState::Failed,
                     Some(&error_msg),
+                    None,
+                    None,
                 )
                 .await;
 
@@ -539,27 +662,58 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
     let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
-    // ── Get meeting title for document naming ──────────────────
-    let meeting_title = fetch_meeting_title(pool, &meeting_id).await?;
+    let service = KnowledgeGraphIngestionService::new(pool.clone());
 
-    // ── Delete from KG (try both old and new file_source formats) ─
-    // Old format: resourcefully/meetings/{meeting_id}/summary.md
-    // New format: resourcefully/meetings/{title}_{meeting_id}/summary.md
-    let file_sources = summary_delete_file_sources(&meeting_id, &meeting_title);
+    let stored_doc = service
+        .get_summary_document_status(&meeting_id, &profile_id)
+        .await
+        .ok()
+        .flatten();
+
     let mut last_error = None;
-    for fs in &file_sources {
-        match provider.delete_by_file_source(fs).await {
-            Ok(()) => {
-                info!("Deleted summary from KG with file_source: {}", fs);
-            }
-            Err(e) => {
-                info!("Summary deletion with file_source {} returned: {}", fs, e);
-                last_error = Some(e.to_string());
+
+    if let Some(ref doc) = stored_doc {
+        if let (Some(track_id), Some(document_id)) = (doc.track_id.as_deref(), doc.document_id.as_deref()) {
+            info!(
+                "Deleting summary from KG by document_id {} (track_id: {}) for meeting {}",
+                document_id, track_id, meeting_id
+            );
+
+            match provider.delete_by_doc_ids(&[document_id.to_string()]).await {
+                Ok(_) => {
+                    info!("Delete request accepted for document_id {}, waiting for confirmation", document_id);
+                    if let Err(e) = wait_for_document_deletion(&provider, track_id, document_id).await {
+                        log::warn!("Wait for deletion failed: {}", e);
+                        last_error = Some(e);
+                    } else {
+                        info!("Document {} confirmed deleted", document_id);
+                    }
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    log::warn!("Delete request failed for document_id {}: {}", document_id, msg);
+                    last_error = Some(msg);
+                }
             }
         }
     }
 
-    let service = KnowledgeGraphIngestionService::new(pool.clone());
+    if last_error.is_some() || stored_doc.is_none() || stored_doc.as_ref().map(|d| d.document_id.is_none()).unwrap_or(true) {
+        let meeting_title = fetch_meeting_title(pool, &meeting_id).await?;
+        let file_sources = summary_delete_file_sources(&meeting_id, &meeting_title);
+        for fs in &file_sources {
+            match provider.delete_by_file_source(fs).await {
+                Ok(()) => {
+                    info!("Deleted summary from KG with file_source: {}", fs);
+                }
+                Err(e) => {
+                    info!("Summary deletion with file_source {} returned: {}", fs, e);
+                    last_error = Some(e.to_string());
+                }
+            }
+        }
+    }
+
     let _ = service
         .track_summary_document(
             &meeting_id,
@@ -567,6 +721,8 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
             &summary_file_source(&meeting_id),
             crate::knowledge_graph::types::SummaryDocumentState::Deleted,
             last_error.as_deref(),
+            None,
+            None,
         )
         .await;
 
@@ -576,6 +732,78 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
         ingested: true,
         error: last_error,
     })
+}
+
+/// Fetch the LightRAG track status for a meeting's summary document.
+///
+/// Looks up the stored track_id for the meeting + effective profile,
+/// then polls the provider's `/documents/track_status/{track_id}` endpoint.
+/// Returns the full document list with statuses.
+#[tauri::command]
+pub async fn api_get_summary_track_status<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+    meeting_id: String,
+) -> Result<crate::knowledge_graph::types::KnowledgeGraphTrackStatus, String> {
+    info!("api_get_summary_track_status: meeting={}", meeting_id);
+
+    let pool = state.db_manager.pool();
+
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
+
+    let selection_row =
+        sqlx::query_as::<_, crate::database::models::KnowledgeGraphMeetingSelection>(
+            "SELECT meeting_id, profile_id, meeting_type, routing_reason, created_at, updated_at \
+         FROM knowledge_graph_meeting_selection WHERE meeting_id = $1",
+        )
+        .bind(&meeting_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("Failed to query meeting KG selection: {}", e))?;
+
+    let effective_profile = resolve_effective_profile(selection_row.as_ref(), &settings);
+
+    let profile_id = match effective_profile {
+        Some(pid) => pid.to_string(),
+        None => {
+            return Err("No KG profile selected for this meeting".to_string());
+        }
+    };
+
+    let profile = settings
+        .profiles
+        .iter()
+        .find(|p| p.id == profile_id)
+        .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
+
+    let service = KnowledgeGraphIngestionService::new(pool.clone());
+    let doc_status = service
+        .get_summary_document_status(&meeting_id, &profile_id)
+        .await
+        .map_err(|e| format!("Failed to fetch summary document status: {}", e))?
+        .ok_or_else(|| format!("No summary document record found for meeting {}", meeting_id))?;
+
+    let track_id = doc_status
+        .track_id
+        .ok_or_else(|| format!("Summary document for meeting {} has no track_id yet", meeting_id))?;
+
+    let secret_ref = knowledge_graph_profile_key(&profile_id);
+    let api_key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read API key: {}", e))?
+        .filter(|k| !k.is_empty());
+
+    let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
+        .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
+
+    provider
+        .track_status(KnowledgeGraphTrackId(track_id))
+        .await
+        .map_err(|e| format!("Failed to fetch track status: {}", e))
 }
 
 #[cfg(test)]

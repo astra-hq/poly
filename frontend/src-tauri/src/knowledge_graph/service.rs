@@ -363,13 +363,13 @@ impl KnowledgeGraphIngestionService {
         })
     }
 
-    async fn get_summary_document_status(
+    pub async fn get_summary_document_status(
         &self,
         meeting_id: &str,
         profile_id: &str,
     ) -> Result<Option<crate::knowledge_graph::types::SummaryDocumentStatus>, String> {
         let row = sqlx::query(
-            "SELECT status, file_source, error, updated_at \
+            "SELECT status, file_source, error, updated_at, track_id, document_id \
              FROM knowledge_graph_summary_documents \
              WHERE meeting_id = ? AND profile_id = ?",
         )
@@ -393,10 +393,30 @@ impl KnowledgeGraphIngestionService {
                     file_source: r.get("file_source"),
                     error: r.get("error"),
                     updated_at: r.get("updated_at"),
+                    track_id: r.get("track_id"),
+                    document_id: r.get("document_id"),
                 }))
             }
             None => Ok(None),
         }
+    }
+
+    pub async fn get_summary_document_id(
+        &self,
+        meeting_id: &str,
+        profile_id: &str,
+    ) -> Result<Option<String>, String> {
+        let row = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT document_id FROM knowledge_graph_summary_documents \
+             WHERE meeting_id = ? AND profile_id = ?",
+        )
+        .bind(meeting_id)
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to fetch summary document id: {}", e))?;
+
+        Ok(row.flatten())
     }
 
     /// Track summary document ingestion result.
@@ -407,6 +427,8 @@ impl KnowledgeGraphIngestionService {
         file_source: &str,
         state: crate::knowledge_graph::types::SummaryDocumentState,
         error: Option<&str>,
+        track_id: Option<&str>,
+        document_id: Option<&str>,
     ) -> Result<(), String> {
         let now = Utc::now().to_rfc3339();
         let status = match state {
@@ -418,12 +440,14 @@ impl KnowledgeGraphIngestionService {
 
         sqlx::query(
             "INSERT INTO knowledge_graph_summary_documents \
-             (meeting_id, profile_id, file_source, status, error, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             (meeting_id, profile_id, file_source, status, error, track_id, document_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(meeting_id, profile_id) DO UPDATE SET \
              file_source = excluded.file_source, \
              status = excluded.status, \
              error = excluded.error, \
+             track_id = COALESCE(excluded.track_id, track_id), \
+             document_id = COALESCE(excluded.document_id, document_id), \
              updated_at = excluded.updated_at",
         )
         .bind(meeting_id)
@@ -431,6 +455,8 @@ impl KnowledgeGraphIngestionService {
         .bind(file_source)
         .bind(status)
         .bind(error)
+        .bind(track_id)
+        .bind(document_id)
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
@@ -499,6 +525,10 @@ mod tests {
         }
 
         async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
+            Ok(())
+        }
+
+        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
             Ok(())
         }
 
