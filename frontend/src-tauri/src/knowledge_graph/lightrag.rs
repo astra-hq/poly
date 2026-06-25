@@ -177,6 +177,38 @@ impl KnowledgeGraphProvider for LightRagProvider {
     ) -> KnowledgeGraphResult<()> {
         use serde::Serialize;
 
+        let query_request = crate::knowledge_graph::types::DocumentQueryRequest {
+            status_filter: None,
+            status_filters: None,
+            page: 1,
+            page_size: 200,
+            sort_field: "file_path".to_string(),
+            sort_direction: "asc".to_string(),
+        };
+
+        let query_result: Result<crate::knowledge_graph::types::DocumentQueryResponse, _> =
+            self.post(&["documents"], &query_request).await;
+
+        let doc_id = match query_result {
+            Ok(response) => response
+                .documents
+                .into_iter()
+                .find(|doc| doc.file_path == file_source)
+                .map(|doc| doc.id),
+            Err(e) => {
+                log::warn!("Document query failed ({}), falling back to direct delete", e);
+                None
+            }
+        };
+
+        let doc_id = match doc_id {
+            Some(id) => id,
+            None => {
+                log::info!("Document with file_path '{}' not found in KG, trying direct delete", file_source);
+                file_source.to_string()
+            }
+        };
+
         #[derive(Serialize)]
         struct DeleteRequest {
             doc_ids: Vec<String>,
@@ -192,7 +224,7 @@ impl KnowledgeGraphProvider for LightRagProvider {
         self.delete::<DeleteRequest, DeleteResponse>(
             &["documents", "delete_document"],
             &DeleteRequest {
-                doc_ids: vec![file_source.to_string()],
+                doc_ids: vec![doc_id],
                 delete_file: false,
                 delete_llm_cache: false,
             },
@@ -354,14 +386,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn delete_by_file_source_sends_delete_with_doc_ids() {
+    async fn delete_by_file_source_queries_then_deletes_by_doc_id() {
         let server = MockServer::start();
-        let mock = server.mock(|when, then| {
+        let query_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/documents")
+                .header("X-API-Key", "secret");
+            then.status(200).json_body(json!({
+                "documents": [
+                    {
+                        "id": "doc-123",
+                        "content_summary": "Summary",
+                        "content_length": 100,
+                        "status": "processed",
+                        "created_at": "2025-01-01T00:00:00",
+                        "updated_at": "2025-01-01T00:00:00",
+                        "file_path": "meeting-summary-123"
+                    }
+                ],
+                "pagination": {
+                    "page": 1,
+                    "page_size": 200,
+                    "total_count": 1,
+                    "total_pages": 1,
+                    "has_next": false,
+                    "has_prev": false
+                },
+                "status_counts": {}
+            }));
+        });
+        let delete_mock = server.mock(|when, then| {
             when.method(DELETE)
                 .path("/documents/delete_document")
                 .header("X-API-Key", "secret")
                 .json_body(json!({
-                    "doc_ids": ["meeting-summary-123"],
+                    "doc_ids": ["doc-123"],
                     "delete_file": false,
                     "delete_llm_cache": false
                 }));
@@ -370,7 +429,8 @@ mod tests {
         let provider = LightRagProvider::new(server.base_url(), Some("secret".into())).unwrap();
 
         provider.delete_by_file_source("meeting-summary-123").await.unwrap();
-        mock.assert();
+        query_mock.assert();
+        delete_mock.assert();
     }
 
     #[tokio::test]

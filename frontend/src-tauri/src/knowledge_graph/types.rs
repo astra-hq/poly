@@ -131,6 +131,72 @@ fn default_top_k() -> usize {
     5
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentQueryRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_filter: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_filters: Option<Vec<String>>,
+    #[serde(default = "default_page")]
+    pub page: usize,
+    #[serde(default = "default_page_size")]
+    pub page_size: usize,
+    #[serde(default = "default_sort_field")]
+    pub sort_field: String,
+    #[serde(default = "default_sort_direction")]
+    pub sort_direction: String,
+}
+
+fn default_page() -> usize {
+    1
+}
+fn default_page_size() -> usize {
+    200
+}
+fn default_sort_field() -> String {
+    "file_path".to_string()
+}
+fn default_sort_direction() -> String {
+    "asc".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentStatus {
+    pub id: String,
+    pub content_summary: String,
+    pub content_length: usize,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunks_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_msg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<BTreeMap<String, String>>,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaginationInfo {
+    pub page: usize,
+    pub page_size: usize,
+    pub total_count: usize,
+    pub total_pages: usize,
+    pub has_next: bool,
+    pub has_prev: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentQueryResponse {
+    pub documents: Vec<DocumentStatus>,
+    pub pagination: PaginationInfo,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub status_counts: BTreeMap<String, usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
