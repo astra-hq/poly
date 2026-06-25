@@ -25,6 +25,10 @@ pub struct KnowledgeGraphSettings {
 ///
 /// The `id` field is the stable identity of the profile; `name` is a
 /// human-readable display label that can change without breaking references.
+///
+/// `api_key` is always `None` in responses — raw secrets are never returned
+/// from the backend.  The `has_secret` and `api_key_masked_hint` fields
+/// carry the enriched secret-status information that the frontend displays.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KnowledgeGraphProfile {
     pub id: String,
@@ -38,6 +42,10 @@ pub struct KnowledgeGraphProfile {
     pub api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    #[serde(default)]
+    pub has_secret: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_masked_hint: Option<String>,
 }
 
 /// Embedding provider and model configuration.
@@ -77,6 +85,8 @@ impl Default for KnowledgeGraphProfile {
             lightrag_url: "http://localhost:9621".to_string(),
             api_key: None,
             notes: None,
+            has_secret: false,
+            api_key_masked_hint: None,
         }
     }
 }
@@ -454,6 +464,8 @@ mod tests {
                 lightrag_url: "http://localhost:9621".into(),
                 api_key: Some("secret".into()),
                 notes: Some("production profile".into()),
+                has_secret: false,
+                api_key_masked_hint: None,
             }],
             active_profile: KnowledgeGraphSelection::Profile("prod-1".into()),
         };

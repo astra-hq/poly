@@ -884,7 +884,7 @@ mod tests {
         let service = KnowledgeGraphIngestionService::new(pool);
 
         let status = service
-            .get_meeting_status("meeting-1", None)
+            .get_meeting_status("meeting-1", None, None)
             .await
             .expect("status");
 
@@ -904,7 +904,7 @@ mod tests {
         let service = KnowledgeGraphIngestionService::new(pool);
 
         let status = service
-            .get_meeting_status("meeting-1", Some("none"))
+            .get_meeting_status("meeting-1", Some("none"), None)
             .await
             .expect("status");
 
@@ -920,7 +920,7 @@ mod tests {
         // First, check status is zero before ingestion.
         let service = KnowledgeGraphIngestionService::new(pool.clone());
         let status_before = service
-            .get_meeting_status("meeting-stat", Some("default"))
+            .get_meeting_status("meeting-stat", Some("default"), None)
             .await
             .expect("status before");
         assert_eq!(status_before.submitted_count, 0);
@@ -935,7 +935,7 @@ mod tests {
 
         // Check status after.
         let status_after = service
-            .get_meeting_status("meeting-stat", Some("default"))
+            .get_meeting_status("meeting-stat", Some("default"), None)
             .await
             .expect("status after");
         assert_eq!(status_after.submitted_count, 1);
@@ -961,7 +961,7 @@ mod tests {
             .expect("ingestion with failure");
 
         let status = service
-            .get_meeting_status("meeting-err", Some("default"))
+            .get_meeting_status("meeting-err", Some("default"), None)
             .await
             .expect("status");
 
@@ -978,7 +978,7 @@ mod tests {
         let service = KnowledgeGraphIngestionService::new(pool);
 
         let status = service
-            .get_meeting_status("empty-meeting", Some("default"))
+            .get_meeting_status("empty-meeting", Some("default"), None)
             .await
             .expect("status");
 

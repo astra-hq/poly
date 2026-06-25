@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_store::StoreExt;
-use log::{info, warn, error};
+use log::{info, warn};
 use anyhow::Result;
 
 use crate::state::AppState;
-use crate::database::repositories::setting::SettingsRepository;
 
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -175,34 +174,26 @@ pub async fn complete_onboarding<R: Runtime>(
 ) -> Result<(), String> {
     info!("Completing onboarding with builtin-ai model: {}", model);
 
-    // Step 1: Save model configuration to SQLite database FIRST
-    let pool = state.db_manager.pool();
+    // Step 1: Save model configuration to YAML config via ConfigRepository
+    let mut config = state.config_repo.load_or_create_default()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
 
     // Onboarding always uses builtin-ai (local LLM)
-    if let Err(e) = SettingsRepository::save_model_config(
-        pool,
-        "builtin-ai",
-        &model,
-        "large-v3",
-        None,
-    ).await {
-        error!("Failed to save builtin-ai model config: {}", e);
-        return Err(format!("Failed to save builtin-ai model config: {}", e));
-    }
-    info!("Saved builtin-ai model config: model={}", model);
+    config.summary.provider = "builtin-ai".to_string();
+    config.summary.model = model.clone();
+    config.summary.whisper_model = "large-v3".to_string();
 
-    // Save transcription model config (parakeet provider) - always parakeet
-    if let Err(e) = SettingsRepository::save_transcript_config(
-        pool,
-        "parakeet",
-        crate::config::DEFAULT_PARAKEET_MODEL,
-    ).await {
-        error!("Failed to save transcription model config: {}", e);
-        return Err(format!("Failed to save transcription model config: {}", e));
-    }
-    info!("Saved transcription model config: provider=parakeet, model={}", crate::config::DEFAULT_PARAKEET_MODEL);
+    // Transcription always uses parakeet
+    config.transcript.provider = "parakeet".to_string();
+    config.transcript.model = crate::config::DEFAULT_PARAKEET_MODEL.to_string();
 
-    // Step 2: Only NOW mark onboarding as complete (after DB operations succeed)
+    state.config_repo.save_atomic(&config)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    info!("Saved onboarding config to YAML: model={}, transcript_model={}",
+          model, crate::config::DEFAULT_PARAKEET_MODEL);
+
+    // Step 2: Only NOW mark onboarding as complete (after config save succeeds)
     let mut status = load_onboarding_status(&app)
         .await
         .map_err(|e| format!("Failed to load onboarding status: {}", e))?;

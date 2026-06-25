@@ -38,6 +38,7 @@ pub mod analytics;
 pub mod api;
 pub mod audio;
 pub mod config;
+pub mod resourcefully_config;
 pub mod console_utils;
 pub mod database;
 pub mod notifications;
@@ -49,6 +50,7 @@ pub mod groq;
 pub mod knowledge_graph;
 pub mod openrouter;
 pub mod parakeet_engine;
+pub mod secrets;
 pub mod state;
 pub mod summary;
 pub mod tray;
@@ -639,6 +641,9 @@ pub fn run() {
             api::api_get_model_config,
             api::api_save_model_config,
             api::api_get_api_key,
+            api::api_get_api_key_status,
+            api::api_delete_api_key,
+            api::api_delete_transcript_api_key,
             // api::api_get_auto_generate_setting,
             // api::api_save_auto_generate_setting,
             api::api_get_transcript_config,
@@ -658,6 +663,8 @@ pub fn run() {
             api::api_save_custom_openai_config,
             api::api_get_custom_openai_config,
             api::api_test_custom_openai_connection,
+            // Secret storage diagnostics
+            api::api_get_secret_storage_status,
             // Summary commands
             summary::commands::api_process_transcript,
             summary::commands::api_get_summary,

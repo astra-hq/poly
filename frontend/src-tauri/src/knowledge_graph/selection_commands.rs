@@ -4,6 +4,8 @@ use tauri::{AppHandle, Runtime};
 
 use crate::database::models::KnowledgeGraphMeetingSelection;
 use crate::knowledge_graph::settings_commands::load_kg_settings;
+use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
+use crate::resourcefully_config::repository::ConfigRepository;
 use crate::state::AppState;
 
 /// Persisted per-meeting KG profile selection intent.
@@ -88,8 +90,10 @@ pub async fn api_set_meeting_knowledge_graph_selection<R: Runtime>(
         if pid.is_empty() {
             return Err("profile_id cannot be empty (pass null for 'none')".into());
         }
-        let pool = state.db_manager.pool();
-        let settings = load_kg_settings(pool).await?;
+        let config_repo = ConfigRepository::new();
+        let store = KeyringFirstSecretStore::default_store()
+            .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+        let settings = load_kg_settings(&config_repo, &store).await?;
         let found = settings.profiles.iter().any(|p| p.id == *pid);
         if !found {
             return Err(format!(
@@ -159,6 +163,64 @@ mod tests {
         KnowledgeGraphProfile, KnowledgeGraphSelection as KgSelection,
     };
     use crate::knowledge_graph::settings_commands::save_kg_settings;
+    use crate::resourcefully_config::repository::ConfigRepository;
+    use crate::secrets::store::SecretStore;
+    use crate::secrets::types::{SecretRef, SecretStoreError};
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    struct TestSecretStore {
+        data: Mutex<HashMap<String, String>>,
+    }
+
+    impl TestSecretStore {
+        fn new() -> Self {
+            Self {
+                data: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SecretStore for TestSecretStore {
+        async fn get(
+            &self,
+            key: &SecretRef,
+        ) -> Result<Option<String>, SecretStoreError> {
+            Ok(self.data.lock().unwrap().get(key.as_str()).cloned())
+        }
+        async fn set(
+            &self,
+            key: &SecretRef,
+            value: &str,
+        ) -> Result<(), SecretStoreError> {
+            self.data
+                .lock()
+                .unwrap()
+                .insert(key.as_str().to_string(), value.to_string());
+            Ok(())
+        }
+        async fn delete(
+            &self,
+            key: &SecretRef,
+        ) -> Result<(), SecretStoreError> {
+            self.data.lock().unwrap().remove(key.as_str());
+            Ok(())
+        }
+        async fn exists(
+            &self,
+            key: &SecretRef,
+        ) -> Result<bool, SecretStoreError> {
+            Ok(self.data.lock().unwrap().contains_key(key.as_str()))
+        }
+    }
+
+    fn test_config_repo() -> (ConfigRepository, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resourcefully.yml");
+        (ConfigRepository::with_path(path), dir)
+    }
 
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:")
@@ -246,7 +308,9 @@ mod tests {
             }],
             active_profile: KgSelection::None,
         };
-        save_kg_settings(&pool, &settings).await.unwrap();
+        let (cfg_repo, _cfg_dir) = test_config_repo();
+        let secret_store = TestSecretStore::new();
+        save_kg_settings(&cfg_repo, &secret_store, &settings).await.unwrap();
 
         // Simulate the set command's logic directly (avoiding tauri::State).
         let profile_id = Some("prod-1".to_string());
@@ -316,7 +380,7 @@ mod tests {
         let pool = test_pool().await;
         insert_meeting(&pool, "meeting-3").await;
 
-        // Seed a profile.
+        // Seed profiles.
         let settings = crate::knowledge_graph::config::KnowledgeGraphSettings {
             profiles: vec![
                 KnowledgeGraphProfile {
@@ -332,7 +396,9 @@ mod tests {
             ],
             active_profile: KgSelection::None,
         };
-        save_kg_settings(&pool, &settings).await.unwrap();
+        let (cfg_repo, _cfg_dir) = test_config_repo();
+        let secret_store = TestSecretStore::new();
+        save_kg_settings(&cfg_repo, &secret_store, &settings).await.unwrap();
 
         // First insert with profile "a".
         let now = Utc::now().to_rfc3339();
@@ -405,7 +471,9 @@ mod tests {
 
         // No profiles in settings — validation must fail for any profile_id.
         let pid = Some("nonexistent".to_string());
-        let settings = load_kg_settings(&pool).await.unwrap();
+        let (cfg_repo, _cfg_dir) = test_config_repo();
+        let secret_store = TestSecretStore::new();
+        let settings = load_kg_settings(&cfg_repo, &secret_store).await.unwrap();
         let found = settings.profiles.iter().any(|p| p.id == pid.as_deref().unwrap());
         assert!(!found, "profile must not be found");
 
@@ -459,7 +527,9 @@ mod tests {
             }],
             active_profile: KgSelection::None,
         };
-        save_kg_settings(&pool, &settings).await.unwrap();
+        let (cfg_repo, _cfg_dir) = test_config_repo();
+        let secret_store = TestSecretStore::new();
+        save_kg_settings(&cfg_repo, &secret_store, &settings).await.unwrap();
 
         // Read the original meeting row.
         let original = sqlx::query_as::<_, crate::database::models::MeetingModel>(

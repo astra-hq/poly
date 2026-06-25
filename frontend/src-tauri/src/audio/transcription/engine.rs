@@ -73,7 +73,7 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
             crate::api::api::TranscriptConfig {
                 provider: "parakeet".to_string(),
                 model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
+                api_key_status: None,
             }
         }
         Err(e) => {
@@ -81,7 +81,7 @@ pub async fn validate_transcription_model_ready<R: Runtime>(app: &AppHandle<R>) 
             crate::api::api::TranscriptConfig {
                 provider: "parakeet".to_string(),
                 model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
+                api_key_status: None,
             }
         }
     };
@@ -169,7 +169,7 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
             crate::api::api::TranscriptConfig {
                 provider: "parakeet".to_string(),
                 model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
+                api_key_status: None,
             }
         }
         Err(e) => {
@@ -177,7 +177,7 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
             crate::api::api::TranscriptConfig {
                 provider: "parakeet".to_string(),
                 model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
+                api_key_status: None,
             }
         }
     };

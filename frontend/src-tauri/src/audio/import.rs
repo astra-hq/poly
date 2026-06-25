@@ -839,39 +839,31 @@ async fn get_or_init_parakeet<R: Runtime>(
     }
 }
 
-/// Get the configured model from database
+/// Get the configured model from the YAML config (previously read from the
+/// now-dropped `transcript_settings` SQLite table).
 async fn get_configured_model<R: Runtime>(app: &AppHandle<R>, provider_type: &str) -> Result<String> {
     let app_state = app
         .try_state::<AppState>()
         .ok_or_else(|| anyhow!("App state not available"))?;
 
-    let result: Option<(String, String)> = sqlx::query_as(
-        "SELECT provider, model FROM transcript_settings WHERE id = '1'",
-    )
-    .fetch_optional(app_state.db_manager.pool())
-    .await
-    .map_err(|e| anyhow!("Failed to query config: {}", e))?;
+    let config = app_state
+        .config_repo
+        .load()
+        .map_err(|e| anyhow!("Failed to load config: {}", e))?;
+    let provider = &config.transcript.provider;
+    let model = &config.transcript.model;
 
-    match result {
-        Some((provider, model)) => {
-            if (provider_type == "whisper" && (provider == "localWhisper" || provider == "whisper"))
-                || (provider_type == "parakeet" && provider == "parakeet")
-            {
-                Ok(model)
-            } else {
-                // Return default model for the requested type
-                Ok(if provider_type == "parakeet" {
-                    DEFAULT_PARAKEET_MODEL.to_string()
-                } else {
-                    DEFAULT_WHISPER_MODEL.to_string()
-                })
-            }
-        }
-        None => Ok(if provider_type == "parakeet" {
+    if (provider_type == "whisper" && (provider == "localWhisper" || provider == "whisper"))
+        || (provider_type == "parakeet" && provider == "parakeet")
+    {
+        Ok(model.clone())
+    } else {
+        // Return default model for the requested type
+        Ok(if provider_type == "parakeet" {
             DEFAULT_PARAKEET_MODEL.to_string()
         } else {
             DEFAULT_WHISPER_MODEL.to_string()
-        }),
+        })
     }
 }
 

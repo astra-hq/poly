@@ -1,6 +1,10 @@
 use crate::database::repositories::{
-    meeting::MeetingsRepository, setting::SettingsRepository, summary::SummaryProcessesRepository,
+    meeting::MeetingsRepository, summary::SummaryProcessesRepository,
 };
+use crate::resourcefully_config::ConfigRepository;
+use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
+use crate::secrets::refs;
+use crate::secrets::store::SecretStore;
 use crate::summary::llm_client::LLMProvider;
 use crate::summary::language_detection::detect_summary_language;
 use crate::summary::metadata::read_detected_summary_language_from_metadata;
@@ -320,12 +324,46 @@ impl SummaryService {
             }
         };
 
-        // Validate and setup api_key, Flexible for Ollama, BuiltInAI, and CustomOpenAI
-        let api_key = if provider == LLMProvider::Ollama || provider == LLMProvider::BuiltInAI || provider == LLMProvider::CustomOpenAI {
-            // These providers don't require API keys from the standard database column
+        // ── Load non-secret config from YAML ───────────────────────────────
+        let cfg = match ConfigRepository::new().load() {
+            Ok(c) => c,
+            Err(e) => {
+                let err_msg = format!("Failed to load config: {}", e);
+                Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
+                return;
+            }
+        };
+
+        // ── Initialize secret store ───────────────────────────────────────
+        let store = match KeyringFirstSecretStore::default_store() {
+            Ok(s) => s,
+            Err(e) => {
+                let err_msg = format!("Failed to initialize secret store: {}", e);
+                Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
+                return;
+            }
+        };
+
+        // ── Resolve API key ───────────────────────────────────────────────
+        // Ollama and BuiltInAI don't need API keys. CustomOpenAI uses its own
+        // secret ref. All other providers read from the standard provider key.
+        let api_key = if provider == LLMProvider::Ollama || provider == LLMProvider::BuiltInAI {
             String::new()
+        } else if provider == LLMProvider::CustomOpenAI {
+            match store.get(&refs::custom_openai_key()).await {
+                Ok(Some(key)) if !key.is_empty() => key,
+                Ok(None) | Ok(Some(_)) => {
+                    // CustomOpenAI can work without an API key (open endpoints)
+                    String::new()
+                }
+                Err(e) => {
+                    let err_msg = format!("Failed to retrieve custom OpenAI API key: {}", e);
+                    Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
+                    return;
+                }
+            }
         } else {
-            match SettingsRepository::get_api_key(&pool, &model_provider).await {
+            match store.get(&refs::summary_provider_key(&model_provider)).await {
                 Ok(Some(key)) if !key.is_empty() => key,
                 Ok(None) | Ok(Some(_)) => {
                     let err_msg = format!("API key not found for {}", &model_provider);
@@ -340,55 +378,35 @@ impl SummaryService {
             }
         };
 
-        // Get Ollama endpoint if provider is Ollama
+        // ── Ollama endpoint from YAML config ──────────────────────────────
         let ollama_endpoint = if provider == LLMProvider::Ollama {
-            match SettingsRepository::get_model_config(&pool).await {
-                Ok(Some(config)) => config.ollama_endpoint,
-                Ok(None) => None,
-                Err(e) => {
-                    info!("Failed to retrieve Ollama endpoint: {}, using default", e);
-                    None
-                }
-            }
+            cfg.summary.ollama_endpoint.clone()
         } else {
             None
         };
 
-        // Get CustomOpenAI config if provider is CustomOpenAI
-        let (custom_openai_endpoint, custom_openai_api_key, custom_openai_max_tokens, custom_openai_temperature, custom_openai_top_p) =
+        // ── CustomOpenAI config from YAML + SecretStore ────────────────────
+        let (custom_openai_endpoint, custom_openai_max_tokens, custom_openai_temperature, custom_openai_top_p) =
             if provider == LLMProvider::CustomOpenAI {
-                match SettingsRepository::get_custom_openai_config(&pool).await {
-                    Ok(Some(config)) => {
-                        info!("✓ Using custom OpenAI endpoint: {}", config.endpoint);
-                        (
-                            Some(config.endpoint),
-                            config.api_key,
-                            config.max_tokens.map(|t| t as u32),
-                            config.temperature,
-                            config.top_p,
-                        )
-                    }
-                    Ok(None) => {
-                        let err_msg = "Custom OpenAI provider selected but no configuration found";
-                        Self::update_process_failed(&pool, &meeting_id, err_msg).await;
-                        return;
-                    }
-                    Err(e) => {
-                        let err_msg = format!("Failed to retrieve custom OpenAI config: {}", e);
-                        Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
-                        return;
-                    }
+                let custom = &cfg.custom_openai;
+                if custom.endpoint.is_empty() {
+                    let err_msg = "Custom OpenAI provider selected but no endpoint configured";
+                    Self::update_process_failed(&pool, &meeting_id, err_msg).await;
+                    return;
                 }
+                info!("✓ Using custom OpenAI endpoint: {}", custom.endpoint);
+                (
+                    Some(custom.endpoint.clone()),
+                    custom.max_tokens.map(|t| t as u32),
+                    custom.temperature,
+                    custom.top_p,
+                )
             } else {
-                (None, None, None, None, None)
+                (None, None, None, None)
             };
 
-        // For CustomOpenAI, use its API key (if any) instead of the empty string
-        let final_api_key = if provider == LLMProvider::CustomOpenAI {
-            custom_openai_api_key.unwrap_or_default()
-        } else {
-            api_key
-        };
+        // For CustomOpenAI, the API key was already retrieved above via SecretStore
+        let final_api_key = api_key;
 
         // Dynamically fetch context size based on provider and model
         let token_threshold = if provider == LLMProvider::Ollama {
@@ -975,5 +993,67 @@ mod tests {
     fn test_extract_cached_english_from_malformed_json_errors() {
         let raw = r#"{ not valid json"#;
         assert!(extract_cached_english_markdown(raw, &sample_cache_source(), Some("de")).is_err());
+    }
+
+    #[tokio::test]
+    async fn summary_service_reads_yaml_config_without_settings_tables() {
+        use crate::secrets::store::SecretStore;
+
+        // ── Arrange: temp YAML config ───────────────────────────────
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("resourcefully.yml");
+        let secrets_path = dir.path().join("secrets.yml");
+
+        let yaml = r#"
+summary:
+  provider: ollama
+  model: llama3.1:8b
+  ollama_endpoint: "http://localhost:11434"
+custom_openai:
+  endpoint: "https://custom.example.com/v1"
+  model: "gpt-4"
+  max_tokens: 2048
+  temperature: 0.7
+  top_p: 0.9
+"#;
+        std::fs::write(&config_path, yaml).unwrap();
+
+        let repo = ConfigRepository::with_path(config_path);
+        let cfg = repo.load().unwrap();
+
+        // ── Assert: summary config from YAML ────────────────────────
+        assert_eq!(cfg.summary.provider, "ollama");
+        assert_eq!(cfg.summary.model, "llama3.1:8b");
+        assert_eq!(
+            cfg.summary.ollama_endpoint.as_deref(),
+            Some("http://localhost:11434")
+        );
+
+        // ── Assert: custom OpenAI config from YAML ──────────────────
+        assert_eq!(cfg.custom_openai.endpoint, "https://custom.example.com/v1");
+        assert_eq!(cfg.custom_openai.max_tokens, Some(2048));
+        assert_eq!(cfg.custom_openai.temperature, Some(0.7));
+        assert_eq!(cfg.custom_openai.top_p, Some(0.9));
+
+        // ── Assert: SecretStore works without SQLite ────────────────
+        let store =
+            KeyringFirstSecretStore::new("com.meetily.secrets.test.summary_svc", secrets_path);
+
+        store
+            .set(&refs::summary_provider_key("openai"), "sk-test-key")
+            .await
+            .unwrap();
+        let key = store
+            .get(&refs::summary_provider_key("openai"))
+            .await
+            .unwrap();
+        assert_eq!(key.as_deref(), Some("sk-test-key"));
+
+        store
+            .set(&refs::custom_openai_key(), "sk-custom-key")
+            .await
+            .unwrap();
+        let custom_key = store.get(&refs::custom_openai_key()).await.unwrap();
+        assert_eq!(custom_key.as_deref(), Some("sk-custom-key"));
     }
 }

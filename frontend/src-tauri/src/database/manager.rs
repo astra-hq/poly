@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use sqlx::{migrate::MigrateDatabase, Result, Sqlite, SqlitePool, Transaction};
 use std::fs;
 use std::path::Path;
@@ -31,6 +32,8 @@ impl DatabaseManager {
         }
 
         let pool = SqlitePool::connect(tauri_db_path).await?;
+
+        Self::update_legacy_migration_checksums(&pool).await?;
 
         sqlx::migrate!("./migrations").run(&pool).await?;
 
@@ -161,6 +164,70 @@ impl DatabaseManager {
         &self.pool
     }
 
+    /// Compute and update checksums for migration files that were modified
+    /// after initial application.  Required because sqlx strictly verifies
+    /// checksums of already-applied migrations and will return
+    /// `VersionMismatch` if the file content changed.
+    async fn update_legacy_migration_checksums(pool: &SqlitePool) -> Result<()> {
+        let table_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations')",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+
+        if !table_exists {
+            return Ok(());
+        }
+
+        let modified: &[(i64, &str)] = &[
+            (
+                20250916100000,
+                include_str!("../../migrations/20250916100000_initial_schema.sql"),
+            ),
+            (
+                20250917000000,
+                include_str!(
+                    "../../migrations/20250917000000_add_knowledge_graph_settings.sql"
+                ),
+            ),
+            (
+                20250920155811,
+                include_str!(
+                    "../../migrations/20250920155811_add_openrouter_api_key.sql"
+                ),
+            ),
+            (
+                20251010153942,
+                include_str!("../../migrations/20251010153942_add_ollama_endpoint.sql"),
+            ),
+            (
+                20251105120000,
+                include_str!(
+                    "../../migrations/20251105120000_add_pro_license_custom_openai.sql"
+                ),
+            ),
+            (
+                20251229000000,
+                include_str!("../../migrations/20251229000000_add_gemini_api_key.sql"),
+            ),
+        ];
+
+        for (version, content) in modified {
+            let mut hasher = Sha256::new();
+            hasher.update(content.as_bytes());
+            let checksum = hasher.finalize().to_vec();
+
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = $1 WHERE version = $2")
+                .bind(&checksum)
+                .bind(version)
+                .execute(pool)
+                .await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn with_transaction<T, F, Fut>(&self, f: F) -> Result<T>
     where
         F: FnOnce(&mut Transaction<'_, Sqlite>) -> Fut,
@@ -204,5 +271,77 @@ impl DatabaseManager {
         log::info!("Database connection pool closed");
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn fresh_db_via_migrations() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        // Config tables are created by ALTER migrations for backward compatibility.
+        // Drop them to match the expected fresh schema (they are dropped in
+        // production by drop_legacy_config_tables after extraction completes).
+        let _ = sqlx::query("DROP TABLE IF EXISTS settings")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DROP TABLE IF EXISTS transcript_settings")
+            .execute(&pool)
+            .await;
+
+        pool
+    }
+
+    #[tokio::test]
+    async fn database_schema_fresh_db_has_no_config_tables() {
+        let pool = fresh_db_via_migrations().await;
+
+        let settings_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !settings_exists,
+            "settings table should not exist in fresh schema"
+        );
+
+        let transcript_settings_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_settings')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            !transcript_settings_exists,
+            "transcript_settings table should not exist in fresh schema"
+        );
+
+        let required = [
+            "meetings",
+            "transcripts",
+            "summary_processes",
+            "transcript_chunks",
+            "_sqlx_migrations",
+        ];
+        for table_name in &required {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=$1)",
+            )
+            .bind(table_name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(exists, "runtime table '{}' must exist", table_name);
+        }
     }
 }

@@ -1,29 +1,16 @@
--- Add openRouterApiKey column to settings table if it doesn't exist
-PRAGMA foreign_keys=off;
-
--- Create a new table with the new column
-CREATE TABLE IF NOT EXISTS settings_new (
+-- Add openRouterApiKey column to settings table.
+-- On fresh databases the settings table is created by the preceding
+-- migration (add_knowledge_graph_settings); on legacy databases it
+-- already exists from the original schema.
+CREATE TABLE IF NOT EXISTS settings (
     id TEXT PRIMARY KEY,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    whisperModel TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    whisperModel TEXT NOT NULL DEFAULT '',
     groqApiKey TEXT,
     openaiApiKey TEXT,
     anthropicApiKey TEXT,
     ollamaApiKey TEXT,
-    knowledge_graph_settings TEXT,
-    openRouterApiKey TEXT
+    knowledge_graph_settings TEXT
 );
-
--- Copy data from old table to new table
-INSERT INTO settings_new
-SELECT *, NULL as openRouterApiKey
-FROM settings;
-
--- Drop the old table
-DROP TABLE settings;
-
--- Rename new table to original name
-ALTER TABLE settings_new RENAME TO settings;
-
-PRAGMA foreign_keys=on;
+ALTER TABLE settings ADD COLUMN openRouterApiKey TEXT;

@@ -8,6 +8,8 @@ use crate::knowledge_graph::service::{
     IngestionSummary, KnowledgeGraphIngestionService, MeetingKnowledgeGraphStatus,
 };
 use crate::knowledge_graph::settings_commands::load_kg_settings;
+use crate::resourcefully_config::repository::ConfigRepository;
+use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::knowledge_graph::types::{
     KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, QueryMode,
 };
@@ -30,10 +32,12 @@ pub async fn api_ingest_meeting_to_knowledge_graph<R: Runtime>(
         return Err(format!("Invalid profile_id: '{}'", profile_id));
     }
 
-    let pool = state.db_manager.pool();
-
     // ── Load KG settings ─────────────────────────────────────────
-    let settings = load_kg_settings(pool).await?;
+    let pool = state.db_manager.pool();
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
 
     // ── Resolve profile ──────────────────────────────────────────
     let profile = settings
@@ -66,7 +70,7 @@ pub async fn api_ingest_meeting_to_knowledge_graph<R: Runtime>(
 #[tauri::command]
 pub async fn api_query_knowledge_graph<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     profile_id: String,
     query: String,
     mode: Option<QueryMode>,
@@ -83,10 +87,11 @@ pub async fn api_query_knowledge_graph<R: Runtime>(
         return Err(format!("Invalid profile_id: '{}'", profile_id));
     }
 
-    let pool = state.db_manager.pool();
-
     // ── Load KG settings ─────────────────────────────────────────
-    let settings = load_kg_settings(pool).await?;
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
 
     // ── Resolve profile ──────────────────────────────────────────
     let profile = settings
@@ -139,7 +144,10 @@ pub async fn api_get_meeting_knowledge_graph_status<R: Runtime>(
     );
 
     let pool = state.db_manager.pool();
-    let settings = load_kg_settings(pool).await?;
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
 
     // ── Resolve effective profile ───────────────────────────────
     // Priority: meeting-specific selection → global active profile.
@@ -181,13 +189,15 @@ pub async fn api_get_meeting_knowledge_graph_status<R: Runtime>(
 #[tauri::command]
 pub async fn api_get_knowledge_graph_pipeline_status<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     profile_id: String,
 ) -> Result<crate::knowledge_graph::types::KnowledgeGraphPipelineStatus, String> {
     info!("api_get_knowledge_graph_pipeline_status: profile={}", profile_id);
 
-    let pool = state.db_manager.pool();
-    let settings = load_kg_settings(pool).await?;
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
 
     let profile = settings
         .profiles
@@ -308,7 +318,10 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
     let pool = state.db_manager.pool();
 
     // ── Resolve effective profile ───────────────────────────────
-    let settings = load_kg_settings(pool).await?;
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
     let selection_row =
         sqlx::query_as::<_, crate::database::models::KnowledgeGraphMeetingSelection>(
             "SELECT meeting_id, profile_id, meeting_type, routing_reason, created_at, updated_at \
@@ -444,7 +457,10 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
     let pool = state.db_manager.pool();
 
     // ── Resolve effective profile ───────────────────────────────
-    let settings = load_kg_settings(pool).await?;
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
     let selection_row =
         sqlx::query_as::<_, crate::database::models::KnowledgeGraphMeetingSelection>(
             "SELECT meeting_id, profile_id, meeting_type, routing_reason, created_at, updated_at \
