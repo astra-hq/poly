@@ -10,6 +10,8 @@ use crate::knowledge_graph::service::{
 use crate::knowledge_graph::settings_commands::load_kg_settings;
 use crate::resourcefully_config::repository::ConfigRepository;
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
+use crate::secrets::refs::knowledge_graph_profile_key;
+use crate::secrets::store::SecretStore;
 use crate::knowledge_graph::types::{
     KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, QueryMode,
 };
@@ -56,8 +58,14 @@ pub async fn api_ingest_meeting_to_knowledge_graph<R: Runtime>(
             )
         })?;
 
-    // ── Create provider ──────────────────────────────────────────
-    let provider = LightRagProvider::new(&profile.lightrag_url, profile.api_key.clone())
+    let secret_ref = knowledge_graph_profile_key(&profile_id);
+    let api_key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read API key from secret store: {}", e))?
+        .filter(|k| !k.is_empty());
+
+    let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     // ── Run ingestion ────────────────────────────────────────────
@@ -110,8 +118,14 @@ pub async fn api_query_knowledge_graph<R: Runtime>(
             )
         })?;
 
-    // ── Create provider ──────────────────────────────────────────
-    let provider = LightRagProvider::new(&profile.lightrag_url, profile.api_key.clone())
+    let secret_ref = knowledge_graph_profile_key(&profile_id);
+    let api_key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read API key from secret store: {}", e))?
+        .filter(|k| !k.is_empty());
+
+    let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     // ── Run query ────────────────────────────────────────────────
@@ -205,7 +219,14 @@ pub async fn api_get_knowledge_graph_pipeline_status<R: Runtime>(
         .find(|p| p.id == profile_id)
         .ok_or_else(|| format!("Profile '{}' not found", profile_id))?;
 
-    let provider = LightRagProvider::new(&profile.lightrag_url, profile.api_key.clone())
+    let secret_ref = knowledge_graph_profile_key(&profile_id);
+    let api_key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read API key from secret store: {}", e))?
+        .filter(|k| !k.is_empty());
+
+    let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     provider
@@ -362,7 +383,14 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
             )
         })?;
 
-    let provider = LightRagProvider::new(&profile.lightrag_url, profile.api_key.clone())
+    let secret_ref = knowledge_graph_profile_key(&profile_id);
+    let api_key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read API key from secret store: {}", e))?
+        .filter(|k| !k.is_empty());
+
+    let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     // ── Get summary markdown from DB ────────────────────────────
@@ -501,7 +529,14 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
             )
         })?;
 
-    let provider = LightRagProvider::new(&profile.lightrag_url, profile.api_key.clone())
+    let secret_ref = knowledge_graph_profile_key(&profile_id);
+    let api_key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read API key from secret store: {}", e))?
+        .filter(|k| !k.is_empty());
+
+    let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     // ── Get meeting title for document naming ──────────────────
