@@ -1,4 +1,4 @@
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha384};
 use sqlx::{migrate::MigrateDatabase, Result, Sqlite, SqlitePool, Transaction};
 use std::fs;
 use std::path::Path;
@@ -214,7 +214,7 @@ impl DatabaseManager {
         ];
 
         for (version, content) in modified {
-            let mut hasher = Sha256::new();
+            let mut hasher = Sha384::new();
             hasher.update(content.as_bytes());
             let checksum = hasher.finalize().to_vec();
 
