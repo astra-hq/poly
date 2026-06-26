@@ -1,6 +1,6 @@
-# Getting Started with Meetily
+# Getting Started with Poly
 
-This guide walks you through setting up Meetily from a completely fresh machine — installing every prerequisite, cloning the repo, building, and running the app for the first time.
+This guide walks you through setting up Poly from a completely fresh machine — installing every prerequisite, cloning the repo, building, and running the app for the first time.
 
 If you already have some tools installed (Rust, Node.js, etc.), skip ahead to the relevant step.
 
@@ -117,8 +117,8 @@ pnpm --version   # Should show v8+
 ## Step 2: Clone the Repository
 
 ```bash
-git clone https://github.com/Zackriya-Solutions/meeting-minutes.git
-cd meeting-minutes/frontend
+git clone https://github.com/astra-hq/poly.git
+cd poly/frontend
 ```
 
 This is the main working directory for development. All subsequent commands run from here.
@@ -210,7 +210,7 @@ If you need a production build locally anyway, generate a signing key first:
 
 ```bash
 pnpm tauri signer generate --password "" --output-dir ./tauri-keys
-export TAURI_SIGNING_PRIVATE_KEY=$(cat ./tauri-keys/meetily.key)
+export TAURI_SIGNING_PRIVATE_KEY=$(cat ./tauri-keys/poly.key)
 # Then update the pubkey in src-tauri/tauri.conf.json → plugins.updater.pubkey
 # to match the newly generated key's public half
 ```
@@ -223,7 +223,7 @@ Then run:
 ./clean_build.sh
 ```
 
-Output: `src-tauri/target/release/bundle/dmg/Meetily_<version>.dmg`
+Output: `src-tauri/target/release/bundle/dmg/Poly_<version>.dmg`
 
 ### Windows
 
@@ -231,7 +231,7 @@ Output: `src-tauri/target/release/bundle/dmg/Meetily_<version>.dmg`
 clean_build_windows.bat
 ```
 
-Output: `src-tauri/target/release/bundle/msi/Meetily_<version>.msi`
+Output: `src-tauri/target/release/bundle/msi/Poly_<version>.msi`
 
 ### Linux
 
@@ -239,7 +239,7 @@ Output: `src-tauri/target/release/bundle/msi/Meetily_<version>.msi`
 ./build-gpu.sh
 ```
 
-Output: `src-tauri/target/release/bundle/appimage/Meetily_<version>.AppImage`
+Output: `src-tauri/target/release/bundle/appimage/Poly_<version>.AppImage`
 
 ---
 
@@ -249,7 +249,7 @@ When the app launches for the first time:
 
 1. **Microphone permission** — macOS/Windows will prompt for microphone access. Grant it.
 2. **Screen recording permission** (macOS only) — Required for system audio capture. Grant it.
-3. **Whisper model download** — The first time you start a recording, Meetily downloads a Whisper model (typically ~1.5 GB for the `base` model). This happens once.
+3. **Whisper model download** — The first time you start a recording, Poly downloads a Whisper model (typically ~1.5 GB for the `base` model). This happens once.
 4. **Recording** — Click the record button, select your microphone and system audio devices, and start a meeting.
 
 ### First recording checklist
@@ -265,7 +265,7 @@ When the app launches for the first time:
 
 ## GPU Acceleration (Optional)
 
-By default, Meetily auto-detects your GPU and uses the best available acceleration:
+By default, Poly auto-detects your GPU and uses the best available acceleration:
 
 | Platform | Auto-detected | Manual override |
 |---|---|---|
@@ -282,7 +282,7 @@ For detailed GPU setup instructions, see the [GPU Acceleration Guide](./GPU_ACCE
 
 ## Next Steps
 
-Now that you have Meetily running, here's where to go next:
+Now that you have Poly running, here's where to go next:
 
 | Resource | What it covers |
 |---|---|
@@ -332,4 +332,4 @@ The first recording downloads the Whisper model. Subsequent recordings use the c
 
 ---
 
-**Still stuck?** Open an issue on [GitHub](https://github.com/Zackriya-Solutions/meeting-minutes/issues) with your OS, GPU type, and the build log.
+**Still stuck?** Open an issue on [GitHub](https://github.com/astra-hq/poly/issues) with your OS, GPU type, and the build log.
