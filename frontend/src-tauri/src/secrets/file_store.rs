@@ -92,14 +92,14 @@ impl SecretStore for FileSecretStore {
     }
 }
 
-/// A `FileSecretStore` scoped to `~/.resourcefully/secrets.yml`.
+/// A `FileSecretStore` scoped to `~/.poly/secrets.yml`.
 ///
 /// This is the canonical file fallback path used by `KeyringFirstSecretStore`
 /// and migration.
 pub fn default_file_store() -> Result<FileSecretStore, SecretStoreError> {
     let home = dirs::home_dir()
         .ok_or_else(|| SecretStoreError::StoreError("cannot determine home directory".into()))?;
-    let path = home.join(".resourcefully").join("secrets.yml");
+    let path = home.join(".poly").join("secrets.yml");
     Ok(FileSecretStore::new(path))
 }
 

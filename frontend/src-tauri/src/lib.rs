@@ -49,7 +49,7 @@ pub mod onboarding;
 pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;
-pub mod resourcefully_config;
+pub mod poly_config;
 pub mod secrets;
 pub mod state;
 pub mod summary;

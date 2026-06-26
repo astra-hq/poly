@@ -234,16 +234,19 @@ impl Default for PreferencesConfig {
 // Top-level config
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The authoritative non-secret configuration for the Meetily desktop app.
+/// The authoritative non-secret configuration for the Poly desktop app.
 ///
-/// This is persisted as YAML at `~/.resourcefully/resourcefully.yml` and
-/// contains **every** non-secret configuration value that was previously
-/// stored in SQLite's `settings` and `transcript_settings` tables.
+/// This is persisted as YAML at `~/.poly/poly.yml` and contains **every**
+/// non-secret configuration value.
+///
+/// For users upgrading from the legacy Resourcefully name, the config
+/// repository automatically migrates `~/.resourcefully/resourcefully.yml`
+/// to the current path on first use without deleting the legacy file.
 ///
 /// Raw API keys and other secrets are **never** serialized to this file;
 /// they live in the separate `SecretStore`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ResourcefullyConfig {
+pub struct PolyConfig {
     #[serde(default)]
     pub summary: SummaryConfig,
 
@@ -260,7 +263,7 @@ pub struct ResourcefullyConfig {
     pub preferences: PreferencesConfig,
 }
 
-impl Default for ResourcefullyConfig {
+impl Default for PolyConfig {
     fn default() -> Self {
         Self {
             summary: SummaryConfig::default(),
@@ -272,7 +275,7 @@ impl Default for ResourcefullyConfig {
     }
 }
 
-impl ResourcefullyConfig {
+impl PolyConfig {
     // ── constructors ────────────────────────────────────────────────────
 
     /// Return the default configuration (in-memory only).
@@ -280,7 +283,7 @@ impl ResourcefullyConfig {
         Self::default()
     }
 
-    /// Load from the default path (`~/.resourcefully/resourcefully.yml`).
+    /// Load from the default path (`~/.poly/poly.yml`).
     ///
     /// Returns the default config if the file does not exist.
     pub fn load() -> Result<Self> {
@@ -305,7 +308,7 @@ impl ResourcefullyConfig {
 
     // ── persistence ─────────────────────────────────────────────────────
 
-    /// Serialize to the default path (`~/.resourcefully/resourcefully.yml`).
+    /// Serialize to the default path (`~/.poly/poly.yml`).
     pub fn save(&self) -> Result<()> {
         self.save_to_path(&super::paths::default_config_path())
     }
@@ -331,7 +334,7 @@ impl ResourcefullyConfig {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Unit tests (basic.  Full integration tests are in
-// `tests/resourcefully_config_test.rs`.)
+// `tests/poly_config_test.rs`.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -383,7 +386,7 @@ mod tests {
     #[test]
     fn deserialize_minimal_yaml() {
         let yaml = "summary:\n  provider: groq\n";
-        let cfg: ResourcefullyConfig = serde_yaml::from_str(yaml).unwrap();
+        let cfg: PolyConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(cfg.summary.provider, "groq");
         // All other fields should be defaults
         assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");

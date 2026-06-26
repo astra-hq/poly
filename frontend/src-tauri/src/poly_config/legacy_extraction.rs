@@ -29,7 +29,7 @@ use sqlx::SqlitePool;
 
 use super::config::{
     CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets,
-    KnowledgeGraphSettingsWithoutSecrets, PreferencesConfig, ResourcefullyConfig, SummaryConfig,
+    KnowledgeGraphSettingsWithoutSecrets, PolyConfig, PreferencesConfig, SummaryConfig,
     TranscriptConfig,
 };
 use super::ConfigRepository;
@@ -82,17 +82,17 @@ impl LegacyConfigExtractor {
 
     // ── scan ──────────────────────────────────────────────────────────────
 
-    /// Scan all legacy SQLite tables and assemble a [`ResourcefullyConfig`]
+    /// Scan all legacy SQLite tables and assemble a [`PolyConfig`]
     /// with every **non-secret** value.
     ///
-    /// Handles missing tables gracefully — returns `ResourcefullyConfig::default()`.
-    async fn scan(pool: &SqlitePool) -> Result<ResourcefullyConfig> {
+    /// Handles missing tables gracefully — returns `PolyConfig::default()`.
+    async fn scan(pool: &SqlitePool) -> Result<PolyConfig> {
         let summary = Self::scan_summary(pool).await.unwrap_or_default();
         let transcript = Self::scan_transcript(pool).await.unwrap_or_default();
         let custom_openai = Self::scan_custom_openai(pool).await.unwrap_or_default();
         let knowledge_graph = Self::scan_knowledge_graph(pool).await.unwrap_or_default();
 
-        Ok(ResourcefullyConfig {
+        Ok(PolyConfig {
             summary,
             transcript,
             custom_openai,
@@ -425,7 +425,7 @@ impl LegacyConfigExtractor {
         pool: &SqlitePool,
         store: &(dyn SecretStore + Sync),
         config_repo: &ConfigRepository,
-        expected: &ResourcefullyConfig,
+        expected: &PolyConfig,
     ) -> Result<()> {
         // Verify YAML config
         let loaded = config_repo
@@ -893,7 +893,7 @@ mod tests {
         assert!(result.is_ok(), "extraction should succeed on empty DB");
 
         let loaded = config_repo.load().unwrap();
-        assert_eq!(loaded, ResourcefullyConfig::default());
+        assert_eq!(loaded, PolyConfig::default());
     }
 
     #[tokio::test]
@@ -909,6 +909,6 @@ mod tests {
         assert!(result.is_ok(), "extraction should succeed with no tables");
 
         let loaded = config_repo.load().unwrap();
-        assert_eq!(loaded, ResourcefullyConfig::default());
+        assert_eq!(loaded, PolyConfig::default());
     }
 }
