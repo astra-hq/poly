@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   XCircle,
   FileText,
+  ChevronRight,
 } from 'lucide-react';
 import type {
   SummaryDocumentState,
@@ -126,6 +127,16 @@ function PipelineDocRow({ doc }: { doc: TrackStatusDocument }) {
   };
   const usefulMeta = extractUsefulMetadata(metadata);
 
+  const hiddenEntries: Array<[string, string]> = [];
+  if (doc.id) hiddenEntries.push(['ID', doc.id]);
+  if (doc.content_summary) hiddenEntries.push(['Summary', doc.content_summary]);
+  if (doc.created_at) hiddenEntries.push(['Created', doc.created_at]);
+  if (doc.updated_at) hiddenEntries.push(['Updated', doc.updated_at]);
+  if (error_msg) hiddenEntries.push(['Error', error_msg]);
+  for (const [key, value] of usefulMeta) hiddenEntries.push([key, value]);
+
+  const hasHiddenEntries = hiddenEntries.length > 0;
+
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1 text-sm">
@@ -133,9 +144,6 @@ function PipelineDocRow({ doc }: { doc: TrackStatusDocument }) {
         <span className={`inline-flex items-center gap-1.5 font-medium ${cfg.className}`}>
           {cfg.icon}
           {cfg.label}
-          {error_msg && status.toLowerCase() === 'failed' && (
-            <span className="text-xs font-normal text-red-500 ml-1">({error_msg})</span>
-          )}
         </span>
 
         <span className="text-gray-500">File</span>
@@ -161,14 +169,24 @@ function PipelineDocRow({ doc }: { doc: TrackStatusDocument }) {
             <span className="text-xs text-gray-700">{content_length} chars</span>
           </>
         )}
-
-        {usefulMeta.map(([key, value]) => (
-          <Fragment key={key}>
-            <span className="text-gray-500">{key}</span>
-            <span className="text-xs text-gray-700 break-all">{value}</span>
-          </Fragment>
-        ))}
       </div>
+
+      {hasHiddenEntries && (
+        <details className="group">
+          <summary className="flex items-center gap-1 cursor-pointer text-xs text-gray-500 hover:text-gray-700 select-none list-none [&::-webkit-details-marker]:hidden">
+            <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+            Metadata
+          </summary>
+          <div className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1 text-sm mt-1 pl-4">
+            {hiddenEntries.map(([key, value]) => (
+              <Fragment key={key}>
+                <span className="text-gray-500">{key}</span>
+                <span className="text-xs text-gray-700 break-all">{value}</span>
+              </Fragment>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -200,14 +218,20 @@ export function TrackStatusDocuments({ trackStatus }: { trackStatus: KnowledgeGr
         ))}
       </div>
       {trackStatus.status_summary && (
-        <div className="pt-2 mt-2 border-t border-gray-200 flex flex-wrap gap-3 text-xs text-gray-500">
-          {Object.entries(trackStatus.status_summary).map(([status, count]) => (
-            <span key={status} className="flex items-center gap-1">
-              <StatusDot status={status} />
-              {status}: {count}
-            </span>
-          ))}
-        </div>
+        <details className="group pt-2 mt-2 border-t border-gray-200">
+          <summary className="flex items-center gap-1 cursor-pointer text-xs text-gray-500 hover:text-gray-700 select-none list-none [&::-webkit-details-marker]:hidden pt-2">
+            <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+            Status Summary
+          </summary>
+          <div className="flex flex-wrap gap-3 text-xs text-gray-500 pt-2 pl-4">
+            {Object.entries(trackStatus.status_summary).map(([status, count]) => (
+              <span key={status} className="flex items-center gap-1">
+                <StatusDot status={status} />
+                {status}: {count}
+              </span>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );
