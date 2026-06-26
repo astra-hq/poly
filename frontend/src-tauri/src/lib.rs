@@ -51,6 +51,7 @@ pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub mod poly_config;
+pub mod process_path;
 pub mod secrets;
 pub mod state;
 pub mod summary;
@@ -383,6 +384,10 @@ pub fn get_language_preference_internal() -> Option<String> {
 
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
+
+    if let Err(error) = process_path::fix_path_env_once() {
+        log::warn!("Failed to repair PATH during startup: {}", error);
+    }
 
     let mut builder = tauri::Builder::default();
 

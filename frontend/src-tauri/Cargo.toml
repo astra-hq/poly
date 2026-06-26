@@ -86,6 +86,7 @@ log = "0.4"
 env_logger = "0.11"
 tracing = "0.1.40"
 which = "6.0.1"
+fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs", rev = "c4c45d503ea115a839aae718d02f79e7c7f0f673" }
 
 # Bytes
 bytemuck = "1.16.1"
