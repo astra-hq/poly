@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "poly-kg.fullname" . }}-neo4j
+  labels:
+    {{- include "poly-kg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: neo4j
+spec:
+  type: {{ .Values.neo4j.service.type }}
+  ports:
+    - name: bolt
+      port: {{ .Values.neo4j.service.boltPort }}
+      targetPort: bolt
+      protocol: TCP
+    - name: http
+      port: {{ .Values.neo4j.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "poly-kg.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: neo4j

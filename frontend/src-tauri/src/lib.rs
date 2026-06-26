@@ -37,6 +37,7 @@ macro_rules! perf_trace {
 pub mod analytics;
 pub mod anthropic;
 pub mod api;
+pub mod app_data;
 pub mod audio;
 pub mod config;
 pub mod console_utils;
@@ -49,7 +50,7 @@ pub mod onboarding;
 pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;
-pub mod resourcefully_config;
+pub mod poly_config;
 pub mod secrets;
 pub mod state;
 pub mod summary;

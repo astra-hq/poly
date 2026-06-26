@@ -1,0 +1,35 @@
+Thank you for installing {{ .Chart.Name }} {{ .Chart.Version }}.
+
+The Knowledge Graph stack includes:
+
+  • Neo4j          — graph database (bolt: {{ .Values.neo4j.service.boltPort }}, http: {{ .Values.neo4j.service.httpPort }})
+  • LightRAG       — retrieval-augmented generation API (port {{ .Values.lightrag.service.port }})
+
+{{- if contains "CHANGE_ME" .Values.s3.endpoint }}
+  ⚠  S3 endpoint is still the placeholder. Set s3.endpoint, s3.bucket, and s3.region in your values.
+{{- else }}
+  ✓ External S3 endpoint configured: {{ .Values.s3.endpoint }}/{{ .Values.s3.bucket }}
+{{- end }}
+
+{{- if .Values.ingress.enabled }}
+  ✓ Ingress is enabled (host: {{ (index .Values.ingress.hosts 0).host }})
+{{- else }}
+  ℹ  Ingress is disabled. Use port-forward to reach LightRAG:
+      kubectl port-forward svc/{{ include "poly-kg.fullname" . }}-lightrag {{ .Values.lightrag.service.port }}:{{ .Values.lightrag.service.port }}
+{{- end }}
+
+⚠  IMPORTANT — before production use:
+  1. Replace all CHANGE_ME placeholders with real values.
+  2. Create a proper Kubernetes Secret for credentials (do NOT commit plaintext secrets):
+       kubectl create secret generic {{ include "poly-kg.fullname" . }}-secrets \
+         --from-literal=lightrag-api-key=YOUR_KEY \
+         --from-literal=neo4j-auth=neo4j/YOUR_PASSWORD \
+         --from-literal=s3-access-key-id=YOUR_KEY \
+         --from-literal=s3-secret-access-key=YOUR_SECRET
+  3. Update values.yaml to reference the external secret via .existingSecret fields.
+  4. Review resource requests/limits for your workload.
+  5. This chart does NOT include TLS/ingress automation — configure separately.
+
+For more details:
+  • Chart README: charts/poly-kg/README.md
+  • Local compose: docker-compose.kg.yml

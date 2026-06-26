@@ -1,10 +1,10 @@
 use app_lib::api::api::{count_secrets, ModelConfig, TranscriptConfig};
 use app_lib::knowledge_graph::config::{EmbeddingConfig, KnowledgeGraphSelection, ProfileKind};
-use app_lib::resourcefully_config::config::{
-    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets, ResourcefullyConfig,
+use app_lib::poly_config::config::{
+    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets, PolyConfig,
     SummaryConfig, TranscriptConfig as YamlTranscriptConfig,
 };
-use app_lib::resourcefully_config::ConfigRepository;
+use app_lib::poly_config::ConfigRepository;
 use app_lib::secrets::file_store::FileSecretStore;
 use app_lib::secrets::refs;
 use app_lib::secrets::status::build_api_key_status;
@@ -35,7 +35,7 @@ async fn model_config_roundtrip_via_yaml_and_secret_store() {
     let secret_ref = refs::summary_provider_key("openai");
     store.set(&secret_ref, "sk-test-key-12345").await.unwrap();
 
-    let mut cfg = ResourcefullyConfig::default();
+    let mut cfg = PolyConfig::default();
     cfg.summary = SummaryConfig {
         provider: "openai".to_string(),
         model: "gpt-4o".to_string(),
@@ -79,7 +79,7 @@ async fn transcript_config_roundtrip_via_yaml_and_secret_store() {
     let secret_ref = refs::transcript_provider_key("groq");
     store.set(&secret_ref, "sk-groq-key-67890").await.unwrap();
 
-    let mut cfg = ResourcefullyConfig::default();
+    let mut cfg = PolyConfig::default();
     cfg.transcript = YamlTranscriptConfig {
         provider: "groq".to_string(),
         model: "whisper-large-v3".to_string(),
@@ -116,7 +116,7 @@ async fn custom_openai_config_roundtrip_via_yaml_and_secret_store() {
     let secret_ref = refs::custom_openai_key();
     store.set(&secret_ref, "sk-custom-key-abcde").await.unwrap();
 
-    let mut cfg = ResourcefullyConfig::default();
+    let mut cfg = PolyConfig::default();
     cfg.custom_openai = CustomOpenAIConfigFields {
         endpoint: "https://api.custom-ai.example.com/v1".to_string(),
         model: "custom-model-v2".to_string(),
@@ -163,7 +163,7 @@ async fn custom_openai_config_roundtrip_via_yaml_and_secret_store() {
 async fn secret_write_failure_does_not_update_yaml() {
     // Given: a config repo with known YAML content
     let (repo, _repo_dir) = temp_config_repo();
-    let original_cfg = ResourcefullyConfig::default();
+    let original_cfg = PolyConfig::default();
     repo.save_atomic(&original_cfg).unwrap();
 
     let original_loaded = repo.load().unwrap();
@@ -185,7 +185,7 @@ async fn secret_write_failure_does_not_update_yaml() {
 async fn empty_custom_openai_endpoint_returns_none() {
     // Given: a config with empty custom_openai endpoint (default)
     let (repo, _repo_dir) = temp_config_repo();
-    let cfg = ResourcefullyConfig::default();
+    let cfg = PolyConfig::default();
     repo.save_atomic(&cfg).unwrap();
 
     // When: loading
@@ -204,7 +204,7 @@ async fn model_config_without_api_key_returns_has_secret_false() {
     let (repo, _repo_dir) = temp_config_repo();
     let (store, _store_dir) = temp_secret_store();
 
-    let mut cfg = ResourcefullyConfig::default();
+    let mut cfg = PolyConfig::default();
     cfg.summary.provider = "claude".to_string();
     repo.save_atomic(&cfg).unwrap();
 
@@ -262,7 +262,7 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
         .await
         .unwrap();
 
-    let mut cfg = ResourcefullyConfig::default();
+    let mut cfg = PolyConfig::default();
     cfg.summary.provider = "openai".to_string();
     cfg.transcript.provider = "groq".to_string();
     cfg.custom_openai.endpoint = "https://custom.example.com/v1".to_string();
@@ -298,4 +298,83 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
     assert_eq!(status.custom_openai, 1);
     assert_eq!(status.kg_profiles, 1);
     assert_eq!(status.total, 4);
+}
+
+// ─── Malformed YAML error surfacing through ConfigRepository ─────────────
+
+#[test]
+fn config_repository_load_rejects_malformed_yaml_with_error() {
+    let (repo, _repo_dir) = temp_config_repo();
+
+    // Write malformed YAML directly to the file the repo manages.
+    std::fs::write(repo.path(), "summary: [bad\n  provider: \n").unwrap();
+
+    let result = repo.load();
+    assert!(
+        result.is_err(),
+        "repository must reject malformed YAML with an error"
+    );
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("parse") || msg.contains("YAML") || msg.contains("yaml"),
+        "error must mention parse/yaml: '{}'",
+        msg
+    );
+}
+
+// ─── Poly ConfigRepository: load_or_create_default with legacy path ─────
+
+#[test]
+fn config_repository_with_legacy_path_migrates_on_first_load() {
+    use app_lib::poly_config::repository::ConfigRepository;
+
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly.yml");
+    let legacy_path = dir.path().join("legacy.yml");
+
+    // Write a valid legacy YAML.
+    std::fs::write(
+        &legacy_path,
+        r#"
+summary:
+  provider: ollama
+  model: llama3.1:8b
+preferences:
+  language: de
+"#,
+    )
+    .unwrap();
+
+    // Create repo with both paths — no Poly file exists.
+    let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
+    let cfg = repo.load_or_create_default().unwrap();
+
+    assert_eq!(cfg.summary.provider, "ollama");
+    assert_eq!(cfg.preferences.language, "de");
+    assert!(poly_path.exists(), "Poly config must be created from legacy");
+    assert!(legacy_path.exists(), "legacy must not be deleted");
+}
+
+#[test]
+fn config_repository_malformed_legacy_yaml_errors_no_default() {
+    use app_lib::poly_config::repository::ConfigRepository;
+
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly.yml");
+    let legacy_path = dir.path().join("legacy_broken.yml");
+
+    std::fs::write(&legacy_path, "not valid yaml: [\n").unwrap();
+
+    let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
+    let result = repo.load_or_create_default();
+
+    assert!(
+        result.is_err(),
+        "malformed legacy must error, not return defaults"
+    );
+    assert!(
+        !poly_path.exists(),
+        "Poly file must not be created when legacy is malformed"
+    );
 }

@@ -1,4 +1,4 @@
-name: resourcefully-kg
+name: poly-kg
 
 services:
   rustfs:

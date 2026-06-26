@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "poly-kg.fullname" . }}-lightrag
+  labels:
+    {{- include "poly-kg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: lightrag
+spec:
+  replicas: {{ .Values.lightrag.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "poly-kg.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: lightrag
+  template:
+    metadata:
+      labels:
+        {{- include "poly-kg.labels" . | nindent 8 }}
+        app.kubernetes.io/component: lightrag
+    spec:
+      containers:
+        - name: lightrag
+          image: "{{ .Values.lightrag.image.repository }}:{{ .Values.lightrag.image.tag }}"
+          imagePullPolicy: {{ .Values.lightrag.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.lightrag.service.port }}
+              protocol: TCP
+          env:
+            - name: LIGHTRAG_HOST
+              value: "0.0.0.0"
+            - name: LIGHTRAG_PORT
+              value: {{ .Values.lightrag.service.port | quote }}
+            - name: LIGHTRAG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.lightrag.apiKey.existingSecret }}{{ .Values.lightrag.apiKey.existingSecret }}{{ else }}{{ include "poly-kg.fullname" . }}-secrets{{ end }}
+                  key: lightrag-api-key
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "poly-kg.fullname" . }}-lightrag-config
+                  key: S3_ENDPOINT
+            - name: S3_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "poly-kg.fullname" . }}-lightrag-config
+                  key: S3_BUCKET
+            - name: S3_REGION
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "poly-kg.fullname" . }}-lightrag-config
+                  key: S3_REGION
+            - name: S3_USE_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "poly-kg.fullname" . }}-lightrag-config
+                  key: S3_USE_SSL
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.s3.existingSecret }}{{ .Values.s3.existingSecret }}{{ else }}{{ include "poly-kg.fullname" . }}-secrets{{ end }}
+                  key: s3-access-key-id
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.s3.existingSecret }}{{ .Values.s3.existingSecret }}{{ else }}{{ include "poly-kg.fullname" . }}-secrets{{ end }}
+                  key: s3-secret-access-key
+            - name: NEO4J_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "poly-kg.fullname" . }}-lightrag-config
+                  key: NEO4J_URL
+            - name: LIGHTRAG_EMBEDDING_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "poly-kg.fullname" . }}-lightrag-config
+                  key: LIGHTRAG_EMBEDDING_MODEL
+            - name: LIGHTRAG_EMBEDDING_MODEL_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "poly-kg.fullname" . }}-lightrag-config
+                  key: LIGHTRAG_EMBEDDING_MODEL_NAME
+          {{- with .Values.lightrag.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.lightrag.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.lightrag.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.lightrag.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.lightrag.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.lightrag.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

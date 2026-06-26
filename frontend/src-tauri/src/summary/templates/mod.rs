@@ -31,9 +31,12 @@
 //! # Custom Templates
 //!
 //! Users can add custom templates to:
-//! - macOS: `~/Library/Application Support/Meetily/templates/`
-//! - Windows: `%APPDATA%\Meetily\templates\`
-//! - Linux: `~/.config/Meetily/templates/`
+//! - macOS: `~/Library/Application Support/Poly/templates/`
+//! - Windows: `%APPDATA%\Poly\templates\`
+//! - Linux: `~/.config/Poly/templates/`
+//!
+//! Legacy templates from `Meetily/templates/` are also loaded as a
+//! fallback when the Poly directory is empty.
 //!
 //! Custom templates must follow the JSON schema defined in `types::Template`.
 

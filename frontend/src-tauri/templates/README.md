@@ -47,9 +47,11 @@ Each template JSON file follows this schema:
 
 Users can add custom templates to the application data directory:
 
-- **macOS**: `~/Library/Application Support/Meetily/templates/`
-- **Windows**: `%APPDATA%\Meetily\templates\`
-- **Linux**: `~/.config/Meetily/templates/`
+- **macOS**: `~/Library/Application Support/Poly/templates/`
+- **Windows**: `%APPDATA%\Poly\templates\`
+- **Linux**: `~/.config/Poly/templates/`
+
+> **Legacy users:** If you previously used Resourcefully/Meetily, custom templates from the old location (`~/Library/Application Support/Meetily/templates/`, `%APPDATA%\Meetily\templates\`, or `~/.config/Meetily/templates/`) are automatically copied to the new Poly path on first launch. Your old templates are never deleted.
 
 Custom templates override built-in templates with the same filename.
 

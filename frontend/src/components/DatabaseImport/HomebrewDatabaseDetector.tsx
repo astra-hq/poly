@@ -10,10 +10,13 @@ interface HomebrewDatabaseDetectorProps {
   onDecline: () => void;
 }
 
-// Homebrew paths differ between Intel and Apple Silicon Macs
+// Homebrew paths — check Poly first, then legacy meetily
+// differ between Intel and Apple Silicon Macs
 const HOMEBREW_PATHS = [
-  '/opt/homebrew/var/meetily/meeting_minutes.db',  // Apple Silicon (M1/M2/M3)
-  '/usr/local/var/meetily/meeting_minutes.db',      // Intel Macs
+  '/opt/homebrew/var/poly/meeting_minutes.db',         // Poly - Apple Silicon
+  '/usr/local/var/poly/meeting_minutes.db',             // Poly - Intel
+  '/opt/homebrew/var/meetily/meeting_minutes.db',       // Legacy - Apple Silicon
+  '/usr/local/var/meetily/meeting_minutes.db',          // Legacy - Intel
 ];
 
 export function HomebrewDatabaseDetector({ onImportSuccess, onDecline }: HomebrewDatabaseDetectorProps) {
@@ -97,11 +100,11 @@ export function HomebrewDatabaseDetector({ onImportSuccess, onDecline }: Homebre
           <div className="flex items-center gap-2 mb-1">
             <AlertCircle className="h-4 w-4 text-blue-600" />
             <h3 className="text-sm font-semibold text-blue-900">
-              Previous Meetily Installation Detected!
+              Previous Poly/Meetily Installation Detected!
             </h3>
           </div>
           <p className="text-sm text-blue-800 mb-2">
-            We found an existing database from your previous Meetily installation (Python backend version).
+            We found an existing database from a previous installation.
           </p>
           <div className="bg-white/50 rounded p-2 mb-3">
             <p className="text-xs text-blue-700 font-mono break-all">

@@ -1,6 +1,6 @@
-# Meetily Design System
+# Poly Design System
 
-> Extracted from the existing Meetily codebase. This is a descriptive record of
+> Extracted from the existing Poly codebase. This is a descriptive record of
 > current conventions, not a prescription to redesign. All Week 2 UI work must
 > conform to the tokens, components, and patterns documented here.
 

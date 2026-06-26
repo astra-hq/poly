@@ -14,7 +14,7 @@ use crate::knowledge_graph::types::{
     KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, QueryMode,
     TextChunkingConfig,
 };
-use crate::resourcefully_config::repository::ConfigRepository;
+use crate::poly_config::repository::ConfigRepository;
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::secrets::refs::knowledge_graph_profile_key;
 use crate::secrets::store::SecretStore;
@@ -353,7 +353,7 @@ pub async fn api_get_knowledge_graph_pipeline_status<R: Runtime>(
 
 // ── Summary ingestion ────────────────────────────────────────────────────
 
-const SUMMARY_FILE_SOURCE_PREFIX: &str = "resourcefully/meetings";
+const SUMMARY_FILE_SOURCE_PREFIX: &str = "poly/meetings";
 
 fn summary_file_source(meeting_id: &str) -> String {
     format!("meeting-summary-{}", meeting_id)
@@ -475,7 +475,7 @@ fn collect_track_failures(
 /// Called automatically after summary generation completes.
 /// Uses the meeting's KG profile selection (or the global active profile).
 /// Inserts the summary markdown as a single document with file_source
-/// `resourcefully/meetings/{meeting_id}/summary.md`.
+/// `poly/meetings/{meeting_id}/summary.md`.
 #[tauri::command]
 pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
     _app: AppHandle<R>,
@@ -723,7 +723,7 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
 /// Delete the summary document from the Knowledge Graph (for regeneration).
 ///
 /// Called before re-ingesting a new summary for the same meeting.
-/// Uses file_source `resourcefully/meetings/{meeting_id}/summary.md`.
+/// Uses file_source `poly/meetings/{meeting_id}/summary.md`.
 #[tauri::command]
 pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
     _app: AppHandle<R>,
@@ -1231,10 +1231,10 @@ mod summary_source_tests {
 
         let sources = summary_delete_file_sources(meeting_id, "Planning / Review");
 
-        assert_eq!(sources[0], "resourcefully/meetings/meeting-123/summary.md");
+        assert_eq!(sources[0], "poly/meetings/meeting-123/summary.md");
         assert_eq!(
             sources[1],
-            "resourcefully/meetings/Planning _ Review_meeting-123/summary.md"
+            "poly/meetings/Planning _ Review_meeting-123/summary.md"
         );
         assert_eq!(sources[2], "meeting-summary-meeting-123");
     }

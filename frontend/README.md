@@ -1,4 +1,4 @@
-# Meetily - Frontend
+# Poly - Frontend
 
 A modern desktop application for recording, transcribing, and analyzing meetings with AI assistance. Built with Next.js and Tauri for a native desktop experience.
 
@@ -45,26 +45,26 @@ A modern desktop application for recording, transcribing, and analyzing meetings
    ```bash
    # Install Homebrew if not already installed
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-   
+
    # Install Node.js
    brew install node
-   
+
    # Install Rust
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   
+
    # Install pnpm
    npm install -g pnpm
-   
+
    # Install Xcode Command Line Tools
    xcode-select --install
    ```
 
 2. Clone the repository and navigate to the frontend directory:
    ```bash
-   git clone https://github.com/Zackriya-Solutions/meeting-minutes
-   cd meeting-minutes/frontend
+   git clone https://github.com/astra-hq/poly
+   cd poly/frontend
    ```
-  
+
 
 3. Install dependencies:
    ```bash
@@ -81,8 +81,8 @@ A modern desktop application for recording, transcribing, and analyzing meetings
 
 2. Clone the repository and navigate to the frontend directory:
    ```cmd
-   git clone https://github.com/Zackriya-Solutions/meeting-minutes
-   cd meeting-minutes/frontend
+   git clone https://github.com/astra-hq/poly
+   cd poly/frontend
    ```
 
 3. Install dependencies:
@@ -129,7 +129,7 @@ pnpm run tauri:build
 
 ## Local Transcription
 
-Current Meetily does not require a separate FastAPI service, Docker backend, or manually started whisper-server process. Local transcription is handled by the Rust/Tauri desktop app.
+Poly does not require a separate FastAPI service, Docker backend, or manually started whisper-server process. Local transcription is handled by the Rust/Tauri desktop app.
 
 For build and acceleration details, see:
 

@@ -102,7 +102,7 @@ async fn file_store_empty_string_value_is_stored() {
 fn temp_keyring_first_store() -> (KeyringFirstSecretStore, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let store = KeyringFirstSecretStore::new(
-        "com.meetily.secrets.test.integration",
+        "com.poly.secrets.test.integration",
         dir.path().join("secrets.yml"),
     );
     (store, dir)
@@ -211,4 +211,128 @@ fn secret_ref_serde_roundtrip_integration() {
     let restored: SecretRef = serde_json::from_str(&json).unwrap();
     assert_eq!(r, restored);
     assert_eq!(restored.as_str(), "integration/serde/test");
+}
+
+// ── Migration-aware KeyringFirstSecretStore integration tests ────────
+
+fn temp_migration_store(
+    legacy_file_path: std::path::PathBuf,
+) -> (KeyringFirstSecretStore, std::path::PathBuf, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly_secrets.yml");
+    let store = KeyringFirstSecretStore::with_legacy(
+        "com.poly.secrets.test.integration",
+        poly_path.clone(),
+        "com.meetily.secrets.test.legacy",
+        legacy_file_path,
+    );
+    (store, poly_path, dir)
+}
+
+#[tokio::test]
+async fn migration_store_reads_from_legacy_file_fallback() {
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_path = legacy_dir.path().join("secrets.yml");
+    let legacy_store = FileSecretStore::new(legacy_path.clone());
+    let key = SecretRef::new("integration/migration/fallback-key").unwrap();
+    legacy_store.set(&key, "legacy-integration-value").await.unwrap();
+
+    let (store, _poly_path, _dir) = temp_migration_store(legacy_path.clone());
+
+    let val = store.get(&key).await.unwrap();
+    assert_eq!(val.as_deref(), Some("legacy-integration-value"));
+}
+
+#[tokio::test]
+async fn migration_store_copies_legacy_forward_to_poly_primary() {
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_path = legacy_dir.path().join("secrets.yml");
+    let legacy_store = FileSecretStore::new(legacy_path.clone());
+    let key = SecretRef::new("integration/migration/copy-forward-int").unwrap();
+    legacy_store.set(&key, "pre-migration-int-value").await.unwrap();
+
+    let (store, poly_path, _dir) = temp_migration_store(legacy_path.clone());
+
+    // First read triggers copy-forward from legacy to Poly.
+    let val = store.get(&key).await.unwrap();
+    assert_eq!(val.as_deref(), Some("pre-migration-int-value"));
+
+    // Poly primary file must now have the value.
+    let poly_store = FileSecretStore::new(poly_path);
+    let poly_val = poly_store.get(&key).await.unwrap();
+    assert_eq!(
+        poly_val.as_deref(),
+        Some("pre-migration-int-value"),
+        "value must be copied forward to Poly primary file"
+    );
+}
+
+#[tokio::test]
+async fn migration_store_poly_primary_wins_over_legacy() {
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_path = legacy_dir.path().join("secrets.yml");
+    let legacy_store = FileSecretStore::new(legacy_path.clone());
+    let key = SecretRef::new("integration/migration/primary-wins-int").unwrap();
+    legacy_store.set(&key, "legacy-val").await.unwrap();
+
+    let (store, _poly_path, _dir) = temp_migration_store(legacy_path.clone());
+
+    // Write a Poly primary value that differs from legacy.
+    store.set(&key, "poly-primary-val").await.unwrap();
+
+    let val = store.get(&key).await.unwrap();
+    assert_eq!(val.as_deref(), Some("poly-primary-val"));
+}
+
+#[tokio::test]
+async fn migration_store_delete_does_not_touch_legacy() {
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_path = legacy_dir.path().join("secrets.yml");
+    let legacy_store = FileSecretStore::new(legacy_path.clone());
+    let key = SecretRef::new("integration/migration/keep-legacy-int").unwrap();
+    legacy_store.set(&key, "keep-me-int").await.unwrap();
+
+    let (store, _poly_path, _dir) = temp_migration_store(legacy_path.clone());
+
+    // Delete through migration store.
+    store.delete(&key).await.unwrap();
+
+    // Legacy store must still have the value.
+    let legacy_val = legacy_store.get(&key).await.unwrap();
+    assert_eq!(
+        legacy_val.as_deref(),
+        Some("keep-me-int"),
+        "legacy entry must not be deleted"
+    );
+}
+
+#[tokio::test]
+async fn migration_store_set_writes_only_to_primary_not_legacy() {
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_path = legacy_dir.path().join("secrets.yml");
+    let legacy_store = FileSecretStore::new(legacy_path.clone());
+    let key = SecretRef::new("integration/migration/set-primary-only-int").unwrap();
+
+    let (store, _poly_path, _dir) = temp_migration_store(legacy_path.clone());
+
+    store.set(&key, "poly-only-int").await.unwrap();
+
+    // Legacy must not have this key.
+    let legacy_val = legacy_store.get(&key).await.unwrap();
+    assert!(legacy_val.is_none(), "set must not write to legacy store");
+
+    // Primary got the value.
+    let val = store.get(&key).await.unwrap();
+    assert_eq!(val.as_deref(), Some("poly-only-int"));
+}
+
+#[tokio::test]
+async fn migration_store_missing_secret_returns_none() {
+    let legacy_dir = tempfile::tempdir().unwrap();
+    let legacy_path = legacy_dir.path().join("secrets.yml");
+    let (store, _poly_path, _dir) = temp_migration_store(legacy_path.clone());
+    let key = SecretRef::new("integration/migration/truly-missing-int").unwrap();
+
+    let val = store.get(&key).await.unwrap();
+    assert!(val.is_none());
 }

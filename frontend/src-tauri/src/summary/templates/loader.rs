@@ -16,17 +16,37 @@ pub fn set_bundled_templates_dir(path: PathBuf) {
     }
 }
 
-/// Get the user's custom templates directory path
+/// Get the user's custom templates directory path.
 ///
-/// Returns the platform-specific application data directory for custom templates:
-/// - macOS: ~/Library/Application Support/Meetily/templates/
-/// - Windows: %APPDATA%\Meetily\templates\
-/// - Linux: ~/.config/Meetily/templates/
+/// Primary path: platform-specific `Poly/templates/`.
+/// Falls back to `Meetily/templates/` if Poly dir is empty/missing
+/// and the legacy path contains templates.
+///
+/// - macOS: `~/Library/Application Support/Poly/templates/`
+/// - Windows: `%APPDATA%\Poly\templates\`
+/// - Linux: `~/.config/Poly/templates/`
 fn get_custom_templates_dir() -> Option<PathBuf> {
-    let mut path = dirs::data_dir()?;
-    path.push("Meetily");
-    path.push("templates");
-    Some(path)
+    let data_dir = dirs::data_dir()?;
+    let poly_templates = data_dir.join("Poly").join("templates");
+    let legacy_templates = data_dir.join("Meetily").join("templates");
+
+    // Primary: Poly path
+    if poly_templates.exists() {
+        return Some(poly_templates);
+    }
+
+    // Fallback: if legacy path exists with content, use it
+    // (reads from legacy; writes go to primary via the app_data migration)
+    if legacy_templates.exists() {
+        debug!(
+            "Using legacy templates dir: {:?} (primary Poly dir is empty)",
+            legacy_templates
+        );
+        return Some(legacy_templates);
+    }
+
+    // Neither exists: return primary Poly path (will be created on write)
+    Some(poly_templates)
 }
 
 /// Load a template from the bundled resources directory

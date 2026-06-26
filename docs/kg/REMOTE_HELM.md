@@ -1,6 +1,6 @@
 # Knowledge Graph Remote Deployment (Helm)
 
-This guide explains how to use the `resourcefully-kg` Helm chart to deploy the Knowledge Graph stack (LightRAG + Neo4j) to a Kubernetes cluster. The chart is a **deployment scaffold** — it contains placeholder values for secrets and endpoints that you must replace before deploying to a real cluster.
+This guide explains how to use the `poly-kg` Helm chart to deploy the Knowledge Graph stack (LightRAG + Neo4j) to a Kubernetes cluster. The chart is in `charts/poly` and is a **deployment scaffold** it contains placeholder values for secrets and endpoints that you must replace before deploying to a real cluster.
 
 > **Scope:** This chart is for remote LightRAG deployments. For local development with Docker Compose, see [LOCAL_SETUP.md](LOCAL_SETUP.md).
 
@@ -51,42 +51,42 @@ s3:
 **Production recommendation:** Create a Kubernetes Secret and reference it via `s3.existingSecret`:
 
 ```bash
-kubectl create secret generic resourcefully-kg-s3-secrets \
+kubectl create secret generic poly-kg-s3-secrets \
   --from-literal=access-key-id=YOUR_KEY \
   --from-literal=secret-access-key=YOUR_SECRET
 ```
 
-Then set `s3.existingSecret: "resourcefully-kg-s3-secrets"` in your values.
+Then set `s3.existingSecret: "poly-kg-s3-secrets"` in your values.
 
 ## Render (Validate Without Deploying)
 
 Render the templates locally to validate correctness without deploying:
 
 ```bash
-helm template resourcefully-kg charts/resourcefully-kg \
-  --values charts/resourcefully-kg/values.yaml \
-  > /tmp/resourcefully-kg-rendered.yaml
+helm template poly-kg charts/poly \
+  --values charts/poly/values.yaml \
+  > /tmp/poly-kg-rendered.yaml
 ```
 
 Verify the output contains LightRAG and Neo4j resources and no real secrets:
 
 ```bash
-grep -c "kind:" /tmp/resourcefully-kg-rendered.yaml
-grep "CHANGE_ME" /tmp/resourcefully-kg-rendered.yaml
+grep -c "kind:" /tmp/poly-kg-rendered.yaml
+grep "CHANGE_ME" /tmp/poly-kg-rendered.yaml
 ```
 
 ## Install
 
 ```bash
 # With default placeholder values (not functional — for validation only)
-helm install resourcefully-kg charts/resourcefully-kg
+helm install poly-kg charts/poly
 
 # With custom values file
-helm install resourcefully-kg charts/resourcefully-kg \
+helm install poly-kg charts/poly \
   --values my-custom-values.yaml
 
 # With inline overrides
-helm install resourcefully-kg charts/resourcefully-kg \
+helm install poly-kg charts/poly \
   --set s3.endpoint=https://s3.amazonaws.com \
   --set s3.bucket=my-bucket \
   --set lightrag.apiKey.value=my-secure-key \
@@ -96,32 +96,32 @@ helm install resourcefully-kg charts/resourcefully-kg \
 ## Upgrade
 
 ```bash
-helm upgrade resourcefully-kg charts/resourcefully-kg \
+helm upgrade poly-kg charts/poly \
   --values my-custom-values.yaml
 ```
 
 ## Uninstall and Reset
 
 ```bash
-helm uninstall resourcefully-kg
+helm uninstall poly-kg
 ```
 
 > **Warning:** PersistentVolumeClaims created by the Neo4j StatefulSet are **not** deleted by `helm uninstall`. To remove them:
 >
 > ```bash
-> kubectl delete pvc -l app.kubernetes.io/instance=resourcefully-kg
+> kubectl delete pvc -l app.kubernetes.io/instance=poly-kg
 > ```
 
 To do a full reset (uninstall and delete persistent data):
 
 ```bash
-helm uninstall resourcefully-kg
-kubectl delete pvc -l app.kubernetes.io/instance=resourcefully-kg
+helm uninstall poly-kg
+kubectl delete pvc -l app.kubernetes.io/instance=poly-kg
 ```
 
 ## Configuration Reference
 
-See `charts/resourcefully-kg/values.yaml` for all configurable parameters. Key fields:
+See `charts/poly/values.yaml` for all configurable parameters. Key fields:
 
 | Field | Default | Description |
 |-------|---------|-------------|

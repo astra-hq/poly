@@ -11,7 +11,7 @@ use super::types::{SecretRef, SecretStoreError};
 /// - Windows: Credential Manager
 /// - Linux: Secret Service (org.freedesktop.secrets) or similar
 ///
-/// Secrets are stored under a fixed service name (`com.meetily.secrets`)
+/// Secrets are stored under a fixed service name (`com.poly.secrets`)
 /// with the secret reference namespace as the account/username field.
 pub struct KeyringSecretStore {
     service: String,
@@ -20,7 +20,7 @@ pub struct KeyringSecretStore {
 impl KeyringSecretStore {
     /// Create a new keyring store with the given service name.
     ///
-    /// The default service name is `"com.meetily.secrets"`.
+    /// The default service name is `"com.poly.secrets"`.
     pub fn new(service: impl Into<String>) -> Self {
         Self {
             service: service.into(),
@@ -30,7 +30,7 @@ impl KeyringSecretStore {
 
 impl Default for KeyringSecretStore {
     fn default() -> Self {
-        Self::new("com.meetily.secrets")
+        Self::new("com.poly.secrets")
     }
 }
 

@@ -1,6 +1,6 @@
-# Meetily Documentation
+# Poly Documentation
 
-This directory contains user and developer documentation for Meetily.
+This directory contains user and developer documentation for Poly.
 
 ## Structure
 
@@ -13,8 +13,6 @@ docs/
 │   ├── architecture.md
 │   └── building_in_linux.md
 ├── images/          # Screenshots, diagrams, and logos
-│   ├── Meetily-6.png
-│   ├── meetily_demo.gif
 │   └── ...
 └── kg/              # Knowledge Graph setup & usage
     ├── LOCAL_SETUP.md

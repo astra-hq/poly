@@ -4,7 +4,7 @@ use tauri::{AppHandle, Runtime};
 
 use crate::database::models::KnowledgeGraphMeetingSelection;
 use crate::knowledge_graph::settings_commands::load_kg_settings;
-use crate::resourcefully_config::repository::ConfigRepository;
+use crate::poly_config::repository::ConfigRepository;
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::state::AppState;
 
@@ -162,7 +162,7 @@ mod tests {
         KnowledgeGraphProfile, KnowledgeGraphSelection as KgSelection,
     };
     use crate::knowledge_graph::settings_commands::save_kg_settings;
-    use crate::resourcefully_config::repository::ConfigRepository;
+    use crate::poly_config::repository::ConfigRepository;
     use crate::secrets::store::SecretStore;
     use crate::secrets::types::{SecretRef, SecretStoreError};
     use async_trait::async_trait;
@@ -204,7 +204,7 @@ mod tests {
 
     fn test_config_repo() -> (ConfigRepository, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("resourcefully.yml");
+        let path = dir.path().join("poly.yml");
         (ConfigRepository::with_path(path), dir)
     }
 

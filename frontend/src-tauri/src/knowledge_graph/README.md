@@ -50,7 +50,7 @@ The following are **not** implemented:
 - **Automatic ingestion** — No hooks in the recording or transcription lifecycle auto-trigger KG ingestion.
 - **Graph visualization** — No visual graph explorer of nodes and edges in the UI.
 - **Live query during recording** — The query bar only works on already-indexed meetings.
-- **Helm chart provisioning** — The chart at `charts/resourcefully-kg/` is a scaffold with placeholder values. It does not provision S3 buckets, IAM roles, or TLS certificates.
+- **Helm chart provisioning** — The chart at `charts/poly/` is a scaffold with placeholder values. It does not provision S3 buckets, IAM roles, or TLS certificates.
 
 ## Notes
 

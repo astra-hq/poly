@@ -598,7 +598,7 @@ export function KnowledgeGraphSettings() {
           <h4 className="text-lg font-semibold text-gray-900 mb-2">No Knowledge Graph Profiles</h4>
           <p className="text-sm text-gray-500 mb-6 max-w-md">
             Add a LightRAG endpoint to start ingesting meeting transcripts into a knowledge graph
-            for semantic search and retrieval. Or let Meetily set one up for you locally.
+            for semantic search and retrieval. Or let Poly set one up for you locally.
           </p>
           <div className="flex items-center gap-3">
             <Button size="sm" onClick={openAddDialog}>

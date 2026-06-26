@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Meetily** is a privacy-first AI meeting assistant that captures, transcribes, and summarizes meetings entirely on local infrastructure. The supported application is the Tauri desktop app with a Rust core.
+**Poly** is a privacy-first AI meeting assistant that captures, transcribes, and summarizes meetings entirely on local infrastructure. The supported application is the Tauri desktop app with a Rust core.
 
 1. **Frontend**: Tauri-based desktop application (Rust + Next.js + TypeScript)
 2. **Rust Backend**: Tauri commands, audio capture, transcription, storage, and summarization orchestration
@@ -65,29 +65,31 @@ The app separates configuration, secrets, and runtime data into three distinct b
 
 | Boundary | What it holds | Authoritative store | Location |
 |---|---|---|---|
-| **Non-secret config** | Providers, models, endpoints, preferences, KG profiles (NO API keys, NO secrets) | `resourcefully.yml` (YAML) | `~/.resourcefully/resourcefully.yml` |
-| **Raw secrets** | API keys, tokens, credentials | `SecretStore` (keychain → file fallback) | macOS Keychain / file-based fallback |
+| **Non-secret config** | Providers, models, endpoints, preferences, KG profiles (NO API keys, NO secrets) | `poly.yml` (YAML) | `~/.poly/poly.yml` |
+| **Raw secrets** | API keys, tokens, credentials | `SecretStore` (keychain → file fallback) | macOS Keychain / `~/.poly/secrets.yml` fallback |
 | **Runtime data** | Meetings, transcripts, summaries, audio files, KG runtime state | SQLite | Tauri app data directory |
 
 ### How they interact
 
-1. On startup, `ConfigRepository::load_or_create_default()` reads `resourcefully.yml` (or creates it with defaults on first run).
+1. On startup, `ConfigRepository::load_or_create_default()` reads `poly.yml` (or creates it with defaults on first run). If `~/.poly/poly.yml` does not exist, the app checks for a legacy `~/.resourcefully/resourcefully.yml` and copies it forward.
 2. The caller merges secrets from `SecretStore` into the config struct **in memory** — raw secrets are never written to the YAML file.
-3. SQLite stores only runtime artifacts (meeting records, transcript segments, summaries). ON first startup after migration, legacy `settings` and `transcript_settings` tables are dropped.
+3. SQLite stores only runtime artifacts (meeting records, transcript segments, summaries). On first startup after migration, legacy `settings` and `transcript_settings` tables are dropped.
 
-### `resourcefully.yml` (non-secret config)
+### `poly.yml` (non-secret config)
 
-- **Path**: `~/.resourcefully/resourcefully.yml`
+- **Path**: `~/.poly/poly.yml`
+- **Legacy path** (auto-migrated): `~/.resourcefully/resourcefully.yml`
 - **Format**: YAML, human-readable and version-control-friendly
 - **Contents**: `SummaryConfig` (provider, model, whisper_model, ollama_endpoint), `TranscriptConfig` (provider, model), `PreferencesConfig` (language), `KnowledgeGraphSettings` (profiles without secrets)
 - **API key fields are explicitly excluded** — `serde(default)` with `skip_serializing_if = "Option::is_none"` on `api_key` fields. The struct enforces this at the type level.
 - **Atomic saves**: `ConfigRepository::save_atomic()` writes to a temp file, then renames. On failure, the existing file is preserved. A malformed YAML file produces a typed `serde_yaml` error — the app does not silently corrupt or truncate the file.
-- **Troubleshooting malformed YAML**: If the app fails to load config, check `~/.resourcefully/resourcefully.yml` for syntax errors (indentation, unquoted colons in values). The error message includes line/column information. Delete the file to regenerate defaults on next launch.
+- **Troubleshooting malformed YAML**: If the app fails to load config, check `~/.poly/poly.yml` for syntax errors (indentation, unquoted colons in values). The error message includes line/column information. Delete the file to regenerate defaults on next launch.
 
 ### `SecretStore` (raw secrets)
 
 - **Trait**: `SecretStore` with four methods: `get`, `set`, `delete`, `exists`
-- **Primary implementation**: `KeyringFirstSecretStore` — tries the OS keychain first (macOS Keychain, Windows Credential Manager), falls back to an encrypted file store
+- **Primary implementation**: `KeyringFirstSecretStore` — tries the OS keychain first (macOS Keychain, Windows Credential Manager), falls back to `~/.poly/secrets.yml`
+- **Legacy fallback**: If no secret is found in the Poly store, legacy `com.meetily.secrets` (macOS Keychain) and `~/.resourcefully/secrets.yml` are checked and values copied forward. Legacy secrets are never deleted.
 - **Key format**: `SecretRef` enum — typed keys like `SecretRef::OpenAiApiKey`, not raw strings
 - **Raw secrets never appear in YAML**. The config struct has `api_key` fields that default to `None` in serialization; the caller populates them from the `SecretStore` at the point of use.
 
@@ -99,15 +101,15 @@ The app separates configuration, secrets, and runtime data into three distinct b
 
 ### Docker env files (generated artifacts, not config)
 
-- Files like `kg.env` are **generated runtime artifacts** written by the knowledge graph settings commands
+- Files like `kg.env` are **generated runtime artifacts** written by the knowledge graph settings commands under `~/.poly/docker/`
 - They are regenerated on every relevant config change — never edited by hand
-- They are **not** a config source; the canonical config is always `resourcefully.yml` + `SecretStore`
+- They are **not** a config source; the canonical config is always `poly.yml` + `SecretStore`
 
 ### Config flow at a glance
 
 ```
 ┌──────────────────────┐     ┌──────────────────────┐
-│  resourcefully.yml   │     │     SecretStore      │
+│      poly.yml        │     │     SecretStore      │
 │  (non-secret config) │     │  (API keys, tokens)  │
 └──────────┬───────────┘     └──────────┬───────────┘
            │  load                      │  get
@@ -245,8 +247,10 @@ await listen<TranscriptUpdate>('transcript-update', (event) => {
 
 **Model Storage Locations**:
 - **Development**: `frontend/models/`
-- **Production (macOS)**: `~/Library/Application Support/Meetily/models/`
-- **Production (Windows)**: `%APPDATA%\Meetily\models\`
+- **Production (macOS)**: `~/Library/Application Support/Poly/models/`
+- **Production (Windows)**: `%APPDATA%\Poly\models\`
+
+> **Legacy users:** Models from the old `~/Library/Application Support/Meetily/models/` or `%APPDATA%\Meetily\models\` are automatically copied to the new Poly path on first launch.
 
 **Model Loading** (frontend/src-tauri/src/whisper_engine/whisper_engine.rs):
 ```rust

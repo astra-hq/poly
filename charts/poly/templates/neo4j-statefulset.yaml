@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "poly-kg.fullname" . }}-neo4j
+  labels:
+    {{- include "poly-kg.labels" . | nindent 4 }}
+    app.kubernetes.io/component: neo4j
+spec:
+  serviceName: {{ include "poly-kg.fullname" . }}-neo4j
+  replicas: {{ .Values.neo4j.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "poly-kg.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: neo4j
+  template:
+    metadata:
+      labels:
+        {{- include "poly-kg.labels" . | nindent 8 }}
+        app.kubernetes.io/component: neo4j
+    spec:
+      containers:
+        - name: neo4j
+          image: "{{ .Values.neo4j.image.repository }}:{{ .Values.neo4j.image.tag }}"
+          imagePullPolicy: {{ .Values.neo4j.image.pullPolicy }}
+          ports:
+            - name: bolt
+              containerPort: {{ .Values.neo4j.service.boltPort }}
+              protocol: TCP
+            - name: http
+              containerPort: {{ .Values.neo4j.service.httpPort }}
+              protocol: TCP
+          env:
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.neo4j.auth.existingSecret }}{{ .Values.neo4j.auth.existingSecret }}{{ else }}{{ include "poly-kg.fullname" . }}-secrets{{ end }}
+                  key: neo4j-auth
+          {{- with .Values.neo4j.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.neo4j.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.neo4j.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+            - name: neo4j-logs
+              mountPath: /logs
+            - name: neo4j-import
+              mountPath: /var/lib/neo4j/import
+            - name: neo4j-plugins
+              mountPath: /plugins
+      {{- with .Values.neo4j.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.neo4j.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.neo4j.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: neo4j-data
+        labels:
+          {{- include "poly-kg.labels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.neo4j.persistence.storageClass }}
+        storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.neo4j.persistence.size }}
+    - metadata:
+        name: neo4j-logs
+        labels:
+          {{- include "poly-kg.labels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.neo4j.persistence.storageClass }}
+        storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.neo4j.persistence.logsSize }}
+    - metadata:
+        name: neo4j-import
+        labels:
+          {{- include "poly-kg.labels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.neo4j.persistence.storageClass }}
+        storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: 1Gi
+    - metadata:
+        name: neo4j-plugins
+        labels:
+          {{- include "poly-kg.labels" . | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.neo4j.persistence.storageClass }}
+        storageClassName: {{ .Values.neo4j.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: 1Gi

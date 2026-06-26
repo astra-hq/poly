@@ -1,0 +1,19 @@
+apiVersion: v2
+name: poly-kg
+description: Remote Knowledge Graph stack — LightRAG + Neo4j with external S3 blob storage
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - lightrag
+  - neo4j
+  - knowledge-graph
+  - rag
+  - poly
+home: https://github.com/astra-hq/poly
+sources:
+  - https://github.com/astra-hq/poly
+  - https://github.com/HKUDS/LightRAG
+maintainers:
+  - name: poly
+    email: placeholder@example.com
