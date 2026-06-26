@@ -16,6 +16,7 @@ use crate::knowledge_graph::provider::KnowledgeGraphProvider;
 use crate::poly_config::config::{
     KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets,
 };
+use crate::process_path;
 use crate::poly_config::repository::ConfigRepository;
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::secrets::refs::knowledge_graph_profile_key;
@@ -303,10 +304,7 @@ pub async fn api_setup_kg_check_deps() -> Result<SetupDependencyResult, String> 
 
 /// Check whether Docker is installed (docker --version).
 fn check_docker() -> DependencyInfo {
-    match std::process::Command::new("docker")
-        .arg("--version")
-        .output()
-    {
+    match process_path::command("docker").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             DependencyInfo {
@@ -323,10 +321,7 @@ fn check_docker() -> DependencyInfo {
 
 /// Check whether Ollama is installed (ollama --version).
 fn check_ollama() -> DependencyInfo {
-    match std::process::Command::new("ollama")
-        .arg("--version")
-        .output()
-    {
+    match process_path::command("ollama").arg("--version").output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             DependencyInfo {
@@ -357,7 +352,7 @@ pub async fn api_setup_kg_pull_model<R: Runtime>(
         "pull-model",
     );
 
-    let mut child = std::process::Command::new("ollama")
+    let mut child = process_path::command("ollama")
         .args(["pull", &model])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -460,7 +455,7 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
         "docker-check",
     );
 
-    let docker_check = std::process::Command::new("docker")
+    let docker_check = process_path::command("docker")
         .arg("--version")
         .output()
         .map_err(|_| {
@@ -664,7 +659,7 @@ LIGHTRAG_PARSER=*:native-teP,*:legacy-R\n",
 
     // Bring up all services, force-recreate lightrag so it always
     // picks up the freshly-written .env config (LIGHTRAG_API_KEY, etc.)
-    let output = std::process::Command::new("docker")
+    let output = process_path::command("docker")
         .args([
             "compose",
             "-f",
