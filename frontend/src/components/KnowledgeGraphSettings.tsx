@@ -183,11 +183,15 @@ export function KnowledgeGraphSettings() {
   const [setupDeps, setSetupDeps] = useState<{
     docker: { installed: boolean; version: string | null };
     ollama: { installed: boolean; version: string | null };
+    platform: string;
   } | null>(null);
   const [setupLogs, setSetupLogs] = useState<{ message: string; level: string; stage: string }[]>([]);
   const [setupResult, setSetupResult] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [pullingModel, setPullingModel] = useState<string | null>(null);
+  const [selectedLlmModel, setSelectedLlmModel] = useState<string>('qwen3:30b-a3b');
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [backgroundSetup, setBackgroundSetup] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   // ── Load settings on mount ──────────────────────────────────────────
@@ -412,10 +416,22 @@ export function KnowledgeGraphSettings() {
     setSetupResult(null);
     setSetupError(null);
     setPullingModel(null);
+    setSelectedLlmModel('qwen3:30b-a3b');
+    setSetupDialogOpen(true);
+    setBackgroundSetup(false);
   };
 
-  /** Close / reset the wizard entirely. */
+  /** Close the wizard dialog (but keep background operation running). */
   const handleCloseSetup = () => {
+    setSetupDialogOpen(false);
+    // If we're in an active phase, mark as background
+    if (setupPhase === 'phase2-pull-bge' || setupPhase === 'phase2-pull-llm' || setupPhase === 'phase3-stack') {
+      setBackgroundSetup(true);
+    }
+  };
+
+  /** Fully reset the wizard (cancel/complete). */
+  const handleResetSetup = () => {
     setSetupPhase('idle');
     setSetupPreference(null);
     setSetupDeps(null);
@@ -423,6 +439,8 @@ export function KnowledgeGraphSettings() {
     setSetupResult(null);
     setSetupError(null);
     setPullingModel(null);
+    setSetupDialogOpen(false);
+    setBackgroundSetup(false);
   };
 
   /** Phase 1: Run dependency checks for the chosen preference. */
@@ -467,7 +485,7 @@ export function KnowledgeGraphSettings() {
 
   /** Phase 2: Pull Ollama models (local only). */
   const handlePullModels = async () => {
-    const models = ['bge-m3:latest', 'qwen2.5:1.5b'];
+    const models = ['bge-m3:latest', selectedLlmModel];
     for (const [i, model] of models.entries()) {
       setSetupPhase(i === 0 ? 'phase2-pull-bge' : 'phase2-pull-llm');
       setPullingModel(model);
@@ -504,7 +522,7 @@ export function KnowledgeGraphSettings() {
       { message: 'Starting Docker stack...', level: 'info', stage: 'compose-up' },
     ]);
     knowledgeGraphService
-      .startStack()
+      .setupLocalKnowledgeGraph(selectedLlmModel)
       .then((result) => {
         setSetupResult(result);
         setSetupPhase('complete');
@@ -513,6 +531,7 @@ export function KnowledgeGraphSettings() {
           { message: result, level: 'success', stage: 'done' },
         ]);
         loadSettings();
+        setBackgroundSetup(false);
         toast.success('Knowledge graph is ready!', {
           description: 'Local LightRAG instance is running with an auto-created profile.',
         });
@@ -525,6 +544,7 @@ export function KnowledgeGraphSettings() {
           ...prev,
           { message: `Setup failed: ${msg}`, level: 'error', stage: 'error' },
         ]);
+        setBackgroundSetup(false);
         toast.error('Failed to set up knowledge graph', { description: msg });
       });
   };
@@ -694,7 +714,18 @@ export function KnowledgeGraphSettings() {
                   <span>{embeddingFingerprint(profile)}</span>
                 </div>
 
-                {/* Row 4: Notes (if present) */}
+                {/* Row 4: Notes / Background setup indicator */}
+                {profile.kind === 'local' && backgroundSetup && (
+                  <div className="mt-2">
+                    <button
+                      onClick={() => setSetupDialogOpen(true)}
+                      className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      Setup in progress — click to view
+                    </button>
+                  </div>
+                )}
                 {profile.notes && (
                   <div className="mt-2 text-xs text-gray-500 italic truncate" title={profile.notes}>
                     {profile.notes}
@@ -1030,7 +1061,14 @@ export function KnowledgeGraphSettings() {
       </Dialog>
 
       {/* ── Setup Wizard Dialog ──────────────────────────────────────── */}
-      <Dialog open={setupPhase !== 'idle'} onOpenChange={(open) => !open && handleCloseSetup()}>
+      <Dialog open={setupDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          // Only allow closing if we're not in a critical phase, or if explicitly closing
+          handleCloseSetup();
+        } else {
+          setSetupDialogOpen(true);
+        }
+      }}>
         <DialogContent className="max-w-xl">
           {/* Step indicator */}
           {setupPhase !== 'idle' && (
@@ -1138,7 +1176,7 @@ export function KnowledgeGraphSettings() {
               </div>
 
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={handleCloseSetup}>
+                <Button variant="outline" onClick={handleResetSetup}>
                   Cancel
                 </Button>
                 <Button
@@ -1196,7 +1234,46 @@ export function KnowledgeGraphSettings() {
 
           {/* ── Phase 1→2/3 Transition ────────────────────────────────── */}
           {setupDeps && (setupPhase === 'phase1-checking' || setupPhase === 'phase1-preference') && (
-            <div className="mt-4">
+            <div className="mt-4 space-y-4">
+              {setupPreference === 'local' && (
+                <div className="space-y-2">
+                  <Label htmlFor="llm-model-select" className="text-sm font-medium">
+                    Extraction Model
+                  </Label>
+                  <Select
+                    value={selectedLlmModel}
+                    onValueChange={setSelectedLlmModel}
+                  >
+                    <SelectTrigger id="llm-model-select" className="w-full">
+                      <SelectValue placeholder="Select a model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(setupDeps.platform === 'macos'
+                        ? [
+                            { value: 'gemma4:12b-mlx', label: 'Gemma 4 12B MLX (~10 GB)', desc: 'Fast, good quality' },
+                            { value: 'gemma4:26b-mlx', label: 'Gemma 4 26B MLX (~17 GB)', desc: 'MoE, best quality' },
+                            { value: 'qwen3:30b-a3b', label: 'Qwen3 30B A3B (~18 GB)', desc: 'MoE, excellent extraction' },
+                          ]
+                        : [
+                            { value: 'gemma4:12b', label: 'Gemma 4 12B (~10 GB)', desc: 'Fast, good quality' },
+                            { value: 'gemma4:26b', label: 'Gemma 4 26B (~17 GB)', desc: 'MoE, best quality' },
+                            { value: 'qwen3:30b-a3b', label: 'Qwen3 30B A3B (~18 GB)', desc: 'MoE, excellent extraction' },
+                          ]
+                      ).map((model) => (
+                        <SelectItem key={model.value} value={model.value}>
+                          <div className="flex flex-col">
+                            <span>{model.label}</span>
+                            <span className="text-xs text-gray-500">{model.desc}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-gray-500">
+                    This model powers entity extraction and knowledge graph generation. Larger models produce better ontologies but require more VRAM.
+                  </p>
+                </div>
+              )}
               <Button
                 onClick={handleSetupStart}
                 disabled={
@@ -1250,8 +1327,8 @@ export function KnowledgeGraphSettings() {
                 <div ref={logEndRef} />
               </div>
               <DialogFooter>
-                <Button variant="outline" disabled>
-                  Running...
+                <Button variant="outline" onClick={handleCloseSetup}>
+                  Run in Background
                 </Button>
               </DialogFooter>
             </>
