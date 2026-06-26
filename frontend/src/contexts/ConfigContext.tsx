@@ -6,7 +6,7 @@ import { SelectedDevices } from '@/components/DeviceSelection';
 import { configService, ModelConfig } from '@/services/configService';
 import { invoke } from '@tauri-apps/api/core';
 import Analytics from '@/lib/analytics';
-import { BetaFeatures, BetaFeatureKey, loadBetaFeatures, saveBetaFeatures } from '@/types/betaFeatures';
+import { BetaFeatures, BetaFeatureKey, loadBetaFeatures, saveBetaFeatures, DEFAULT_BETA_FEATURES } from '@/types/betaFeatures';
 
 export interface OllamaModel {
   name: string;
@@ -137,36 +137,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   });
 
   // Language preference state
-  const [selectedLanguage, setSelectedLanguage] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('primaryLanguage');
-      return saved || 'auto';
-    }
-    return 'auto';
-  });
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('auto');
 
   // UI preferences state
-  const [showConfidenceIndicator, setShowConfidenceIndicator] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('showConfidenceIndicator');
-      return saved !== null ? saved === 'true' : true;
-    }
-    return true;
-  });
+  const [showConfidenceIndicator, setShowConfidenceIndicator] = useState<boolean>(true);
 
   // Summary configs
-  const [isAutoSummary, setisAutoSummary] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('isAutoSummary');
-      return saved !== null ? saved === 'true' : false
-    }
-    return false;
-  });
+  const [isAutoSummary, setisAutoSummary] = useState<boolean>(false);
 
-  // Beta features state (localStorage)
-  const [betaFeatures, setBetaFeatures] = useState<BetaFeatures>(() => {
-    return loadBetaFeatures();
-  });
+  // Beta features state
+  const [betaFeatures, setBetaFeatures] = useState<BetaFeatures>(() => ({ ...DEFAULT_BETA_FEATURES }));
 
   // Preference settings state (lazy loaded)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
@@ -211,17 +191,32 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     loadTranscriptConfig();
   }, []);
 
-  // Sync language preference to Rust on mount (fixes startup desync bug)
+  // Load saved preferences from localStorage on mount (avoids hydration mismatch)
+  // Syncs the resolved (saved-or-default) language to Rust — not just the default
   useEffect(() => {
-    if (selectedLanguage) {
-      invoke('set_language_preference', { language: selectedLanguage })
-        .then(() => {
-          console.log('[ConfigContext] Synced language preference to Rust on startup:', selectedLanguage);
-        })
-        .catch(err => {
-          console.error('[ConfigContext] Failed to sync language preference to Rust on startup:', err);
-        });
+    const savedLang = localStorage.getItem('primaryLanguage');
+    if (savedLang) {
+      setSelectedLanguage(savedLang);
     }
+    invoke('set_language_preference', { language: savedLang || 'auto' })
+      .then(() => {
+        console.log('[ConfigContext] Synced language preference to Rust on startup:', savedLang || 'auto');
+      })
+      .catch(err => {
+        console.error('[ConfigContext] Failed to sync language preference to Rust on startup:', err);
+      });
+
+    const savedConfidence = localStorage.getItem('showConfidenceIndicator');
+    if (savedConfidence !== null) {
+      setShowConfidenceIndicator(savedConfidence === 'true');
+    }
+
+    const savedAutoSummary = localStorage.getItem('isAutoSummary');
+    if (savedAutoSummary !== null) {
+      setisAutoSummary(savedAutoSummary === 'true');
+    }
+
+    setBetaFeatures(loadBetaFeatures());
   }, []); 
 
   // Load model configuration on mount
