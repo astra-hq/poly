@@ -36,17 +36,10 @@ impl Default for KeyringSecretStore {
 
 #[async_trait]
 impl SecretStore for KeyringSecretStore {
-    async fn get(
-        &self,
-        key: &SecretRef,
-    ) -> Result<Option<String>, SecretStoreError> {
-        let entry = keyring::Entry::new(&self.service, key.as_str())
-            .map_err(|e| {
-                SecretStoreError::KeyringError(format!(
-                    "failed to create keyring entry: {}",
-                    e
-                ))
-            })?;
+    async fn get(&self, key: &SecretRef) -> Result<Option<String>, SecretStoreError> {
+        let entry = keyring::Entry::new(&self.service, key.as_str()).map_err(|e| {
+            SecretStoreError::KeyringError(format!("failed to create keyring entry: {}", e))
+        })?;
 
         match entry.get_password() {
             Ok(password) => Ok(Some(password)),
@@ -61,38 +54,20 @@ impl SecretStore for KeyringSecretStore {
         }
     }
 
-    async fn set(
-        &self,
-        key: &SecretRef,
-        value: &str,
-    ) -> Result<(), SecretStoreError> {
-        let entry = keyring::Entry::new(&self.service, key.as_str())
-            .map_err(|e| {
-                SecretStoreError::KeyringError(format!(
-                    "failed to create keyring entry: {}",
-                    e
-                ))
-            })?;
+    async fn set(&self, key: &SecretRef, value: &str) -> Result<(), SecretStoreError> {
+        let entry = keyring::Entry::new(&self.service, key.as_str()).map_err(|e| {
+            SecretStoreError::KeyringError(format!("failed to create keyring entry: {}", e))
+        })?;
 
         entry.set_password(value).map_err(|e| {
-            SecretStoreError::KeyringError(format!(
-                "failed to write to keyring: {}",
-                e
-            ))
+            SecretStoreError::KeyringError(format!("failed to write to keyring: {}", e))
         })
     }
 
-    async fn delete(
-        &self,
-        key: &SecretRef,
-    ) -> Result<(), SecretStoreError> {
-        let entry = keyring::Entry::new(&self.service, key.as_str())
-            .map_err(|e| {
-                SecretStoreError::KeyringError(format!(
-                    "failed to create keyring entry: {}",
-                    e
-                ))
-            })?;
+    async fn delete(&self, key: &SecretRef) -> Result<(), SecretStoreError> {
+        let entry = keyring::Entry::new(&self.service, key.as_str()).map_err(|e| {
+            SecretStoreError::KeyringError(format!("failed to create keyring entry: {}", e))
+        })?;
 
         match entry.delete_credential() {
             Ok(()) => Ok(()),
@@ -104,10 +79,7 @@ impl SecretStore for KeyringSecretStore {
         }
     }
 
-    async fn exists(
-        &self,
-        key: &SecretRef,
-    ) -> Result<bool, SecretStoreError> {
+    async fn exists(&self, key: &SecretRef) -> Result<bool, SecretStoreError> {
         self.get(key).await.map(|v| v.is_some())
     }
 }

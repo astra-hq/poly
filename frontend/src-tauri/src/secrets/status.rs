@@ -28,7 +28,10 @@ pub async fn build_api_key_status(
 ) -> Result<ApiKeyStatus, SecretStoreError> {
     let secret = store.get(secret_ref).await?;
     let has_secret = secret.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
-    let masked_hint = secret.as_deref().filter(|s| !s.is_empty()).map(mask_api_key);
+    let masked_hint = secret
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .map(mask_api_key);
     Ok(ApiKeyStatus {
         has_secret,
         secret_ref: secret_ref.as_str().to_string(),

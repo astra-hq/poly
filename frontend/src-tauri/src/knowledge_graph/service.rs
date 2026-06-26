@@ -204,6 +204,7 @@ impl KnowledgeGraphIngestionService {
             let request = KnowledgeGraphInsertTextRequest {
                 text: chunk.text.clone(),
                 source: Some(file_source.clone()),
+                chunking: None,
             };
 
             match provider.insert_text(request).await {
@@ -446,8 +447,8 @@ impl KnowledgeGraphIngestionService {
              file_source = excluded.file_source, \
              status = excluded.status, \
              error = excluded.error, \
-             track_id = COALESCE(excluded.track_id, track_id), \
-             document_id = COALESCE(excluded.document_id, document_id), \
+             track_id = excluded.track_id, \
+             document_id = excluded.document_id, \
              updated_at = excluded.updated_at",
         )
         .bind(meeting_id)

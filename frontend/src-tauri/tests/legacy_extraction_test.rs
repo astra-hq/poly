@@ -1,11 +1,11 @@
-use app_lib::resourcefully_config::legacy_extraction::LegacyConfigExtractor;
+use app_lib::database::setup::drop_legacy_config_tables_with_pool;
 use app_lib::resourcefully_config::config::ResourcefullyConfig;
+use app_lib::resourcefully_config::legacy_extraction::LegacyConfigExtractor;
 use app_lib::resourcefully_config::ConfigRepository;
 use app_lib::secrets::file_store::FileSecretStore;
 use app_lib::secrets::refs;
 use app_lib::secrets::store::SecretStore;
 use app_lib::secrets::types::{SecretRef, SecretStoreError};
-use app_lib::database::setup::drop_legacy_config_tables_with_pool;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
@@ -145,13 +145,8 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
     .await
     .unwrap();
 
-    let result =
-        LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
-    assert!(
-        result.is_ok(),
-        "extraction failed: {:?}",
-        result.err()
-    );
+    let result = LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
+    assert!(result.is_ok(), "extraction failed: {:?}", result.err());
 
     // ── Verify YAML has non-secret values ──────────────────────────────
     let loaded_cfg = config_repo.load().unwrap();
@@ -159,10 +154,7 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
     // Summary config
     assert_eq!(loaded_cfg.summary.provider, "ollama");
     assert_eq!(loaded_cfg.summary.model, "llama3.2:latest");
-    assert_eq!(
-        loaded_cfg.summary.whisper_model,
-        "large-v3-turbo"
-    );
+    assert_eq!(loaded_cfg.summary.whisper_model, "large-v3-turbo");
     assert_eq!(
         loaded_cfg.summary.ollama_endpoint.as_deref(),
         Some("http://localhost:11434")
@@ -170,10 +162,7 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
 
     // Transcript config
     assert_eq!(loaded_cfg.transcript.provider, "parakeet");
-    assert_eq!(
-        loaded_cfg.transcript.model,
-        "parakeet-tdt-0.6b-v3-int8"
-    );
+    assert_eq!(loaded_cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
 
     // Custom OpenAI config (non-secret fields)
     assert_eq!(
@@ -193,14 +182,8 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
 
     // Knowledge graph (without secrets)
     assert_eq!(loaded_cfg.knowledge_graph.profiles.len(), 1);
-    assert_eq!(
-        loaded_cfg.knowledge_graph.profiles[0].id,
-        "kg-1"
-    );
-    assert_eq!(
-        loaded_cfg.knowledge_graph.profiles[0].name,
-        "Production KG"
-    );
+    assert_eq!(loaded_cfg.knowledge_graph.profiles[0].id, "kg-1");
+    assert_eq!(loaded_cfg.knowledge_graph.profiles[0].name, "Production KG");
 
     // ── Verify secrets are in SecretStore ──────────────────────────────
     let openai_key = refs::summary_provider_key("openai");
@@ -246,43 +229,33 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
     );
 
     // ── Verify SQLite secret columns are scrubbed ──────────────────────
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(
-        row.0.is_none(),
-        "openaiApiKey should be NULL after scrub"
-    );
+    let row: (Option<String>,) = sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(row.0.is_none(), "openaiApiKey should be NULL after scrub");
 
     let row: (Option<String>,) =
         sqlx::query_as("SELECT whisperApiKey FROM transcript_settings LIMIT 1")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert!(
-        row.0.is_none(),
-        "whisperApiKey should be NULL after scrub"
-    );
+    assert!(row.0.is_none(), "whisperApiKey should be NULL after scrub");
 
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT customOpenAIConfig FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (Option<String>,) = sqlx::query_as("SELECT customOpenAIConfig FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(
         row.0.is_none(),
         "customOpenAIConfig should be NULL after scrub"
     );
 
     let row: (Option<String>,) =
-        sqlx::query_as(
-            "SELECT knowledge_graph_settings FROM settings LIMIT 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        sqlx::query_as("SELECT knowledge_graph_settings FROM settings LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert!(
         row.0.is_none(),
         "knowledge_graph_settings should be NULL after scrub"
@@ -296,34 +269,21 @@ struct FailingSecretStore;
 
 #[async_trait::async_trait]
 impl SecretStore for FailingSecretStore {
-    async fn get(
-        &self,
-        _key: &SecretRef,
-    ) -> Result<Option<String>, SecretStoreError> {
+    async fn get(&self, _key: &SecretRef) -> Result<Option<String>, SecretStoreError> {
         Ok(None)
     }
 
-    async fn set(
-        &self,
-        _key: &SecretRef,
-        _value: &str,
-    ) -> Result<(), SecretStoreError> {
+    async fn set(&self, _key: &SecretRef, _value: &str) -> Result<(), SecretStoreError> {
         Err(SecretStoreError::StoreError(
             "simulated SecretStore set failure".into(),
         ))
     }
 
-    async fn delete(
-        &self,
-        _key: &SecretRef,
-    ) -> Result<(), SecretStoreError> {
+    async fn delete(&self, _key: &SecretRef) -> Result<(), SecretStoreError> {
         Ok(())
     }
 
-    async fn exists(
-        &self,
-        _key: &SecretRef,
-    ) -> Result<bool, SecretStoreError> {
+    async fn exists(&self, _key: &SecretRef) -> Result<bool, SecretStoreError> {
         Ok(false)
     }
 }
@@ -358,12 +318,7 @@ async fn legacy_sqlite_config_extraction_is_non_destructive_on_secret_write_fail
     .await
     .unwrap();
 
-    let result = LegacyConfigExtractor::extract(
-        &pool,
-        &failing_store,
-        &config_repo,
-    )
-    .await;
+    let result = LegacyConfigExtractor::extract(&pool, &failing_store, &config_repo).await;
 
     // Extraction must fail
     assert!(
@@ -372,33 +327,30 @@ async fn legacy_sqlite_config_extraction_is_non_destructive_on_secret_write_fail
     );
 
     // ── SQLite rows must be UNCHANGED ──────────────────────────────────
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (Option<String>,) = sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         row.0.as_deref(),
         Some("sk-should-survive"),
         "SQLite openaiApiKey must NOT have been scrubbed on failure"
     );
 
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT groqApiKey FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (Option<String>,) = sqlx::query_as("SELECT groqApiKey FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         row.0.as_deref(),
         Some("sk-also-survive"),
         "SQLite groqApiKey must NOT have been scrubbed on failure"
     );
 
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT ollamaApiKey FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (Option<String>,) = sqlx::query_as("SELECT ollamaApiKey FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         row.0.as_deref(),
         Some("ollama-key-survive"),
@@ -406,12 +358,10 @@ async fn legacy_sqlite_config_extraction_is_non_destructive_on_secret_write_fail
     );
 
     let row: (Option<String>,) =
-        sqlx::query_as(
-            "SELECT whisperApiKey FROM transcript_settings LIMIT 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        sqlx::query_as("SELECT whisperApiKey FROM transcript_settings LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
         row.0.as_deref(),
         Some("sk-transcript-survive"),
@@ -419,21 +369,18 @@ async fn legacy_sqlite_config_extraction_is_non_destructive_on_secret_write_fail
     );
 
     // Non-secret columns should also be intact
-    let row: (String,) =
-        sqlx::query_as("SELECT provider FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (String,) = sqlx::query_as("SELECT provider FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(row.0, "ollama", "non-secret columns should be unchanged");
 
-    let row: (String,) =
-        sqlx::query_as("SELECT model FROM transcript_settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (String,) = sqlx::query_as("SELECT model FROM transcript_settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
-        row.0,
-        "parakeet-model",
+        row.0, "parakeet-model",
         "transcript non-secret columns should be unchanged"
     );
 
@@ -444,12 +391,12 @@ async fn legacy_sqlite_config_extraction_is_non_destructive_on_secret_write_fail
         true => {
             let loaded = config_repo.load().unwrap();
             assert_eq!(
-                loaded.summary.provider,
-                "openai",
+                loaded.summary.provider, "openai",
                 "YAML should contain default provider, not extracted data"
             );
             assert_eq!(
-                loaded, ResourcefullyConfig::default(),
+                loaded,
+                ResourcefullyConfig::default(),
                 "YAML should contain only default values after failed extraction"
             );
         }
@@ -496,7 +443,11 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
 
     // ── Step 1: extract ──────────────────────────────────────────────
     let result = LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
-    assert!(result.is_ok(), "extraction must succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "extraction must succeed: {:?}",
+        result.err()
+    );
 
     // ── Verify YAML has non-secret values ────────────────────────────
     let loaded_cfg = config_repo.load().unwrap();
@@ -508,10 +459,7 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
         Some("http://localhost:11434")
     );
     assert_eq!(loaded_cfg.transcript.provider, "parakeet");
-    assert_eq!(
-        loaded_cfg.transcript.model,
-        "parakeet-tdt-0.6b-v3-int8"
-    );
+    assert_eq!(loaded_cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
 
     // ── Verify secrets in SecretStore ────────────────────────────────
     let openai_key = refs::summary_provider_key("openai");
@@ -526,7 +474,8 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
     );
 
     // ── Step 2: drop legacy tables (only after extraction succeeded) ─
-    drop_legacy_config_tables_with_pool(&pool).await
+    drop_legacy_config_tables_with_pool(&pool)
+        .await
         .expect("table drop must succeed after successful extraction");
 
     // ── Assert old tables are gone ───────────────────────────────────
@@ -536,7 +485,10 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(!settings_exists, "settings table must be dropped after extraction");
+    assert!(
+        !settings_exists,
+        "settings table must be dropped after extraction"
+    );
 
     let transcript_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_settings')",
@@ -544,7 +496,10 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(!transcript_exists, "transcript_settings table must be dropped after extraction");
+    assert!(
+        !transcript_exists,
+        "transcript_settings table must be dropped after extraction"
+    );
 }
 
 /// Simulate extraction failure and verify that old config tables
@@ -569,12 +524,7 @@ async fn legacy_import_preserves_tables_on_extraction_failure() {
     .unwrap();
 
     // ── Extraction must fail ────────────────────────────────────────
-    let result = LegacyConfigExtractor::extract(
-        &pool,
-        &failing_store,
-        &config_repo,
-    )
-    .await;
+    let result = LegacyConfigExtractor::extract(&pool, &failing_store, &config_repo).await;
     assert!(result.is_err(), "extraction must fail with failing store");
 
     // ── Old tables must still exist ──────────────────────────────────
@@ -584,7 +534,10 @@ async fn legacy_import_preserves_tables_on_extraction_failure() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(settings_exists, "settings table must be preserved on extraction failure");
+    assert!(
+        settings_exists,
+        "settings table must be preserved on extraction failure"
+    );
 
     let transcript_exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_settings')",
@@ -592,25 +545,26 @@ async fn legacy_import_preserves_tables_on_extraction_failure() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    assert!(transcript_exists, "transcript_settings table must be preserved on extraction failure");
+    assert!(
+        transcript_exists,
+        "transcript_settings table must be preserved on extraction failure"
+    );
 
     // ── Data in old tables must be intact ────────────────────────────
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (Option<String>,) = sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         row.0.as_deref(),
         Some("sk-should-survive"),
         "SQLite data must not have been scrubbed on extraction failure"
     );
 
-    let row: (Option<String>,) =
-        sqlx::query_as("SELECT groqApiKey FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (Option<String>,) = sqlx::query_as("SELECT groqApiKey FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         row.0.as_deref(),
         Some("sk-also-survive"),
@@ -618,10 +572,9 @@ async fn legacy_import_preserves_tables_on_extraction_failure() {
     );
 
     // Non-secret columns also intact
-    let row: (String,) =
-        sqlx::query_as("SELECT provider FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let row: (String,) = sqlx::query_as("SELECT provider FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(row.0, "ollama", "non-secret columns should be unchanged");
 }

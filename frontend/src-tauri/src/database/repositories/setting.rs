@@ -87,10 +87,7 @@ impl SettingsRepository {
             crate::secrets::refs::summary_provider_key(provider)
         };
 
-        store
-            .delete(&secret_ref)
-            .await
-            .map_err(|e| e.to_string())
+        store.delete(&secret_ref).await.map_err(|e| e.to_string())
     }
 
     /// Delete the transcript API key for the given provider from the SecretStore.
@@ -103,10 +100,6 @@ impl SettingsRepository {
         }
 
         let secret_ref = crate::secrets::refs::transcript_provider_key(provider);
-        store
-            .delete(&secret_ref)
-            .await
-            .map_err(|e| e.to_string())
+        store.delete(&secret_ref).await.map_err(|e| e.to_string())
     }
-
 }

@@ -18,7 +18,10 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
         .load_or_create_default()
         .map_err(|e| format!("Failed to initialize YAML config: {}", e))?;
 
-    app.manage(AppState { db_manager, config_repo });
+    app.manage(AppState {
+        db_manager,
+        config_repo,
+    });
     log::info!("Database initialized successfully");
 
     // Check if this is the first launch (no database existed before)
@@ -78,7 +81,9 @@ async fn run_legacy_extraction_if_needed(app: &tauri::AppHandle) -> Result<bool,
     let state = app.state::<AppState>();
     let pool = state.db_manager.pool();
 
-    let config = state.config_repo.load()
+    let config = state
+        .config_repo
+        .load()
         .map_err(|e| format!("Failed to load config for legacy check: {}", e))?;
 
     if config != ResourcefullyConfig::default() {
@@ -86,13 +91,11 @@ async fn run_legacy_extraction_if_needed(app: &tauri::AppHandle) -> Result<bool,
         return Ok(false);
     }
 
-    let has_legacy_data = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM settings"
-    )
-    .fetch_one(pool)
-    .await
-    .map(|count| count > 0)
-    .unwrap_or(false);
+    let has_legacy_data = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM settings")
+        .fetch_one(pool)
+        .await
+        .map(|count| count > 0)
+        .unwrap_or(false);
 
     if !has_legacy_data {
         info!("No legacy config data found; skipping extraction");

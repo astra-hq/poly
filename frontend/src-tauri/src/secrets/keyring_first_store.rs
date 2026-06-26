@@ -31,10 +31,7 @@ impl KeyringFirstSecretStore {
     /// - `keyring_service`: the service name for the OS keychain (e.g.,
     ///   `"com.meetily.secrets"`).
     /// - `file_path`: the path to the fallback YAML secrets file.
-    pub fn new(
-        keyring_service: impl Into<String>,
-        file_path: PathBuf,
-    ) -> Self {
+    pub fn new(keyring_service: impl Into<String>, file_path: PathBuf) -> Self {
         Self {
             keyring: KeyringSecretStore::new(keyring_service),
             file_store: FileSecretStore::new(file_path),
@@ -46,9 +43,7 @@ impl KeyringFirstSecretStore {
     /// - File path: `~/.resourcefully/secrets.yml`
     pub fn default_store() -> Result<Self, SecretStoreError> {
         let home = dirs::home_dir().ok_or_else(|| {
-            SecretStoreError::StoreError(
-                "cannot determine home directory".into(),
-            )
+            SecretStoreError::StoreError("cannot determine home directory".into())
         })?;
         let file_path = home.join(".resourcefully").join("secrets.yml");
         Ok(Self::new("com.meetily.secrets", file_path))
@@ -57,21 +52,14 @@ impl KeyringFirstSecretStore {
 
 #[async_trait]
 impl SecretStore for KeyringFirstSecretStore {
-    async fn get(
-        &self,
-        key: &SecretRef,
-    ) -> Result<Option<String>, SecretStoreError> {
+    async fn get(&self, key: &SecretRef) -> Result<Option<String>, SecretStoreError> {
         match self.keyring.get(key).await {
             Ok(Some(val)) => Ok(Some(val)),
             Ok(None) | Err(_) => self.file_store.get(key).await,
         }
     }
 
-    async fn set(
-        &self,
-        key: &SecretRef,
-        value: &str,
-    ) -> Result<(), SecretStoreError> {
+    async fn set(&self, key: &SecretRef, value: &str) -> Result<(), SecretStoreError> {
         // Always persist to both stores. If keyring passes, that is the
         // primary store; the file mirror ensures the fallback get path works.
         let keyring_result = self.keyring.set(key, value).await;
@@ -79,20 +67,14 @@ impl SecretStore for KeyringFirstSecretStore {
         keyring_result.or(file_result)
     }
 
-    async fn delete(
-        &self,
-        key: &SecretRef,
-    ) -> Result<(), SecretStoreError> {
+    async fn delete(&self, key: &SecretRef) -> Result<(), SecretStoreError> {
         // Try keychain first; always also delete from file to avoid stale
         // fallback entries.
         let _ = self.keyring.delete(key).await;
         self.file_store.delete(key).await
     }
 
-    async fn exists(
-        &self,
-        key: &SecretRef,
-    ) -> Result<bool, SecretStoreError> {
+    async fn exists(&self, key: &SecretRef) -> Result<bool, SecretStoreError> {
         self.get(key).await.map(|v| v.is_some())
     }
 }
@@ -104,10 +86,7 @@ mod tests {
     fn temp_composite_store() -> (KeyringFirstSecretStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("secrets.yml");
-        let store = KeyringFirstSecretStore::new(
-            "com.meetily.secrets.test.composite",
-            path,
-        );
+        let store = KeyringFirstSecretStore::new("com.meetily.secrets.test.composite", path);
         (store, dir)
     }
 

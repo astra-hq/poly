@@ -31,8 +31,44 @@ pub struct KnowledgeGraphEdge {
 pub struct KnowledgeGraphInsertTextRequest {
     pub text: String,
     /// LightRAG requires `file_source` — maps to this field via serde rename.
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "file_source")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "file_source"
+    )]
     pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunking: Option<TextChunkingConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextChunkingConfig {
+    pub strategy: TextChunkingStrategy,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, serde_json::Value>,
+}
+
+impl TextChunkingConfig {
+    pub fn recursive_character(chunk_token_size: usize) -> Self {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "chunk_token_size".to_string(),
+            serde_json::Value::from(chunk_token_size),
+        );
+        Self {
+            strategy: TextChunkingStrategy::RecursiveCharacter,
+            params,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextChunkingStrategy {
+    FixedToken,
+    RecursiveCharacter,
+    SemanticVector,
+    ParagraphSemantic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -273,6 +309,22 @@ mod tests {
     }
 
     #[test]
+    fn insert_text_request_serializes_recursive_chunking() {
+        let request = KnowledgeGraphInsertTextRequest {
+            text: "summary".to_string(),
+            source: Some("meeting-summary-123".to_string()),
+            chunking: Some(TextChunkingConfig::recursive_character(1000)),
+        };
+
+        let json = serde_json::to_value(&request).expect("serialize request");
+
+        assert_eq!(json["text"], "summary");
+        assert_eq!(json["file_source"], "meeting-summary-123");
+        assert_eq!(json["chunking"]["strategy"], "recursive_character");
+        assert_eq!(json["chunking"]["params"]["chunk_token_size"], 1000);
+    }
+
+    #[test]
     fn query_mode_local_serializes_as_local() {
         assert_eq!(
             serde_json::to_string(&QueryMode::Local).unwrap(),
@@ -306,10 +358,7 @@ mod tests {
 
     #[test]
     fn query_mode_mix_serializes_as_mix() {
-        assert_eq!(
-            serde_json::to_string(&QueryMode::Mix).unwrap(),
-            r#""mix""#
-        );
+        assert_eq!(serde_json::to_string(&QueryMode::Mix).unwrap(), r#""mix""#);
     }
 
     #[test]

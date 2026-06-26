@@ -34,8 +34,7 @@ impl SecretMigration {
         let mut report = MigrationReport::default();
 
         Self::migrate_settings(pool, store, &mut report).await?;
-        Self::migrate_transcript_settings(pool, store, &mut report)
-            .await?;
+        Self::migrate_transcript_settings(pool, store, &mut report).await?;
         Self::migrate_knowledge_graph(pool, store, &mut report).await?;
 
         Ok(report)
@@ -59,10 +58,7 @@ impl SecretMigration {
                 }
             })
             .map_err(|e| {
-                SecretStoreError::StoreError(format!(
-                    "failed to read settings table: {}",
-                    e
-                ))
+                SecretStoreError::StoreError(format!("failed to read settings table: {}", e))
             })?;
 
         let row = match row {
@@ -87,21 +83,14 @@ impl SecretMigration {
                 let key = refs::summary_provider_key(provider);
                 store.set(&key, val).await?;
                 report.migrated += 1;
-                info!(
-                    "Migrated summary provider key: {}",
-                    key.as_str()
-                );
+                info!("Migrated summary provider key: {}", key.as_str());
             }
         }
 
         // Migrate custom OpenAI config's api_key
         if let Some(json) = read_column(&row, "customOpenAIConfig") {
-            if let Ok(config) =
-                serde_json::from_str::<serde_json::Value>(&json)
-            {
-                if let Some(api_key) =
-                    config.get("apiKey").or_else(|| config.get("api_key"))
-                {
+            if let Ok(config) = serde_json::from_str::<serde_json::Value>(&json) {
+                if let Some(api_key) = config.get("apiKey").or_else(|| config.get("api_key")) {
                     if let Some(val) = api_key.as_str() {
                         if !val.trim().is_empty() {
                             let key = refs::custom_openai_key();
@@ -126,10 +115,7 @@ impl SecretMigration {
             WHERE id = (SELECT id FROM settings LIMIT 1)
         ";
         sqlx::query(scrub_sql).execute(pool).await.map_err(|e| {
-            SecretStoreError::StoreError(format!(
-                "failed to scrub settings table: {}",
-                e
-            ))
+            SecretStoreError::StoreError(format!("failed to scrub settings table: {}", e))
         })?;
         report.scrubbed += 1;
 
@@ -142,23 +128,22 @@ impl SecretMigration {
         store: &(dyn SecretStore + Sync),
         report: &mut MigrationReport,
     ) -> Result<(), SecretStoreError> {
-        let row =
-            sqlx::query("SELECT * FROM transcript_settings LIMIT 1")
-                .fetch_optional(pool)
-                .await
-                .or_else(|e| {
-                    if e.to_string().contains("no such table") {
-                        Ok(None)
-                    } else {
-                        Err(e)
-                    }
-                })
-                .map_err(|e| {
-                    SecretStoreError::StoreError(format!(
-                        "failed to read transcript_settings table: {}",
-                        e
-                    ))
-                })?;
+        let row = sqlx::query("SELECT * FROM transcript_settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if e.to_string().contains("no such table") {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| {
+                SecretStoreError::StoreError(format!(
+                    "failed to read transcript_settings table: {}",
+                    e
+                ))
+            })?;
 
         let row = match row {
             Some(r) => r,
@@ -181,10 +166,7 @@ impl SecretMigration {
                 let key = refs::transcript_provider_key(provider);
                 store.set(&key, val).await?;
                 report.migrated += 1;
-                info!(
-                    "Migrated transcript provider key: {}",
-                    key.as_str()
-                );
+                info!("Migrated transcript provider key: {}", key.as_str());
             }
         }
 
@@ -215,43 +197,38 @@ impl SecretMigration {
         store: &(dyn SecretStore + Sync),
         report: &mut MigrationReport,
     ) -> Result<(), SecretStoreError> {
-        let row = sqlx::query(
-            "SELECT knowledge_graph_settings FROM settings LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .or_else(|e| {
-            if e.to_string().contains("no such table") {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
-        .map_err(|e| {
-            SecretStoreError::StoreError(format!(
-                "failed to read knowledge_graph_settings: {}",
-                e
-            ))
-        })?;
+        let row = sqlx::query("SELECT knowledge_graph_settings FROM settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if e.to_string().contains("no such table") {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| {
+                SecretStoreError::StoreError(format!(
+                    "failed to read knowledge_graph_settings: {}",
+                    e
+                ))
+            })?;
 
         let row = match row {
             Some(r) => r,
             None => return Ok(()),
         };
 
-        let kg_json: Option<String> =
-            row.try_get("knowledge_graph_settings").ok().flatten();
+        let kg_json: Option<String> = row.try_get("knowledge_graph_settings").ok().flatten();
 
         let kg_json = match kg_json {
             Some(j) => j,
             None => return Ok(()),
         };
 
-        let parsed: serde_json::Value =
-            serde_json::from_str(&kg_json).unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(&kg_json).unwrap_or_default();
 
-        if let Some(profiles) = parsed.get("profiles").and_then(|p| p.as_array())
-        {
+        if let Some(profiles) = parsed.get("profiles").and_then(|p| p.as_array()) {
             for profile in profiles {
                 if let Some(api_key) = profile
                     .get("api_key")
@@ -296,10 +273,7 @@ pub struct MigrationReport {
 }
 
 /// Helper: extract a column value as `Option<String>` from a dynamic row.
-fn read_column(
-    row: &sqlx::sqlite::SqliteRow,
-    column: &str,
-) -> Option<String> {
+fn read_column(row: &sqlx::sqlite::SqliteRow, column: &str) -> Option<String> {
     row.try_get::<Option<String>, _>(column).ok().flatten()
 }
 
@@ -408,12 +382,10 @@ mod tests {
         );
 
         // Verify scrubbed columns
-        let row: (Option<String>,) = sqlx::query_as(
-            "SELECT openaiApiKey FROM settings LIMIT 1",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row: (Option<String>,) = sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert!(row.0.is_none());
     }
 
@@ -468,10 +440,7 @@ mod tests {
         assert_eq!(r2.migrated, 0, "second run should migrate 0");
 
         let key = refs::summary_provider_key("openai");
-        assert_eq!(
-            store.get(&key).await.unwrap().as_deref(),
-            Some("sk-first")
-        );
+        assert_eq!(store.get(&key).await.unwrap().as_deref(), Some("sk-first"));
     }
 
     #[tokio::test]
@@ -491,7 +460,10 @@ mod tests {
         .unwrap();
 
         let report = SecretMigration::run(&pool, &store).await.unwrap();
-        assert_eq!(report.migrated, 0, "empty/whitespace keys should be skipped");
+        assert_eq!(
+            report.migrated, 0,
+            "empty/whitespace keys should be skipped"
+        );
     }
 
     #[tokio::test]

@@ -10,17 +10,19 @@ use crate::knowledge_graph::service::{
     IngestionSummary, KnowledgeGraphIngestionService, MeetingKnowledgeGraphStatus,
 };
 use crate::knowledge_graph::settings_commands::load_kg_settings;
+use crate::knowledge_graph::types::{
+    KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, QueryMode,
+    TextChunkingConfig,
+};
 use crate::resourcefully_config::repository::ConfigRepository;
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::secrets::refs::knowledge_graph_profile_key;
 use crate::secrets::store::SecretStore;
-use crate::knowledge_graph::types::{
-    KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, QueryMode,
-};
 use crate::state::AppState;
 
 const TRACK_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const TRACK_STATUS_MAX_WAIT: Duration = Duration::from_secs(120);
+const SUMMARY_CHUNK_TOKEN_SIZE: usize = 1000;
 
 fn is_final_status(status: &str) -> bool {
     matches!(status.to_uppercase().as_str(), "PROCESSED" | "FAILED")
@@ -48,7 +50,17 @@ async fn poll_track_status_until_final(
             .await
         {
             Ok(status) => {
-                let all_final = status.documents.iter().all(|doc| is_final_status(&doc.status));
+                if status.documents.is_empty() {
+                    log::debug!(
+                        "Track {} has no documents yet — continuing to poll",
+                        track_id
+                    );
+                    continue;
+                }
+                let all_final = status
+                    .documents
+                    .iter()
+                    .all(|doc| is_final_status(&doc.status));
                 if all_final {
                     return Ok(status);
                 }
@@ -85,7 +97,11 @@ async fn wait_for_document_deletion(
             Ok(status) => {
                 let still_exists = status.documents.iter().any(|doc| doc.id == document_id);
                 if !still_exists {
-                    log::info!("Document {} no longer in track {} — deletion confirmed", document_id, track_id);
+                    log::info!(
+                        "Document {} no longer in track {} — deletion confirmed",
+                        document_id,
+                        track_id
+                    );
                     return Ok(());
                 }
             }
@@ -96,7 +112,11 @@ async fn wait_for_document_deletion(
                 return Ok(());
             }
             Err(e) => {
-                log::warn!("Track status poll during delete failed for {}: {}", track_id, e);
+                log::warn!(
+                    "Track status poll during delete failed for {}: {}",
+                    track_id,
+                    e
+                );
             }
         }
     }
@@ -276,12 +296,20 @@ pub async fn api_get_meeting_knowledge_graph_status<R: Runtime>(
     };
 
     let lightrag_url = effective_profile.as_ref().and_then(|pid| {
-        settings.profiles.iter().find(|p| p.id == *pid).map(|p| p.lightrag_url.clone())
+        settings
+            .profiles
+            .iter()
+            .find(|p| p.id == *pid)
+            .map(|p| p.lightrag_url.clone())
     });
 
     let service = KnowledgeGraphIngestionService::new(pool.clone());
     service
-        .get_meeting_status(&meeting_id, effective_profile.as_deref(), lightrag_url.as_deref())
+        .get_meeting_status(
+            &meeting_id,
+            effective_profile.as_deref(),
+            lightrag_url.as_deref(),
+        )
         .await
 }
 
@@ -291,7 +319,10 @@ pub async fn api_get_knowledge_graph_pipeline_status<R: Runtime>(
     _state: tauri::State<'_, AppState>,
     profile_id: String,
 ) -> Result<crate::knowledge_graph::types::KnowledgeGraphPipelineStatus, String> {
-    info!("api_get_knowledge_graph_pipeline_status: profile={}", profile_id);
+    info!(
+        "api_get_knowledge_graph_pipeline_status: profile={}",
+        profile_id
+    );
 
     let config_repo = ConfigRepository::new();
     let store = KeyringFirstSecretStore::default_store()
@@ -504,6 +535,9 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
     let request = crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest {
         text: markdown,
         source: Some(file_source.clone()),
+        chunking: Some(TextChunkingConfig::recursive_character(
+            SUMMARY_CHUNK_TOKEN_SIZE,
+        )),
     };
 
     match provider.insert_text(request).await {
@@ -537,10 +571,57 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                 }
             };
 
-            let document_id = track_status
-                .documents
-                .first()
-                .map(|doc| doc.id.clone());
+            // ── Check for any failed documents ──────────────────────
+            let failed_docs: Vec<&crate::knowledge_graph::types::TrackStatusDocument> =
+                track_status
+                    .documents
+                    .iter()
+                    .filter(|doc| doc.status.eq_ignore_ascii_case("FAILED"))
+                    .collect();
+
+            if !failed_docs.is_empty() {
+                let error_msgs: Vec<String> = failed_docs
+                    .iter()
+                    .filter_map(|doc| doc.error_msg.clone())
+                    .collect();
+                let combined_error = if error_msgs.is_empty() {
+                    format!(
+                        "{} document(s) in track {} failed processing (no error details)",
+                        failed_docs.len(),
+                        track_id
+                    )
+                } else {
+                    error_msgs.join("; ")
+                };
+
+                let first_doc_id = failed_docs.first().map(|doc| doc.id.clone());
+
+                let service = KnowledgeGraphIngestionService::new(pool.clone());
+                let _ = service
+                    .track_summary_document(
+                        &meeting_id,
+                        &profile_id,
+                        &file_source,
+                        crate::knowledge_graph::types::SummaryDocumentState::Failed,
+                        Some(&combined_error),
+                        Some(&track_id),
+                        first_doc_id.as_deref(),
+                    )
+                    .await;
+
+                log::warn!(
+                    "Summary document ingestion failed for meeting {}: {}",
+                    meeting_id,
+                    combined_error
+                );
+                return Err(format!(
+                    "Summary document ingestion failed: {}",
+                    combined_error
+                ));
+            }
+
+            // ── All documents are PROCESSED — record Ingested ──────
+            let document_id = track_status.documents.first().map(|doc| doc.id.clone());
 
             let service = KnowledgeGraphIngestionService::new(pool.clone());
             let _ = service
@@ -673,7 +754,9 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
     let mut last_error = None;
 
     if let Some(ref doc) = stored_doc {
-        if let (Some(track_id), Some(document_id)) = (doc.track_id.as_deref(), doc.document_id.as_deref()) {
+        if let (Some(track_id), Some(document_id)) =
+            (doc.track_id.as_deref(), doc.document_id.as_deref())
+        {
             info!(
                 "Deleting summary from KG by document_id {} (track_id: {}) for meeting {}",
                 document_id, track_id, meeting_id
@@ -681,8 +764,13 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
 
             match provider.delete_by_doc_ids(&[document_id.to_string()]).await {
                 Ok(_) => {
-                    info!("Delete request accepted for document_id {}, waiting for confirmation", document_id);
-                    if let Err(e) = wait_for_document_deletion(&provider, track_id, document_id).await {
+                    info!(
+                        "Delete request accepted for document_id {}, waiting for confirmation",
+                        document_id
+                    );
+                    if let Err(e) =
+                        wait_for_document_deletion(&provider, track_id, document_id).await
+                    {
                         log::warn!("Wait for deletion failed: {}", e);
                         last_error = Some(e);
                     } else {
@@ -691,14 +779,24 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
                 }
                 Err(e) => {
                     let msg = e.to_string();
-                    log::warn!("Delete request failed for document_id {}: {}", document_id, msg);
+                    log::warn!(
+                        "Delete request failed for document_id {}: {}",
+                        document_id,
+                        msg
+                    );
                     last_error = Some(msg);
                 }
             }
         }
     }
 
-    if last_error.is_some() || stored_doc.is_none() || stored_doc.as_ref().map(|d| d.document_id.is_none()).unwrap_or(true) {
+    if last_error.is_some()
+        || stored_doc.is_none()
+        || stored_doc
+            .as_ref()
+            .map(|d| d.document_id.is_none())
+            .unwrap_or(true)
+    {
         let meeting_title = fetch_meeting_title(pool, &meeting_id).await?;
         let file_sources = summary_delete_file_sources(&meeting_id, &meeting_title);
         for fs in &file_sources {
@@ -784,16 +882,24 @@ pub async fn api_get_summary_track_status<R: Runtime>(
         .get_summary_document_status(&meeting_id, &profile_id)
         .await
         .map_err(|e| format!("Failed to fetch summary document status: {}", e))?
-        .ok_or_else(|| format!("No summary document record found for meeting {}", meeting_id))?;
+        .ok_or_else(|| {
+            format!(
+                "No summary document record found for meeting {}",
+                meeting_id
+            )
+        })?;
 
     info!(
         "api_get_summary_track_status: meeting={} profile={} doc_state={:?} track_id={:?} document_id={:?}",
         meeting_id, profile_id, doc_status.state, doc_status.track_id, doc_status.document_id
     );
 
-    let track_id = doc_status
-        .track_id
-        .ok_or_else(|| format!("Summary document for meeting {} has no track_id yet", meeting_id))?;
+    let track_id = doc_status.track_id.ok_or_else(|| {
+        format!(
+            "Summary document for meeting {} has no track_id yet",
+            meeting_id
+        )
+    })?;
 
     let secret_ref = knowledge_graph_profile_key(&profile_id);
     let api_key = store
@@ -816,12 +922,233 @@ pub async fn api_get_summary_track_status<R: Runtime>(
         .map_err(|e| {
             log::error!(
                 "api_get_summary_track_status: track_status failed for meeting={} track_id={}: {}",
-                meeting_id, track_id, e
+                meeting_id,
+                track_id,
+                e
             );
             format!("Failed to fetch track status: {}", e)
         })
 }
 
+#[cfg(test)]
+mod poll_track_status_tests {
+    use super::*;
+    use crate::knowledge_graph::provider::*;
+    use crate::knowledge_graph::types::{
+        KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse, KnowledgeGraphPipelineStatus,
+        KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
+        TrackStatusDocument,
+    };
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    struct TrackStatusMockProvider {
+        /// Responses returned in order by `track_status`. Once exhausted,
+        /// the last response is repeated.
+        responses: Mutex<Vec<KnowledgeGraphTrackStatus>>,
+        call_count: Mutex<usize>,
+    }
+
+    impl TrackStatusMockProvider {
+        fn new(responses: Vec<KnowledgeGraphTrackStatus>) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+                call_count: Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl KnowledgeGraphProvider for TrackStatusMockProvider {
+        async fn health(&self) -> KnowledgeGraphResult<KnowledgeGraphHealth> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation { operation: "health" })
+        }
+
+        async fn insert_text(
+            &self,
+            _request: crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest,
+        ) -> KnowledgeGraphResult<KnowledgeGraphInsertTextResponse> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "insert_text",
+            })
+        }
+
+        async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "delete_by_file_source",
+            })
+        }
+
+        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "delete_by_doc_ids",
+            })
+        }
+
+        async fn query(
+            &self,
+            _request: crate::knowledge_graph::types::KnowledgeGraphQueryRequest,
+        ) -> KnowledgeGraphResult<KnowledgeGraphQueryResponse> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation { operation: "query" })
+        }
+
+        async fn pipeline_status(
+            &self,
+        ) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "pipeline_status",
+            })
+        }
+
+        async fn track_status(
+            &self,
+            _track_id: KnowledgeGraphTrackId,
+        ) -> KnowledgeGraphResult<KnowledgeGraphTrackStatus> {
+            let mut count = self.call_count.lock().unwrap();
+            let idx = *count;
+            *count += 1;
+
+            let responses = self.responses.lock().unwrap();
+            if idx < responses.len() {
+                Ok(responses[idx].clone())
+            } else {
+                Ok(responses.last().cloned().unwrap())
+            }
+        }
+
+        fn provider_name(&self) -> &'static str {
+            "track-status-mock"
+        }
+    }
+
+    fn make_doc(id: &str, status: &str) -> TrackStatusDocument {
+        TrackStatusDocument {
+            id: id.to_string(),
+            content_summary: String::new(),
+            content_length: 0,
+            status: status.to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            track_id: None,
+            chunks_count: None,
+            error_msg: None,
+            metadata: None,
+            file_path: String::new(),
+        }
+    }
+
+    fn make_failed_doc(id: &str, error_msg: &str) -> TrackStatusDocument {
+        TrackStatusDocument {
+            id: id.to_string(),
+            content_summary: String::new(),
+            content_length: 0,
+            status: "FAILED".to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            track_id: None,
+            chunks_count: None,
+            error_msg: Some(error_msg.to_string()),
+            metadata: None,
+            file_path: String::new(),
+        }
+    }
+
+    fn track_status_response(docs: Vec<TrackStatusDocument>) -> KnowledgeGraphTrackStatus {
+        KnowledgeGraphTrackStatus {
+            track_id: "test-track".to_string(),
+            total_count: docs.len(),
+            documents: docs,
+            status_summary: Default::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_continues_when_documents_empty_then_returns_when_all_processed() {
+        let empty = track_status_response(vec![]);
+        let populated = track_status_response(vec![make_doc("d1", "PROCESSED")]);
+
+        let provider = TrackStatusMockProvider::new(vec![
+            empty.clone(),
+            empty.clone(),
+            populated.clone(),
+        ]);
+
+        let result = poll_track_status_until_final(&provider, "test-track").await;
+        assert!(result.is_ok(), "expected success, got: {:?}", result.err());
+        let status = result.unwrap();
+        assert_eq!(status.documents.len(), 1);
+        assert_eq!(status.documents[0].status, "PROCESSED");
+
+        let calls = *provider.call_count.lock().unwrap();
+        assert_eq!(calls, 3, "should have polled 3 times");
+    }
+
+    #[tokio::test]
+    async fn poll_returns_when_all_docs_processed_on_first_call() {
+        let status = track_status_response(vec![
+            make_doc("d1", "PROCESSED"),
+            make_doc("d2", "PROCESSED"),
+        ]);
+
+        let provider = TrackStatusMockProvider::new(vec![status]);
+
+        let result = poll_track_status_until_final(&provider, "test-track").await;
+        assert!(result.is_ok());
+        let status = result.unwrap();
+        assert_eq!(status.documents.len(), 2);
+
+        let calls = *provider.call_count.lock().unwrap();
+        assert_eq!(calls, 1);
+    }
+
+    #[tokio::test]
+    async fn poll_returns_when_all_docs_failed() {
+        let status = track_status_response(vec![
+            make_failed_doc("d1", "timeout"),
+        ]);
+
+        let provider = TrackStatusMockProvider::new(vec![
+            track_status_response(vec![]),
+            status,
+        ]);
+
+        let result = poll_track_status_until_final(&provider, "test-track").await;
+        assert!(result.is_ok(), "FAILED is a final status so poll should return");
+        let status = result.unwrap();
+        assert_eq!(status.documents.len(), 1);
+        assert_eq!(status.documents[0].status, "FAILED");
+
+        let calls = *provider.call_count.lock().unwrap();
+        assert_eq!(calls, 2);
+    }
+
+    #[tokio::test]
+    async fn poll_continues_when_some_docs_still_pending() {
+        let mixed_pending = track_status_response(vec![
+            make_doc("d1", "PROCESSED"),
+            make_doc("d2", "PENDING"),
+        ]);
+        let all_processed = track_status_response(vec![
+            make_doc("d1", "PROCESSED"),
+            make_doc("d2", "PROCESSED"),
+        ]);
+
+        let provider = TrackStatusMockProvider::new(vec![
+            track_status_response(vec![]),
+            mixed_pending,
+            all_processed,
+        ]);
+
+        let result = poll_track_status_until_final(&provider, "test-track").await;
+        assert!(result.is_ok());
+        let status = result.unwrap();
+        assert_eq!(status.documents.len(), 2);
+        assert!(status.documents.iter().all(|d| d.status == "PROCESSED"));
+
+        let calls = *provider.call_count.lock().unwrap();
+        assert_eq!(calls, 3);
+    }
+}
 #[cfg(test)]
 mod summary_source_tests {
     use super::*;

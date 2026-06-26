@@ -29,8 +29,8 @@ use sqlx::SqlitePool;
 
 use super::config::{
     CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets,
-    KnowledgeGraphSettingsWithoutSecrets, PreferencesConfig, ResourcefullyConfig,
-    SummaryConfig, TranscriptConfig,
+    KnowledgeGraphSettingsWithoutSecrets, PreferencesConfig, ResourcefullyConfig, SummaryConfig,
+    TranscriptConfig,
 };
 use super::ConfigRepository;
 use crate::knowledge_graph::config::KnowledgeGraphSettings;
@@ -58,19 +58,23 @@ impl LegacyConfigExtractor {
         let cfg = Self::scan(pool).await?;
 
         // 2. Write API keys to SecretStore FIRST (fail-fast contract).
-        Self::write_secrets(pool, store).await
+        Self::write_secrets(pool, store)
+            .await
             .context("failed to write legacy secrets to SecretStore")?;
 
         // 3. Persist non-secret config as YAML.
-        config_repo.save_atomic(&cfg)
+        config_repo
+            .save_atomic(&cfg)
             .context("failed to write non-secret config to YAML")?;
 
         // 4. Read back and verify both YAML and SecretStore.
-        Self::verify(pool, store, config_repo, &cfg).await
+        Self::verify(pool, store, config_repo, &cfg)
+            .await
             .context("verification after extraction failed — SQLite left untouched")?;
 
         // 5. Scrub SQLite secret columns.
-        Self::scrub(pool).await
+        Self::scrub(pool)
+            .await
             .context("failed to scrub legacy SQLite secret columns")?;
 
         Ok(())
@@ -119,10 +123,8 @@ impl LegacyConfigExtractor {
         };
 
         Ok(SummaryConfig {
-            provider: read_column_string(&row, "provider")
-                .unwrap_or_else(|| "openai".into()),
-            model: read_column_string(&row, "model")
-                .unwrap_or_else(|| "gpt-4o-2024-11-20".into()),
+            provider: read_column_string(&row, "provider").unwrap_or_else(|| "openai".into()),
+            model: read_column_string(&row, "model").unwrap_or_else(|| "gpt-4o-2024-11-20".into()),
             whisper_model: read_column_string(&row, "whisperModel")
                 .unwrap_or_else(|| "large-v3".into()),
             ollama_endpoint: read_column(&row, "ollamaEndpoint"),
@@ -131,18 +133,17 @@ impl LegacyConfigExtractor {
 
     /// Scan `transcript_settings` table for transcript config (non-secret fields).
     async fn scan_transcript(pool: &SqlitePool) -> Result<TranscriptConfig> {
-        let row =
-            sqlx::query("SELECT provider, model FROM transcript_settings LIMIT 1")
-                .fetch_optional(pool)
-                .await
-                .or_else(|e| {
-                    if is_missing_table(&e) {
-                        Ok(None)
-                    } else {
-                        Err(e)
-                    }
-                })
-                .with_context(|| "failed to scan transcript_settings table")?;
+        let row = sqlx::query("SELECT provider, model FROM transcript_settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if is_missing_table(&e) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .with_context(|| "failed to scan transcript_settings table")?;
 
         let row = match row {
             Some(r) => r,
@@ -150,8 +151,7 @@ impl LegacyConfigExtractor {
         };
 
         Ok(TranscriptConfig {
-            provider: read_column_string(&row, "provider")
-                .unwrap_or_else(|| "parakeet".into()),
+            provider: read_column_string(&row, "provider").unwrap_or_else(|| "parakeet".into()),
             model: read_column_string(&row, "model")
                 .unwrap_or_else(|| crate::config::DEFAULT_PARAKEET_MODEL.into()),
         })
@@ -159,19 +159,17 @@ impl LegacyConfigExtractor {
 
     /// Scan `settings.customOpenAIConfig` JSON for non-secret fields.
     async fn scan_custom_openai(pool: &SqlitePool) -> Result<CustomOpenAIConfigFields> {
-        let row = sqlx::query(
-            "SELECT customOpenAIConfig FROM settings LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .or_else(|e| {
-            if is_missing_table(&e) {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
-        .with_context(|| "failed to scan customOpenAIConfig column")?;
+        let row = sqlx::query("SELECT customOpenAIConfig FROM settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if is_missing_table(&e) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .with_context(|| "failed to scan customOpenAIConfig column")?;
 
         let row = match row {
             Some(r) => r,
@@ -181,15 +179,13 @@ impl LegacyConfigExtractor {
         let json: Option<String> = row.try_get("customOpenAIConfig").ok().flatten();
         let config: crate::summary::CustomOpenAIConfig = match json {
             Some(j) => {
-                serde_json::from_str(&j).unwrap_or_else(|_| {
-                    crate::summary::CustomOpenAIConfig {
-                        endpoint: String::new(),
-                        api_key: None,
-                        model: String::new(),
-                        max_tokens: None,
-                        temperature: None,
-                        top_p: None,
-                    }
+                serde_json::from_str(&j).unwrap_or_else(|_| crate::summary::CustomOpenAIConfig {
+                    endpoint: String::new(),
+                    api_key: None,
+                    model: String::new(),
+                    max_tokens: None,
+                    temperature: None,
+                    top_p: None,
                 })
             }
             None => return Ok(CustomOpenAIConfigFields::default()),
@@ -208,35 +204,31 @@ impl LegacyConfigExtractor {
     async fn scan_knowledge_graph(
         pool: &SqlitePool,
     ) -> Result<KnowledgeGraphSettingsWithoutSecrets> {
-        let row = sqlx::query(
-            "SELECT knowledge_graph_settings FROM settings LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .or_else(|e| {
-            if is_missing_table(&e) {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
-        .with_context(|| "failed to scan knowledge_graph_settings column")?;
+        let row = sqlx::query("SELECT knowledge_graph_settings FROM settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if is_missing_table(&e) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .with_context(|| "failed to scan knowledge_graph_settings column")?;
 
         let row = match row {
             Some(r) => r,
             None => return Ok(KnowledgeGraphSettingsWithoutSecrets::default()),
         };
 
-        let json: Option<String> =
-            row.try_get("knowledge_graph_settings").ok().flatten();
+        let json: Option<String> = row.try_get("knowledge_graph_settings").ok().flatten();
 
         let json = match json {
             Some(j) => j,
             None => return Ok(KnowledgeGraphSettingsWithoutSecrets::default()),
         };
 
-        let parsed: KnowledgeGraphSettings =
-            serde_json::from_str(&json).unwrap_or_default();
+        let parsed: KnowledgeGraphSettings = serde_json::from_str(&json).unwrap_or_default();
 
         Ok(KnowledgeGraphSettingsWithoutSecrets {
             profiles: parsed
@@ -254,10 +246,7 @@ impl LegacyConfigExtractor {
     ///
     /// **If any write fails, the error propagates immediately** — no YAML
     /// will be written and SQLite will not be scrubbed.
-    async fn write_secrets(
-        pool: &SqlitePool,
-        store: &(dyn SecretStore + Sync),
-    ) -> Result<()> {
+    async fn write_secrets(pool: &SqlitePool, store: &(dyn SecretStore + Sync)) -> Result<()> {
         Self::write_summary_secrets(pool, store).await?;
         Self::write_transcript_secrets(pool, store).await?;
         Self::write_kg_secrets(pool, store).await?;
@@ -308,12 +297,9 @@ impl LegacyConfigExtractor {
         }
 
         // Custom OpenAI API key from JSON
-        let custom_json: Option<String> =
-            read_column(&row, "customOpenAIConfig");
+        let custom_json: Option<String> = read_column(&row, "customOpenAIConfig");
         if let Some(json) = custom_json {
-            if let Ok(parsed) =
-                serde_json::from_str::<serde_json::Value>(&json)
-            {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json) {
                 if let Some(api_key) = parsed
                     .get("apiKey")
                     .or_else(|| parsed.get("api_key"))
@@ -321,12 +307,10 @@ impl LegacyConfigExtractor {
                 {
                     if !api_key.trim().is_empty() {
                         let key = refs::custom_openai_key();
-                        store.set(&key, api_key).await.map_err(|e| {
-                            anyhow!(
-                                "failed to write custom OpenAI secret: {}",
-                                e
-                            )
-                        })?;
+                        store
+                            .set(&key, api_key)
+                            .await
+                            .map_err(|e| anyhow!("failed to write custom OpenAI secret: {}", e))?;
                         info!("extracted legacy custom-openai secret");
                     }
                 }
@@ -350,9 +334,7 @@ impl LegacyConfigExtractor {
                     Err(e)
                 }
             })
-            .with_context(|| {
-                "failed to read transcript_settings table for secret extraction"
-            })?;
+            .with_context(|| "failed to read transcript_settings table for secret extraction")?;
 
         let row = match row {
             Some(r) => r,
@@ -374,61 +356,43 @@ impl LegacyConfigExtractor {
                 }
                 let key = refs::transcript_provider_key(provider);
                 store.set(&key, val).await.map_err(|e| {
-                    anyhow!(
-                        "failed to write transcript secret {}: {}",
-                        key.as_str(),
-                        e
-                    )
+                    anyhow!("failed to write transcript secret {}: {}", key.as_str(), e)
                 })?;
-                info!(
-                    "extracted legacy transcript secret: {}",
-                    key.as_str()
-                );
+                info!("extracted legacy transcript secret: {}", key.as_str());
             }
         }
 
         Ok(())
     }
 
-    async fn write_kg_secrets(
-        pool: &SqlitePool,
-        store: &(dyn SecretStore + Sync),
-    ) -> Result<()> {
-        let row = sqlx::query(
-            "SELECT knowledge_graph_settings FROM settings LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .or_else(|e| {
-            if is_missing_table(&e) {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
-        .with_context(|| {
-            "failed to read knowledge_graph_settings for secret extraction"
-        })?;
+    async fn write_kg_secrets(pool: &SqlitePool, store: &(dyn SecretStore + Sync)) -> Result<()> {
+        let row = sqlx::query("SELECT knowledge_graph_settings FROM settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if is_missing_table(&e) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .with_context(|| "failed to read knowledge_graph_settings for secret extraction")?;
 
         let row = match row {
             Some(r) => r,
             None => return Ok(()),
         };
 
-        let json: Option<String> =
-            row.try_get("knowledge_graph_settings").ok().flatten();
+        let json: Option<String> = row.try_get("knowledge_graph_settings").ok().flatten();
 
         let json = match json {
             Some(j) => j,
             None => return Ok(()),
         };
 
-        let parsed: serde_json::Value =
-            serde_json::from_str(&json).unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
 
-        if let Some(profiles) =
-            parsed.get("profiles").and_then(|p| p.as_array())
-        {
+        if let Some(profiles) = parsed.get("profiles").and_then(|p| p.as_array()) {
             for profile in profiles {
                 if let Some(api_key) = profile
                     .get("api_key")
@@ -438,10 +402,7 @@ impl LegacyConfigExtractor {
                     if !api_key.trim().is_empty() {
                         let key = refs::knowledge_graph_key();
                         store.set(&key, api_key).await.map_err(|e| {
-                            anyhow!(
-                                "failed to write knowledge graph secret: {}",
-                                e
-                            )
+                            anyhow!("failed to write knowledge graph secret: {}", e)
                         })?;
                         info!("extracted legacy knowledge-graph secret");
                         break; // one KG key at root level
@@ -467,9 +428,9 @@ impl LegacyConfigExtractor {
         expected: &ResourcefullyConfig,
     ) -> Result<()> {
         // Verify YAML config
-        let loaded = config_repo.load().with_context(|| {
-            "failed to read back YAML config for verification"
-        })?;
+        let loaded = config_repo
+            .load()
+            .with_context(|| "failed to read back YAML config for verification")?;
 
         if loaded != *expected {
             return Err(anyhow!(
@@ -515,13 +476,10 @@ impl LegacyConfigExtractor {
                 _ => continue,
             };
 
-            let stored = store.get(&key).await.map_err(|e| {
-                anyhow!(
-                    "verification read failed for {}: {}",
-                    key.as_str(),
-                    e
-                )
-            })?;
+            let stored = store
+                .get(&key)
+                .await
+                .map_err(|e| anyhow!("verification read failed for {}: {}", key.as_str(), e))?;
 
             match stored {
                 Some(ref s) if s == &expected_val => {
@@ -545,12 +503,9 @@ impl LegacyConfigExtractor {
         }
 
         // Verify custom OpenAI key from JSON
-        let custom_json: Option<String> =
-            read_column(&row, "customOpenAIConfig");
+        let custom_json: Option<String> = read_column(&row, "customOpenAIConfig");
         if let Some(json) = custom_json {
-            if let Ok(parsed) =
-                serde_json::from_str::<serde_json::Value>(&json)
-            {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&json) {
                 if let Some(expected_key) = parsed
                     .get("apiKey")
                     .or_else(|| parsed.get("api_key"))
@@ -559,10 +514,7 @@ impl LegacyConfigExtractor {
                     if !expected_key.trim().is_empty() {
                         let key = refs::custom_openai_key();
                         let stored = store.get(&key).await.map_err(|e| {
-                            anyhow!(
-                                "verification read failed for custom-openai: {}",
-                                e
-                            )
+                            anyhow!("verification read failed for custom-openai: {}", e)
                         })?;
                         match stored {
                             None => {
@@ -625,9 +577,10 @@ impl LegacyConfigExtractor {
                 _ => continue,
             };
 
-            let stored = store.get(&key).await.map_err(|e| {
-                anyhow!("verification read failed for {}: {}", key.as_str(), e)
-            })?;
+            let stored = store
+                .get(&key)
+                .await
+                .map_err(|e| anyhow!("verification read failed for {}: {}", key.as_str(), e))?;
 
             match stored {
                 Some(ref s) if s == &expected_val => {}
@@ -651,25 +604,20 @@ impl LegacyConfigExtractor {
         Ok(())
     }
 
-    async fn verify_kg_secrets(
-        pool: &SqlitePool,
-        store: &(dyn SecretStore + Sync),
-    ) -> Result<()> {
+    async fn verify_kg_secrets(pool: &SqlitePool, store: &(dyn SecretStore + Sync)) -> Result<()> {
         let row = match Self::fetch_settings_row(pool).await? {
             Some(r) => r,
             None => return Ok(()),
         };
 
-        let json: Option<String> =
-            row.try_get("knowledge_graph_settings").ok().flatten();
+        let json: Option<String> = row.try_get("knowledge_graph_settings").ok().flatten();
 
         let json = match json {
             Some(j) => j,
             None => return Ok(()),
         };
 
-        let parsed: serde_json::Value =
-            serde_json::from_str(&json).unwrap_or_default();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
 
         let expected_key = parsed
             .get("profiles")
@@ -689,12 +637,10 @@ impl LegacyConfigExtractor {
         };
 
         let key = refs::knowledge_graph_key();
-        let stored = store.get(&key).await.map_err(|e| {
-            anyhow!(
-                "verification read failed for knowledge-graph: {}",
-                e
-            )
-        })?;
+        let stored = store
+            .get(&key)
+            .await
+            .map_err(|e| anyhow!("verification read failed for knowledge-graph: {}", e))?;
 
         match (&expected_key, &stored) {
             (Some(el), Some(s)) if el == s => {}
@@ -717,9 +663,7 @@ impl LegacyConfigExtractor {
     }
 
     /// Fetch the settings row, returning None on missing table.
-    async fn fetch_settings_row(
-        pool: &SqlitePool,
-    ) -> Result<Option<sqlx::sqlite::SqliteRow>> {
+    async fn fetch_settings_row(pool: &SqlitePool) -> Result<Option<sqlx::sqlite::SqliteRow>> {
         sqlx::query("SELECT * FROM settings LIMIT 1")
             .fetch_optional(pool)
             .await
@@ -748,19 +692,17 @@ impl LegacyConfigExtractor {
 
     async fn scrub_settings(pool: &SqlitePool) -> Result<()> {
         // Only scrub if the table and row exist.
-        let exists = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM settings LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .or_else(|e| {
-            if is_missing_table(&e) {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
-        .with_context(|| "failed to check settings table before scrub")?;
+        let exists = sqlx::query_scalar::<_, String>("SELECT id FROM settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if is_missing_table(&e) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .with_context(|| "failed to check settings table before scrub")?;
 
         if exists.is_none() {
             return Ok(());
@@ -787,21 +729,17 @@ impl LegacyConfigExtractor {
     }
 
     async fn scrub_transcript_settings(pool: &SqlitePool) -> Result<()> {
-        let exists = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM transcript_settings LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .or_else(|e| {
-            if is_missing_table(&e) {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
-        .with_context(|| {
-            "failed to check transcript_settings table before scrub"
-        })?;
+        let exists = sqlx::query_scalar::<_, String>("SELECT id FROM transcript_settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if is_missing_table(&e) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .with_context(|| "failed to check transcript_settings table before scrub")?;
 
         if exists.is_none() {
             return Ok(());
@@ -827,19 +765,17 @@ impl LegacyConfigExtractor {
     }
 
     async fn scrub_knowledge_graph(pool: &SqlitePool) -> Result<()> {
-        let exists = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM settings LIMIT 1",
-        )
-        .fetch_optional(pool)
-        .await
-        .or_else(|e| {
-            if is_missing_table(&e) {
-                Ok(None)
-            } else {
-                Err(e)
-            }
-        })
-        .with_context(|| "failed to check settings table before KG scrub")?;
+        let exists = sqlx::query_scalar::<_, String>("SELECT id FROM settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .or_else(|e| {
+                if is_missing_table(&e) {
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
+            })
+            .with_context(|| "failed to check settings table before KG scrub")?;
 
         if exists.is_none() {
             return Ok(());
@@ -953,8 +889,7 @@ mod tests {
         let (store, _store_dir) = temp_secret_store();
         let (config_repo, _config_dir) = temp_config_repo();
 
-        let result =
-            LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
+        let result = LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
         assert!(result.is_ok(), "extraction should succeed on empty DB");
 
         let loaded = config_repo.load().unwrap();
@@ -970,8 +905,7 @@ mod tests {
         let (store, _store_dir) = temp_secret_store();
         let (config_repo, _config_dir) = temp_config_repo();
 
-        let result =
-            LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
+        let result = LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
         assert!(result.is_ok(), "extraction should succeed with no tables");
 
         let loaded = config_repo.load().unwrap();

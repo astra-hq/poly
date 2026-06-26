@@ -103,9 +103,7 @@ pub fn load(json: &str) -> Result<KnowledgeGraphSettings> {
 pub fn resolve(settings: &KnowledgeGraphSettings) -> Option<&KnowledgeGraphProfile> {
     match &settings.active_profile {
         KnowledgeGraphSelection::None => None,
-        KnowledgeGraphSelection::Profile(id) => {
-            settings.profiles.iter().find(|p| p.id == *id)
-        }
+        KnowledgeGraphSelection::Profile(id) => settings.profiles.iter().find(|p| p.id == *id),
     }
 }
 
@@ -121,7 +119,6 @@ pub fn resolve(settings: &KnowledgeGraphSettings) -> Option<&KnowledgeGraphProfi
 ///
 /// Empty profiles are allowed — the user may not have configured any yet.
 pub fn validate(settings: &KnowledgeGraphSettings) -> Result<()> {
-
     let mut seen_ids = HashSet::with_capacity(settings.profiles.len());
     for profile in &settings.profiles {
         if profile.id.trim().is_empty() {

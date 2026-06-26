@@ -65,7 +65,12 @@ impl LightRagProvider {
         }
     }
 
-    async fn execute<T>(&self, request: RequestBuilder, method: Method, url: Url) -> KnowledgeGraphResult<T>
+    async fn execute<T>(
+        &self,
+        request: RequestBuilder,
+        method: Method,
+        url: Url,
+    ) -> KnowledgeGraphResult<T>
     where
         T: DeserializeOwned,
     {
@@ -94,9 +99,12 @@ impl LightRagProvider {
             });
         }
 
-        response.json().await.map_err(|error| KnowledgeGraphProviderError::ProtocolError {
-            message: format!("{endpoint} returned invalid JSON: {error}"),
-        })
+        response
+            .json()
+            .await
+            .map_err(|error| KnowledgeGraphProviderError::ProtocolError {
+                message: format!("{endpoint} returned invalid JSON: {error}"),
+            })
     }
 
     async fn get<T>(&self, segments: &[&str]) -> KnowledgeGraphResult<T>
@@ -141,10 +149,14 @@ struct HealthResponse {
 
 impl From<HealthResponse> for KnowledgeGraphHealth {
     fn from(value: HealthResponse) -> Self {
-        let healthy = value.healthy.unwrap_or(
-            matches!(value.status.as_deref(), Some("ok" | "healthy" | "up"))
-        );
-        Self { healthy, version: value.version }
+        let healthy = value.healthy.unwrap_or(matches!(
+            value.status.as_deref(),
+            Some("ok" | "healthy" | "up")
+        ));
+        Self {
+            healthy,
+            version: value.version,
+        }
     }
 }
 
@@ -169,13 +181,12 @@ struct TrackStatusResponse {
 #[async_trait]
 impl KnowledgeGraphProvider for LightRagProvider {
     async fn health(&self) -> KnowledgeGraphResult<KnowledgeGraphHealth> {
-        self.get::<HealthResponse>(&["health"]).await.map(Into::into)
+        self.get::<HealthResponse>(&["health"])
+            .await
+            .map(Into::into)
     }
 
-    async fn delete_by_file_source(
-        &self,
-        file_source: &str,
-    ) -> KnowledgeGraphResult<()> {
+    async fn delete_by_file_source(&self, file_source: &str) -> KnowledgeGraphResult<()> {
         let query_request = crate::knowledge_graph::types::DocumentQueryRequest {
             status_filter: None,
             status_filters: None,
@@ -195,7 +206,10 @@ impl KnowledgeGraphProvider for LightRagProvider {
                 .find(|doc| doc.file_path == file_source)
                 .map(|doc| doc.id),
             Err(e) => {
-                log::warn!("Document query failed ({}), falling back to direct delete", e);
+                log::warn!(
+                    "Document query failed ({}), falling back to direct delete",
+                    e
+                );
                 None
             }
         };
@@ -203,7 +217,10 @@ impl KnowledgeGraphProvider for LightRagProvider {
         let doc_id = match doc_id {
             Some(id) => id,
             None => {
-                log::info!("Document with file_path '{}' not found in KG, trying direct delete", file_source);
+                log::info!(
+                    "Document with file_path '{}' not found in KG, trying direct delete",
+                    file_source
+                );
                 file_source.to_string()
             }
         };
@@ -211,10 +228,7 @@ impl KnowledgeGraphProvider for LightRagProvider {
         self.delete_by_doc_ids(&[doc_id]).await
     }
 
-    async fn delete_by_doc_ids(
-        &self,
-        doc_ids: &[String],
-    ) -> KnowledgeGraphResult<()> {
+    async fn delete_by_doc_ids(&self, doc_ids: &[String]) -> KnowledgeGraphResult<()> {
         use serde::Serialize;
 
         #[derive(Serialize)]
@@ -257,11 +271,13 @@ impl KnowledgeGraphProvider for LightRagProvider {
         &self,
         request: KnowledgeGraphQueryRequest,
     ) -> KnowledgeGraphResult<KnowledgeGraphQueryResponse> {
-        self.post::<_, KnowledgeGraphQueryResponse>(&["query"], &request).await
+        self.post::<_, KnowledgeGraphQueryResponse>(&["query"], &request)
+            .await
     }
 
     async fn pipeline_status(&self) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
-        self.get::<KnowledgeGraphPipelineStatus>(&["documents", "pipeline_status"]).await
+        self.get::<KnowledgeGraphPipelineStatus>(&["documents", "pipeline_status"])
+            .await
     }
 
     async fn track_status(
@@ -305,8 +321,11 @@ mod tests {
     async fn health_sends_auth_and_parses_response() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(GET).path("/health").header("X-API-Key", "secret");
-            then.status(200).json_body(json!({"healthy": true, "version": "1.0.0"}));
+            when.method(GET)
+                .path("/health")
+                .header("X-API-Key", "secret");
+            then.status(200)
+                .json_body(json!({"healthy": true, "version": "1.0.0"}));
         });
         let provider = LightRagProvider::new(server.base_url(), Some("secret".into())).unwrap();
 
@@ -320,13 +339,20 @@ mod tests {
     async fn insert_text_posts_document_and_maps_track_id() {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
-            when.method(POST).path("/documents/text").header("X-API-Key", "secret");
-            then.status(200).json_body(json!({"track_id": "track-123", "accepted": true}));
+            when.method(POST)
+                .path("/documents/text")
+                .header("X-API-Key", "secret");
+            then.status(200)
+                .json_body(json!({"track_id": "track-123", "accepted": true}));
         });
         let provider = LightRagProvider::new(server.base_url(), Some("secret".into())).unwrap();
 
         let response = provider
-            .insert_text(KnowledgeGraphInsertTextRequest { text: "hello".into(), source: None })
+            .insert_text(KnowledgeGraphInsertTextRequest {
+                text: "hello".into(),
+                source: None,
+                chunking: None,
+            })
             .await
             .unwrap();
         mock.assert();
@@ -339,16 +365,23 @@ mod tests {
         let server = MockServer::start();
         let query_mock = server.mock(|when, then| {
             when.method(POST).path("/query");
-            then.status(200).json_body(json!({"nodes": [], "edges": [], "answer": "ok"}));
+            then.status(200)
+                .json_body(json!({"nodes": [], "edges": [], "answer": "ok"}));
         });
         let status_mock = server.mock(|when, then| {
             when.method(GET).path("/documents/pipeline_status");
-            then.status(200).json_body(json!({"pending_documents": 1, "indexing_documents": 2, "failed_documents": 3}));
+            then.status(200).json_body(
+                json!({"pending_documents": 1, "indexing_documents": 2, "failed_documents": 3}),
+            );
         });
         let provider = LightRagProvider::new(server.base_url(), None).unwrap();
 
         let query = provider
-            .query(KnowledgeGraphQueryRequest { query: "find".into(), mode: Default::default(), top_k: 3 })
+            .query(KnowledgeGraphQueryRequest {
+                query: "find".into(),
+                mode: Default::default(),
+                top_k: 3,
+            })
             .await
             .unwrap();
         let status = provider.pipeline_status().await.unwrap();
@@ -365,7 +398,8 @@ mod tests {
             when.method(POST)
                 .path("/query")
                 .json_body(json!({"query":"find items","mode":"hybrid","top_k":5}));
-            then.status(200).json_body(json!({"nodes": [], "edges": [], "answer": "ok"}));
+            then.status(200)
+                .json_body(json!({"nodes": [], "edges": [], "answer": "ok"}));
         });
         let provider = LightRagProvider::new(server.base_url(), None).unwrap();
 
@@ -388,7 +422,8 @@ mod tests {
             when.method(POST)
                 .path("/query")
                 .json_body(json!({"query":"local search","mode":"local","top_k":10}));
-            then.status(200).json_body(json!({"nodes": [], "edges": [], "answer": "local"}));
+            then.status(200)
+                .json_body(json!({"nodes": [], "edges": [], "answer": "local"}));
         });
         let provider = LightRagProvider::new(server.base_url(), None).unwrap();
 
@@ -447,7 +482,10 @@ mod tests {
         });
         let provider = LightRagProvider::new(server.base_url(), Some("secret".into())).unwrap();
 
-        provider.delete_by_file_source("meeting-summary-123").await.unwrap();
+        provider
+            .delete_by_file_source("meeting-summary-123")
+            .await
+            .unwrap();
         query_mock.assert();
         delete_mock.assert();
     }
@@ -461,9 +499,15 @@ mod tests {
         });
         let provider = LightRagProvider::new(server.base_url(), None).unwrap();
 
-        let error = provider.track_status(KnowledgeGraphTrackId("track-1".into())).await.unwrap_err();
+        let error = provider
+            .track_status(KnowledgeGraphTrackId("track-1".into()))
+            .await
+            .unwrap_err();
         mock.assert();
-        assert!(matches!(error, KnowledgeGraphProviderError::ProtocolError { .. }));
+        assert!(matches!(
+            error,
+            KnowledgeGraphProviderError::ProtocolError { .. }
+        ));
         assert!(error.to_string().contains("500"));
         assert!(error.to_string().contains("boom"));
     }
@@ -488,7 +532,10 @@ mod tests {
         });
         let provider = LightRagProvider::new(server.base_url(), None).unwrap();
 
-        let status = provider.track_status(KnowledgeGraphTrackId("track-123".into())).await.unwrap();
+        let status = provider
+            .track_status(KnowledgeGraphTrackId("track-123".into()))
+            .await
+            .unwrap();
         mock.assert();
         assert_eq!(status.track_id, "track-123");
         assert_eq!(status.total_count, 1);

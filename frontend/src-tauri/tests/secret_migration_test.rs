@@ -86,10 +86,7 @@ async fn migration_moves_single_openai_key() {
     assert_eq!(report.migrated, 1);
 
     let key = refs::summary_provider_key("openai");
-    assert_eq!(
-        store.get(&key).await.unwrap().as_deref(),
-        Some("sk-test")
-    );
+    assert_eq!(store.get(&key).await.unwrap().as_deref(), Some("sk-test"));
 }
 
 #[tokio::test]
@@ -216,11 +213,10 @@ async fn migration_scrubs_settings_columns() {
 
     SecretMigration::run(&pool, &store).await.unwrap();
 
-    let (val,): (Option<String>,) =
-        sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let (val,): (Option<String>,) = sqlx::query_as("SELECT openaiApiKey FROM settings LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert!(val.is_none(), "openaiApiKey should be NULL after scrub");
 }
 
@@ -310,7 +306,10 @@ async fn migration_skips_null_api_keys() {
     .unwrap();
 
     let report = SecretMigration::run(&pool, &store).await.unwrap();
-    assert_eq!(report.migrated, 0, "all-NULL row must produce zero migrations");
+    assert_eq!(
+        report.migrated, 0,
+        "all-NULL row must produce zero migrations"
+    );
 }
 
 #[tokio::test]

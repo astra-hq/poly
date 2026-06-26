@@ -66,11 +66,10 @@ impl ConfigRepository {
     /// path.  Suitable for tests and simple cases where atomicity is not
     /// required.
     pub fn save(&self, config: &ResourcefullyConfig) -> Result<()> {
-        paths::ensure_config_dir()
-            .with_context(|| "Failed to create config directory")?;
+        paths::ensure_config_dir().with_context(|| "Failed to create config directory")?;
 
-        let yaml = serde_yaml::to_string(config)
-            .with_context(|| "Failed to serialize config to YAML")?;
+        let yaml =
+            serde_yaml::to_string(config).with_context(|| "Failed to serialize config to YAML")?;
 
         std::fs::write(&self.path, yaml)
             .with_context(|| format!("Failed to write config to {}", self.path.display()))?;
@@ -92,8 +91,7 @@ impl ConfigRepository {
     /// the temp file is cleaned up automatically.
     pub fn save_atomic(&self, config: &ResourcefullyConfig) -> Result<()> {
         // Ensure the parent directory exists so we can create the temp file.
-        paths::ensure_config_dir()
-            .with_context(|| "Failed to create config directory")?;
+        paths::ensure_config_dir().with_context(|| "Failed to create config directory")?;
 
         let parent = self
             .path
@@ -102,16 +100,11 @@ impl ConfigRepository {
 
         // Step 1 — temp file in the same directory (required for atomic rename).
         let mut temp_file = tempfile::NamedTempFile::new_in(parent)
-            .with_context(|| {
-                format!(
-                    "Failed to create temp file in {}",
-                    parent.display()
-                )
-            })?;
+            .with_context(|| format!("Failed to create temp file in {}", parent.display()))?;
 
         // Step 2 — serialize and write.
-        let yaml = serde_yaml::to_string(config)
-            .with_context(|| "Failed to serialize config to YAML")?;
+        let yaml =
+            serde_yaml::to_string(config).with_context(|| "Failed to serialize config to YAML")?;
 
         temp_file
             .write_all(yaml.as_bytes())
@@ -129,14 +122,12 @@ impl ConfigRepository {
 
         // Step 4 — atomic rename.  On failure the NamedTempFile is dropped
         // and the original config file is preserved.
-        temp_file
-            .persist(&self.path)
-            .with_context(|| {
-                format!(
-                    "Failed to atomically persist config to {}",
-                    self.path.display()
-                )
-            })?;
+        temp_file.persist(&self.path).with_context(|| {
+            format!(
+                "Failed to atomically persist config to {}",
+                self.path.display()
+            )
+        })?;
 
         Ok(())
     }

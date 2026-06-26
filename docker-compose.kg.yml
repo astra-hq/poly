@@ -1,3 +1,5 @@
+name: resourcefully-kg
+
 services:
   rustfs:
     image: rustfs/rustfs:latest
@@ -6,7 +8,7 @@ services:
       - "9000:9000"
       - "9001:9001"
     volumes:
-      - rustfs-data:/data
+      - ./data/rustfs:/data
 
   neo4j:
     image: neo4j:5.26
@@ -17,18 +19,13 @@ services:
     environment:
       NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/change-me}
     volumes:
-      - neo4j-data:/data
-      - neo4j-logs:/logs
-      - neo4j-import:/var/lib/neo4j/import
-      - neo4j-plugins:/plugins
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+      - ./data/neo4j/import:/var/lib/neo4j/import
+      - ./data/neo4j/plugins:/plugins
 
   lightrag:
     image: ghcr.io/hkuds/lightrag:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-      tags:
-        - ghcr.io/hkuds/lightrag:latest
     depends_on:
       - neo4j
       - rustfs
@@ -54,10 +51,3 @@ services:
       # so the exposed server is authenticated — without it every endpoint is public.
       HOST: "0.0.0.0"
       PORT: "9621"
-
-volumes:
-  rustfs-data:
-  neo4j-data:
-  neo4j-logs:
-  neo4j-import:
-  neo4j-plugins:

@@ -108,9 +108,9 @@ pub async fn check_default_legacy_database(app: AppHandle) -> Result<Option<Stri
 #[tauri::command]
 pub async fn check_homebrew_database(path: String) -> Result<Option<DatabaseCheckResult>, String> {
     let db_path = PathBuf::from(&path);
-    
+
     info!("Checking for Homebrew database at: {}", path);
-    
+
     // Check if file exists and is a regular file
     if db_path.exists() && db_path.is_file() {
         // Get file metadata to check size
@@ -118,13 +118,10 @@ pub async fn check_homebrew_database(path: String) -> Result<Option<DatabaseChec
             Ok(metadata) => {
                 let size = metadata.len();
                 info!("Found Homebrew database: {} ({} bytes)", path, size);
-                
+
                 // Only consider it valid if it has content (not empty)
                 if size > 0 {
-                    Ok(Some(DatabaseCheckResult {
-                        exists: true,
-                        size,
-                    }))
+                    Ok(Some(DatabaseCheckResult { exists: true, size }))
                 } else {
                     info!("Database file exists but is empty");
                     Ok(None)
@@ -161,7 +158,10 @@ pub async fn import_and_initialize_database(
         })?;
 
     // Update app state with the new manager
-    app.manage(AppState { db_manager, config_repo: crate::resourcefully_config::ConfigRepository::new() });
+    app.manage(AppState {
+        db_manager,
+        config_repo: crate::resourcefully_config::ConfigRepository::new(),
+    });
 
     info!("Legacy database imported and initialized successfully");
 
@@ -186,10 +186,13 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
 
     let config_repo = crate::resourcefully_config::ConfigRepository::new();
 
-    let default_summary_model = crate::summary::summary_engine::commands::get_recommended_summary_model_for_current_system()
+    let default_summary_model =
+        crate::summary::summary_engine::commands::get_recommended_summary_model_for_current_system(
+        )
         .unwrap_or("qwen3.5:2b");
 
-    let mut cfg = config_repo.load()
+    let mut cfg = config_repo
+        .load()
         .map_err(|e| format!("Failed to load default config: {}", e))?;
 
     // Default Summary Model: Built-in AI (Qwen recommendation for this system)
@@ -206,7 +209,10 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
         error!("Failed to save default config: {}", e);
     }
 
-    app.manage(AppState { db_manager: db_manager.clone(), config_repo });
+    app.manage(AppState {
+        db_manager: db_manager.clone(),
+        config_repo,
+    });
 
     info!("Fresh database initialized successfully with default models");
 

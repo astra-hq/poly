@@ -300,8 +300,7 @@ impl ResourcefullyConfig {
 
     /// Parse a YAML string.
     pub fn load_from_str(yaml: &str) -> Result<Self> {
-        serde_yaml::from_str(yaml)
-            .with_context(|| "Failed to parse YAML config".to_string())
+        serde_yaml::from_str(yaml).with_context(|| "Failed to parse YAML config".to_string())
     }
 
     // ── persistence ─────────────────────────────────────────────────────
@@ -318,11 +317,10 @@ impl ResourcefullyConfig {
 
     /// Serialize to an explicit file path.
     pub fn save_to_path(&self, path: &std::path::Path) -> Result<()> {
-        super::paths::ensure_config_dir()
-            .with_context(|| "Failed to create config directory")?;
+        super::paths::ensure_config_dir().with_context(|| "Failed to create config directory")?;
 
-        let yaml = serde_yaml::to_string(self)
-            .with_context(|| "Failed to serialize config to YAML")?;
+        let yaml =
+            serde_yaml::to_string(self).with_context(|| "Failed to serialize config to YAML")?;
 
         std::fs::write(path, yaml)
             .with_context(|| format!("Failed to write config to {}", path.display()))?;
@@ -345,10 +343,7 @@ mod tests {
         let s = SummaryConfig::default();
         assert_eq!(s.provider, "openai");
         assert_eq!(s.model, "gpt-4o-2024-11-20");
-        assert_eq!(
-            s.whisper_model,
-            crate::config::DEFAULT_WHISPER_MODEL
-        );
+        assert_eq!(s.whisper_model, crate::config::DEFAULT_WHISPER_MODEL);
     }
 
     #[test]
@@ -379,7 +374,10 @@ mod tests {
         assert_eq!(back.name, "x");
         assert_eq!(back.kind, ProfileKind::Remote);
         assert_eq!(back.notes.as_deref(), Some("note"));
-        assert!(back.api_key.is_none(), "api_key must be None after roundtrip");
+        assert!(
+            back.api_key.is_none(),
+            "api_key must be None after roundtrip"
+        );
     }
 
     #[test]

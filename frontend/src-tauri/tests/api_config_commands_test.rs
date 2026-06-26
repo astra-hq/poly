@@ -1,8 +1,8 @@
 use app_lib::api::api::{count_secrets, ModelConfig, TranscriptConfig};
 use app_lib::knowledge_graph::config::{EmbeddingConfig, KnowledgeGraphSelection, ProfileKind};
 use app_lib::resourcefully_config::config::{
-    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets, ResourcefullyConfig, SummaryConfig,
-    TranscriptConfig as YamlTranscriptConfig,
+    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets, ResourcefullyConfig,
+    SummaryConfig, TranscriptConfig as YamlTranscriptConfig,
 };
 use app_lib::resourcefully_config::ConfigRepository;
 use app_lib::secrets::file_store::FileSecretStore;
@@ -128,7 +128,10 @@ async fn custom_openai_config_roundtrip_via_yaml_and_secret_store() {
 
     // Then: loading returns CustomOpenAIConfig with api_key: None (never raw key)
     let loaded = repo.load().unwrap();
-    assert_eq!(loaded.custom_openai.endpoint, "https://api.custom-ai.example.com/v1");
+    assert_eq!(
+        loaded.custom_openai.endpoint,
+        "https://api.custom-ai.example.com/v1"
+    );
     assert_eq!(loaded.custom_openai.model, "custom-model-v2");
     assert_eq!(loaded.custom_openai.max_tokens, Some(4096));
 
@@ -144,8 +147,14 @@ async fn custom_openai_config_roundtrip_via_yaml_and_secret_store() {
         top_p: loaded.custom_openai.top_p,
     };
 
-    assert!(custom_openai_config.api_key.is_none(), "api_key must be None");
-    assert_eq!(custom_openai_config.endpoint, "https://api.custom-ai.example.com/v1");
+    assert!(
+        custom_openai_config.api_key.is_none(),
+        "api_key must be None"
+    );
+    assert_eq!(
+        custom_openai_config.endpoint,
+        "https://api.custom-ai.example.com/v1"
+    );
 }
 
 // ─── Fail-fast: API key save failure must not update YAML ────────────────────
@@ -234,12 +243,24 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
     let (repo, _repo_dir) = temp_config_repo();
     let (store, _store_dir) = temp_secret_store();
 
-    store.set(&refs::summary_provider_key("openai"), "sk-summary").await.unwrap();
-    store.set(&refs::transcript_provider_key("groq"), "sk-transcript").await.unwrap();
-    store.set(&refs::custom_openai_key(), "sk-custom").await.unwrap();
+    store
+        .set(&refs::summary_provider_key("openai"), "sk-summary")
+        .await
+        .unwrap();
+    store
+        .set(&refs::transcript_provider_key("groq"), "sk-transcript")
+        .await
+        .unwrap();
+    store
+        .set(&refs::custom_openai_key(), "sk-custom")
+        .await
+        .unwrap();
 
     // Only profile-1 has a secret in the store
-    store.set(&refs::knowledge_graph_profile_key("profile-1"), "sk-kg-1").await.unwrap();
+    store
+        .set(&refs::knowledge_graph_profile_key("profile-1"), "sk-kg-1")
+        .await
+        .unwrap();
 
     let mut cfg = ResourcefullyConfig::default();
     cfg.summary.provider = "openai".to_string();

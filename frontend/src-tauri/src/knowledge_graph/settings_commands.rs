@@ -2,12 +2,13 @@ use log::info;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::io::{BufRead, Read};
+use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::knowledge_graph::config::{
-    self, EmbeddingConfig, KnowledgeGraphProfile, KnowledgeGraphSelection,
-    KnowledgeGraphSettings, ProfileKind,
+    self, EmbeddingConfig, KnowledgeGraphProfile, KnowledgeGraphSelection, KnowledgeGraphSettings,
+    ProfileKind,
 };
 use crate::knowledge_graph::lightrag::LightRagProvider;
 use crate::knowledge_graph::provider::KnowledgeGraphProvider;
@@ -56,9 +57,7 @@ pub(crate) async fn load_kg_settings(
     for p in config.knowledge_graph.profiles {
         let secret_ref = knowledge_graph_profile_key(&p.id);
         let (has_secret, masked_hint) = match store.get(&secret_ref).await {
-            Ok(Some(key)) if !key.is_empty() => {
-                (true, Some(mask_api_key(&key)))
-            }
+            Ok(Some(key)) if !key.is_empty() => (true, Some(mask_api_key(&key))),
             _ => (false, None),
         };
         profiles_with_secrets.push(KnowledgeGraphProfile {
@@ -102,29 +101,20 @@ pub(crate) async fn save_kg_settings(
         .map(|p| p.id.as_str())
         .collect();
 
-    let incoming_ids: HashSet<&str> = settings
-        .profiles
-        .iter()
-        .map(|p| p.id.as_str())
-        .collect();
+    let incoming_ids: HashSet<&str> = settings.profiles.iter().map(|p| p.id.as_str()).collect();
 
     for p in &settings.profiles {
         let secret_ref = knowledge_graph_profile_key(&p.id);
         match &p.api_key {
             Some(key) if !key.is_empty() => {
-                store.set(&secret_ref, key).await.map_err(|e| {
-                    format!(
-                        "Failed to store secret for profile '{}': {}",
-                        p.id, e
-                    )
-                })?;
+                store
+                    .set(&secret_ref, key)
+                    .await
+                    .map_err(|e| format!("Failed to store secret for profile '{}': {}", p.id, e))?;
             }
             Some(_) => {
                 store.delete(&secret_ref).await.map_err(|e| {
-                    format!(
-                        "Failed to delete secret for profile '{}': {}",
-                        p.id, e
-                    )
+                    format!("Failed to delete secret for profile '{}': {}", p.id, e)
                 })?;
             }
             None => { /* No key sent — leave existing secret untouched */ }
@@ -199,10 +189,7 @@ pub async fn api_test_knowledge_graph_profile<R: Runtime>(
     _state: tauri::State<'_, AppState>,
     profile_id: String,
 ) -> Result<serde_json::Value, String> {
-    info!(
-        "api_test_knowledge_graph_profile: profile={}",
-        profile_id
-    );
+    info!("api_test_knowledge_graph_profile: profile={}", profile_id);
 
     // ── Validate profile_id ──────────────────────────────────────
     if profile_id.is_empty() || profile_id.eq_ignore_ascii_case("none") {
@@ -230,24 +217,15 @@ pub async fn api_test_knowledge_graph_profile<R: Runtime>(
     let actual_api_key = store
         .get(&secret_ref)
         .await
-        .map_err(|e| {
-            format!(
-                "Failed to read API key for profile '{}': {}",
-                profile_id, e
-            )
-        })?
+        .map_err(|e| format!("Failed to read API key for profile '{}': {}", profile_id, e))?
         .filter(|k| !k.is_empty());
 
-    let provider = LightRagProvider::new(
-        &profile.lightrag_url,
-        actual_api_key,
-    )
-    .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
+    let provider = LightRagProvider::new(&profile.lightrag_url, actual_api_key)
+        .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     match provider.health().await {
         Ok(health) => {
-            let mut result =
-                serde_json::json!({ "healthy": health.healthy });
+            let mut result = serde_json::json!({ "healthy": health.healthy });
             if let Some(version) = &health.version {
                 result["version"] = serde_json::Value::String(version.clone());
             }
@@ -264,12 +242,7 @@ pub async fn api_test_knowledge_graph_profile<R: Runtime>(
 
 /// Emit a `setup-progress` event to the frontend during the auto-provisioning
 /// flow so the UI can display a scrolling log view.
-fn emit_setup_progress<R: Runtime>(
-    app: &AppHandle<R>,
-    message: &str,
-    level: &str,
-    stage: &str,
-) {
+fn emit_setup_progress<R: Runtime>(app: &AppHandle<R>, message: &str, level: &str, stage: &str) {
     let _ = app.emit(
         "setup-progress",
         serde_json::json!({
@@ -278,6 +251,38 @@ fn emit_setup_progress<R: Runtime>(
             "stage": stage,
         }),
     );
+}
+
+fn resourcefully_docker_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| {
+        "Could not determine home directory for Resourcefully docker setup".to_string()
+    })?;
+    Ok(home.join(".resourcefully").join("docker"))
+}
+
+fn prepare_kg_runtime_dir(compose_source_path: &std::path::Path) -> Result<PathBuf, String> {
+    let runtime_dir = resourcefully_docker_dir()?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("rag_storage"))
+        .map_err(|e| format!("Failed to create LightRAG storage directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("inputs"))
+        .map_err(|e| format!("Failed to create LightRAG input directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("prompts"))
+        .map_err(|e| format!("Failed to create LightRAG prompt directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("rustfs"))
+        .map_err(|e| format!("Failed to create RustFS data directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("data"))
+        .map_err(|e| format!("Failed to create Neo4j data directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("logs"))
+        .map_err(|e| format!("Failed to create Neo4j log directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("import"))
+        .map_err(|e| format!("Failed to create Neo4j import directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("plugins"))
+        .map_err(|e| format!("Failed to create Neo4j plugin directory: {}", e))?;
+
+    let compose_runtime_path = runtime_dir.join("docker-compose.kg.yml");
+    std::fs::copy(compose_source_path, &compose_runtime_path)
+        .map_err(|e| format!("Failed to copy docker-compose.kg.yml: {}", e))?;
+    Ok(compose_runtime_path)
 }
 
 // ── Commands ────────────────────────────────────────────────────────────
@@ -302,9 +307,7 @@ fn check_docker() -> DependencyInfo {
         .output()
     {
         Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             DependencyInfo {
                 installed: true,
                 version: Some(version),
@@ -324,9 +327,7 @@ fn check_ollama() -> DependencyInfo {
         .output()
     {
         Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             DependencyInfo {
                 installed: true,
                 version: Some(version),
@@ -385,13 +386,9 @@ pub async fn api_setup_kg_pull_model<R: Runtime>(
                     }
                     if !line_buf.is_empty() {
                         for chunk in line_buf.split(|&b| b == b'\r') {
-                            let trimmed = String::from_utf8_lossy(chunk)
-                                .trim()
-                                .to_string();
+                            let trimmed = String::from_utf8_lossy(chunk).trim().to_string();
                             if !trimmed.is_empty() {
-                                emit_setup_progress(
-                                    &app, &trimmed, "info", "pull-model",
-                                );
+                                emit_setup_progress(&app, &trimmed, "info", "pull-model");
                             }
                         }
                     }
@@ -412,11 +409,15 @@ pub async fn api_setup_kg_pull_model<R: Runtime>(
     })?;
 
     if !status.success() {
-        let stderr = child.stderr.take().map(|s| {
-            let mut buf = String::new();
-            std::io::BufReader::new(s).read_to_string(&mut buf).ok();
-            buf
-        }).unwrap_or_default();
+        let stderr = child
+            .stderr
+            .take()
+            .map(|s| {
+                let mut buf = String::new();
+                std::io::BufReader::new(s).read_to_string(&mut buf).ok();
+                buf
+            })
+            .unwrap_or_default();
         let msg = if stderr.trim().is_empty() {
             format!("Ollama pull failed (exit code: {:?})", status.code())
         } else {
@@ -473,8 +474,9 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
         return Err(msg.to_string());
     }
 
-    let docker_version =
-        String::from_utf8_lossy(&docker_check.stdout).trim().to_string();
+    let docker_version = String::from_utf8_lossy(&docker_check.stdout)
+        .trim()
+        .to_string();
     info!("Docker available: {}", docker_version);
     emit_setup_progress(
         &app,
@@ -488,34 +490,50 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
     let compose_path = {
         let candidates = vec![
             // Production: bundled resource via resource resolver
-            app.path().resource_dir().ok().map(|d| {
-                d.join("docker-compose.kg.yml")
-            }),
+            app.path()
+                .resource_dir()
+                .ok()
+                .map(|d| d.join("docker-compose.kg.yml")),
             // Dev: current working directory (project root)
-            std::env::current_dir().ok().map(|d| {
-                d.join("docker-compose.kg.yml")
-            }),
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.join("docker-compose.kg.yml")),
             // Dev: one level up (frontend/src-tauri -> project root)
-            std::env::current_dir().ok().map(|d| {
-                d.join("..").join("..").join("docker-compose.kg.yml")
-            }),
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.join("..").join("..").join("docker-compose.kg.yml")),
             // Dev: two levels up (frontend/src-tauri -> project root)
-            std::env::current_dir().ok().map(|d| {
-                d.join("..").join("docker-compose.kg.yml")
-            }),
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.join("..").join("docker-compose.kg.yml")),
         ];
 
         candidates.into_iter().flatten().find(|p| p.exists())
     };
 
-    let compose_path = compose_path.ok_or_else(|| {
+    let compose_source_path = compose_path.ok_or_else(|| {
         let msg = "Could not find docker-compose.kg.yml. Ensure it is present in the project root.";
         emit_setup_progress(&app, msg, "error", "error");
         msg.to_string()
     })?;
 
-    info!("Using compose file: {:?}", compose_path);
-    emit_setup_progress(&app, "Found docker-compose.kg.yml", "success", "compose-file");
+    info!("Using compose source file: {:?}", compose_source_path);
+    let compose_path = prepare_kg_runtime_dir(&compose_source_path).map_err(|e| {
+        emit_setup_progress(&app, &e, "error", "error");
+        e
+    })?;
+    let runtime_dir = compose_path
+        .parent()
+        .ok_or_else(|| "Failed to resolve Resourcefully docker directory".to_string())?;
+    emit_setup_progress(
+        &app,
+        &format!(
+            "Prepared Docker runtime directory at {}",
+            runtime_dir.display()
+        ),
+        "success",
+        "compose-file",
+    );
 
     // ── Get or create LightRAG API key in SecretStore ────────────
     // The SecretStore is the canonical source for API keys.  Never
@@ -535,21 +553,12 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
             existing
         }
         _ => {
-            emit_setup_progress(
-                &app,
-                "Creating new LightRAG API key...",
-                "info",
-                "env-file",
-            );
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let random_suffix: u64 = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos() as u64;
-            let new_key = format!("meetily-lrag-{:x}", random_suffix);
-            store.set(&secret_ref, &new_key).await.map_err(|e| {
-                format!("Failed to store LightRAG API key: {}", e)
-            })?;
+            emit_setup_progress(&app, "Creating new LightRAG API key...", "info", "env-file");
+            let new_key = format!("meetily-lrag-{:x}", rand::random::<u64>());
+            store
+                .set(&secret_ref, &new_key)
+                .await
+                .map_err(|e| format!("Failed to store LightRAG API key: {}", e))?;
             info!("Created new LightRAG API key in SecretStore");
             new_key
         }
@@ -563,26 +572,22 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
         "env-file",
     );
 
-    let env_path = compose_path.parent().unwrap().join("kg.env");
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let random_suffix: u64 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let env_path = runtime_dir.join("kg.env");
 
-    let neo4j_password = format!("meetily-{:x}", random_suffix);
+    let neo4j_password = format!("meetily-{:x}", rand::random::<u64>());
+    let rustfs_secret = format!("meetily-secret-{:x}", rand::random::<u64>());
     let env_content = format!(
         "# Auto-generated by Meetily knowledge-graph setup\n\
          NEO4J_AUTH=neo4j/{}\n\
          RUSTFS_ACCESS_KEY=meetily\n\
-         RUSTFS_SECRET_KEY=meetily-secret-{:x}\n\
+         RUSTFS_SECRET_KEY={}\n\
          LIGHTRAG_API_KEY={}\n\
          \n\
          # LightRAG / embedding model reference\n\
          LIGHTRAG_EMBEDDING_MODEL=bge-m3\n\
          LIGHTRAG_EMBEDDING_MODEL_NAME=BAAI/bge-m3\n",
         neo4j_password,
-        random_suffix.wrapping_add(1),
+        rustfs_secret,
         lightrag_api_key,
     );
 
@@ -607,7 +612,7 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
         "env-file",
     );
 
-    let dot_env_path = compose_path.parent().unwrap().join(".env");
+    let dot_env_path = runtime_dir.join(".env");
     let dot_env_content = format!(
         "\
 # LightRAG — auto-generated by Meetily setup\n\
@@ -619,7 +624,8 @@ LLM_MODEL=qwen2.5:1.5b\n\
 EMBEDDING_BINDING=ollama\n\
 EMBEDDING_BINDING_HOST=http://host.docker.internal:11434\n\
 EMBEDDING_MODEL=bge-m3:latest\n\
-EMBEDDING_DIM=1024\n",
+EMBEDDING_DIM=1024\n\
+LIGHTRAG_PARSER=*:native-teP,*:legacy-R\n",
         lightrag_api_key
     );
     std::fs::write(&dot_env_path, dot_env_content).map_err(|e| {
@@ -784,8 +790,7 @@ EMBEDDING_DIM=1024\n",
     let mut settings = load_kg_settings(&config_repo, &store).await?;
     settings.profiles.retain(|p| p.id != "local-lightrag");
     settings.profiles.push(profile.clone());
-    settings.active_profile =
-        KnowledgeGraphSelection::Profile("local-lightrag".to_string());
+    settings.active_profile = KnowledgeGraphSelection::Profile("local-lightrag".to_string());
     save_kg_settings(&config_repo, &store, &settings).await?;
 
     info!("Local LightRAG profile created and set as active");
@@ -839,18 +844,11 @@ mod tests {
 
     #[async_trait]
     impl SecretStore for TestSecretStore {
-        async fn get(
-            &self,
-            key: &SecretRef,
-        ) -> Result<Option<String>, SecretStoreError> {
+        async fn get(&self, key: &SecretRef) -> Result<Option<String>, SecretStoreError> {
             Ok(self.data.lock().unwrap().get(key.as_str()).cloned())
         }
 
-        async fn set(
-            &self,
-            key: &SecretRef,
-            value: &str,
-        ) -> Result<(), SecretStoreError> {
+        async fn set(&self, key: &SecretRef, value: &str) -> Result<(), SecretStoreError> {
             self.data
                 .lock()
                 .unwrap()
@@ -858,18 +856,12 @@ mod tests {
             Ok(())
         }
 
-        async fn delete(
-            &self,
-            key: &SecretRef,
-        ) -> Result<(), SecretStoreError> {
+        async fn delete(&self, key: &SecretRef) -> Result<(), SecretStoreError> {
             self.data.lock().unwrap().remove(key.as_str());
             Ok(())
         }
 
-        async fn exists(
-            &self,
-            key: &SecretRef,
-        ) -> Result<bool, SecretStoreError> {
+        async fn exists(&self, key: &SecretRef) -> Result<bool, SecretStoreError> {
             Ok(self.data.lock().unwrap().contains_key(key.as_str()))
         }
     }
@@ -921,8 +913,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        let err =
-            save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
+        let err = save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
         assert!(err.contains("Profile name cannot be empty"));
     }
 
@@ -940,8 +931,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        let err =
-            save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
+        let err = save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
         assert!(err.contains("LightRAG URL cannot be empty"));
     }
 
@@ -958,8 +948,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::Profile("b".into()),
         };
-        let err =
-            save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
+        let err = save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
         assert!(err.contains("Active profile 'b' not found"));
     }
 
@@ -1006,11 +995,7 @@ mod tests {
             KnowledgeGraphSelection::Profile("prod-1".into())
         );
 
-        let prod = loaded
-            .profiles
-            .iter()
-            .find(|p| p.id == "prod-1")
-            .unwrap();
+        let prod = loaded.profiles.iter().find(|p| p.id == "prod-1").unwrap();
         assert_eq!(prod.name, "Production");
         assert_eq!(prod.lightrag_url, "https://kg.example.com");
         assert!(prod.api_key.is_none(), "api_key must be None");
@@ -1068,9 +1053,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &settings)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
         // Verify secret exists.
         let secret_ref = knowledge_graph_profile_key("temp");
@@ -1084,9 +1067,7 @@ mod tests {
             profiles: vec![],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &pruned)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &pruned).await.unwrap();
 
         // Verify secret is gone.
         assert!(
@@ -1111,9 +1092,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &settings)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
         // Save again with empty key string.
         let cleared = KnowledgeGraphSettings {
@@ -1126,9 +1105,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &cleared)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &cleared).await.unwrap();
 
         let secret_ref = knowledge_graph_profile_key("x");
         assert!(
@@ -1153,9 +1130,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &settings)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
         // Save again with api_key: None (meaning "don't change").
         let unchanged = KnowledgeGraphSettings {
@@ -1168,9 +1143,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &unchanged)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &unchanged).await.unwrap();
 
         let secret_ref = knowledge_graph_profile_key("y");
         let stored = store.get(&secret_ref).await.unwrap();
@@ -1210,17 +1183,11 @@ mod tests {
         assert_eq!(loaded.profiles[0].id, "remote-1");
 
         let mut updated = loaded.clone();
-        if let Some(p) = updated
-            .profiles
-            .iter_mut()
-            .find(|p| p.id == "remote-1")
-        {
+        if let Some(p) = updated.profiles.iter_mut().find(|p| p.id == "remote-1") {
             p.name = "cloud kg v2".into();
             p.lightrag_url = "https://kg2.example.com".into();
         }
-        save_kg_settings(&repo, &store, &updated)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &updated).await.unwrap();
 
         let loaded2 = load_kg_settings(&repo, &store).await.unwrap();
         let p = loaded2
@@ -1234,9 +1201,7 @@ mod tests {
 
         let mut pruned = loaded2.clone();
         pruned.profiles.retain(|p| p.id != "remote-1");
-        save_kg_settings(&repo, &store, &pruned)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &pruned).await.unwrap();
 
         let loaded3 = load_kg_settings(&repo, &store).await.unwrap();
         assert_eq!(loaded3.profiles.len(), 0);
@@ -1266,9 +1231,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::Profile("health-1".into()),
         };
-        save_kg_settings(&repo, &store, &settings)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
         let mock = server.mock(|when, then| {
             when.method(httpmock::Method::GET)
@@ -1279,14 +1242,9 @@ mod tests {
         });
 
         let loaded = load_kg_settings(&repo, &store).await.unwrap();
-        let profile = loaded
-            .profiles
-            .iter()
-            .find(|p| p.id == "health-1")
-            .unwrap();
+        let profile = loaded.profiles.iter().find(|p| p.id == "health-1").unwrap();
         let actual_key = store.get(&secret_ref).await.unwrap();
-        let provider =
-            LightRagProvider::new(&profile.lightrag_url, actual_key).unwrap();
+        let provider = LightRagProvider::new(&profile.lightrag_url, actual_key).unwrap();
         let health = provider.health().await.unwrap();
 
         mock.assert();
@@ -1311,9 +1269,7 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &settings)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
         let mock = server.mock(|when, then| {
             when.method(httpmock::Method::GET).path("/health");
@@ -1326,11 +1282,10 @@ mod tests {
             .iter()
             .find(|p| p.id == "unhealthy-1")
             .unwrap();
-        let result =
-            LightRagProvider::new(&profile.lightrag_url, None)
-                .unwrap()
-                .health()
-                .await;
+        let result = LightRagProvider::new(&profile.lightrag_url, None)
+            .unwrap()
+            .health()
+            .await;
 
         mock.assert();
         assert!(result.is_err());
@@ -1347,10 +1302,7 @@ mod tests {
         let store = TestSecretStore::new();
 
         let loaded = load_kg_settings(&repo, &store).await.unwrap();
-        let found = loaded
-            .profiles
-            .iter()
-            .find(|p| p.id == "nonexistent");
+        let found = loaded.profiles.iter().find(|p| p.id == "nonexistent");
         assert!(found.is_none());
     }
 
@@ -1370,23 +1322,14 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&repo, &store, &settings)
-            .await
-            .unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
         let loaded = load_kg_settings(&repo, &store).await.unwrap();
-        let profile = loaded
-            .profiles
-            .iter()
-            .find(|p| p.id == "dead")
-            .unwrap();
-        let result = LightRagProvider::new(
-            &profile.lightrag_url,
-            None,
-        )
-        .unwrap()
-        .health()
-        .await;
+        let profile = loaded.profiles.iter().find(|p| p.id == "dead").unwrap();
+        let result = LightRagProvider::new(&profile.lightrag_url, None)
+            .unwrap()
+            .health()
+            .await;
 
         assert!(result.is_err(), "expected connection error");
     }
@@ -1394,8 +1337,7 @@ mod tests {
     // ── Setup env generation test ─────────────────────────────────
 
     #[tokio::test]
-    async fn kg_setup_generates_env_from_yaml_and_secret_store_without_returning_raw_key(
-    ) {
+    async fn kg_setup_generates_env_from_yaml_and_secret_store_without_returning_raw_key() {
         // Given: a fresh config repository and a secret store pre-populated
         // with the local-lightrag API key (as api_setup_local_knowledge_graph
         // would do during setup).
@@ -1425,9 +1367,7 @@ mod tests {
                 has_secret: false,
                 api_key_masked_hint: None,
             }],
-            active_profile: KnowledgeGraphSelection::Profile(
-                "local-lightrag".into(),
-            ),
+            active_profile: KnowledgeGraphSelection::Profile("local-lightrag".into()),
         };
         save_kg_settings(&repo, &store, &settings)
             .await

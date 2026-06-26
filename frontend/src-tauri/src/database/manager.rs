@@ -107,7 +107,10 @@ impl DatabaseManager {
                             Ok(db_manager)
                         }
                         Err(retry_err) => {
-                            log::error!("Database connection failed even after WAL cleanup: {}", retry_err);
+                            log::error!(
+                                "Database connection failed even after WAL cleanup: {}",
+                                retry_err
+                            );
                             Err(retry_err)
                         }
                     }
@@ -187,15 +190,11 @@ impl DatabaseManager {
             ),
             (
                 20250917000000,
-                include_str!(
-                    "../../migrations/20250917000000_add_knowledge_graph_settings.sql"
-                ),
+                include_str!("../../migrations/20250917000000_add_knowledge_graph_settings.sql"),
             ),
             (
                 20250920155811,
-                include_str!(
-                    "../../migrations/20250920155811_add_openrouter_api_key.sql"
-                ),
+                include_str!("../../migrations/20250920155811_add_openrouter_api_key.sql"),
             ),
             (
                 20251010153942,
@@ -203,9 +202,7 @@ impl DatabaseManager {
             ),
             (
                 20251105120000,
-                include_str!(
-                    "../../migrations/20251105120000_add_pro_license_custom_openai.sql"
-                ),
+                include_str!("../../migrations/20251105120000_add_pro_license_custom_openai.sql"),
             ),
             (
                 20251229000000,

@@ -4,8 +4,8 @@ use tauri::{AppHandle, Runtime};
 
 use crate::database::models::KnowledgeGraphMeetingSelection;
 use crate::knowledge_graph::settings_commands::load_kg_settings;
-use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::resourcefully_config::repository::ConfigRepository;
+use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::state::AppState;
 
 /// Persisted per-meeting KG profile selection intent.
@@ -112,13 +112,12 @@ pub async fn api_set_meeting_knowledge_graph_selection<R: Runtime>(
     let now = Utc::now().to_rfc3339();
 
     // ── Verify the meeting exists ──────────────────────────────────
-    let meeting_exists = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM meetings WHERE id = $1",
-    )
-    .bind(&meeting_id)
-    .fetch_one(pool)
-    .await
-    .map_err(|e| format!("Failed to check meeting existence: {}", e))?;
+    let meeting_exists =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM meetings WHERE id = $1")
+            .bind(&meeting_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| format!("Failed to check meeting existence: {}", e))?;
 
     if meeting_exists == 0 {
         return Err(format!("Meeting '{}' does not exist", meeting_id));
@@ -184,34 +183,21 @@ mod tests {
 
     #[async_trait]
     impl SecretStore for TestSecretStore {
-        async fn get(
-            &self,
-            key: &SecretRef,
-        ) -> Result<Option<String>, SecretStoreError> {
+        async fn get(&self, key: &SecretRef) -> Result<Option<String>, SecretStoreError> {
             Ok(self.data.lock().unwrap().get(key.as_str()).cloned())
         }
-        async fn set(
-            &self,
-            key: &SecretRef,
-            value: &str,
-        ) -> Result<(), SecretStoreError> {
+        async fn set(&self, key: &SecretRef, value: &str) -> Result<(), SecretStoreError> {
             self.data
                 .lock()
                 .unwrap()
                 .insert(key.as_str().to_string(), value.to_string());
             Ok(())
         }
-        async fn delete(
-            &self,
-            key: &SecretRef,
-        ) -> Result<(), SecretStoreError> {
+        async fn delete(&self, key: &SecretRef) -> Result<(), SecretStoreError> {
             self.data.lock().unwrap().remove(key.as_str());
             Ok(())
         }
-        async fn exists(
-            &self,
-            key: &SecretRef,
-        ) -> Result<bool, SecretStoreError> {
+        async fn exists(&self, key: &SecretRef) -> Result<bool, SecretStoreError> {
             Ok(self.data.lock().unwrap().contains_key(key.as_str()))
         }
     }
@@ -274,12 +260,11 @@ mod tests {
         insert_meeting(&pool, "meeting-1").await;
 
         // No api_set_meeting_knowledge_graph_selection was called.
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM knowledge_graph_meeting_selection",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM knowledge_graph_meeting_selection")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(count, 0, "table must be empty without explicit set call");
     }
 
@@ -310,7 +295,9 @@ mod tests {
         };
         let (cfg_repo, _cfg_dir) = test_config_repo();
         let secret_store = TestSecretStore::new();
-        save_kg_settings(&cfg_repo, &secret_store, &settings).await.unwrap();
+        save_kg_settings(&cfg_repo, &secret_store, &settings)
+            .await
+            .unwrap();
 
         // Simulate the set command's logic directly (avoiding tauri::State).
         let profile_id = Some("prod-1".to_string());
@@ -398,7 +385,9 @@ mod tests {
         };
         let (cfg_repo, _cfg_dir) = test_config_repo();
         let secret_store = TestSecretStore::new();
-        save_kg_settings(&cfg_repo, &secret_store, &settings).await.unwrap();
+        save_kg_settings(&cfg_repo, &secret_store, &settings)
+            .await
+            .unwrap();
 
         // First insert with profile "a".
         let now = Utc::now().to_rfc3339();
@@ -474,7 +463,10 @@ mod tests {
         let (cfg_repo, _cfg_dir) = test_config_repo();
         let secret_store = TestSecretStore::new();
         let settings = load_kg_settings(&cfg_repo, &secret_store).await.unwrap();
-        let found = settings.profiles.iter().any(|p| p.id == pid.as_deref().unwrap());
+        let found = settings
+            .profiles
+            .iter()
+            .any(|p| p.id == pid.as_deref().unwrap());
         assert!(!found, "profile must not be found");
 
         // Attempt to insert with an invalid profile — should be rejected by
@@ -494,20 +486,18 @@ mod tests {
         insert_meeting(&pool, "meeting-5").await;
 
         // Empty profile_id string should be rejected before even checking settings.
-        let count_before = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM knowledge_graph_meeting_selection",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let count_before =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM knowledge_graph_meeting_selection")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
         // The command would reject this — verify table is unchanged.
-        let count_after = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM knowledge_graph_meeting_selection",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let count_after =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM knowledge_graph_meeting_selection")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(count_before, count_after);
     }
 
@@ -529,7 +519,9 @@ mod tests {
         };
         let (cfg_repo, _cfg_dir) = test_config_repo();
         let secret_store = TestSecretStore::new();
-        save_kg_settings(&cfg_repo, &secret_store, &settings).await.unwrap();
+        save_kg_settings(&cfg_repo, &secret_store, &settings)
+            .await
+            .unwrap();
 
         // Read the original meeting row.
         let original = sqlx::query_as::<_, crate::database::models::MeetingModel>(

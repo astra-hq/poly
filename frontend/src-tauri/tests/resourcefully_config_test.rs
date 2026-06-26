@@ -1,8 +1,9 @@
-use app_lib::resourcefully_config::config::{
-    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets,
-    PreferencesConfig, ResourcefullyConfig, SummaryConfig, TranscriptConfig,
-};
 use app_lib::knowledge_graph::config::KnowledgeGraphSelection;
+use app_lib::resourcefully_config::config::{
+    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets,
+    KnowledgeGraphSettingsWithoutSecrets, PreferencesConfig, ResourcefullyConfig, SummaryConfig,
+    TranscriptConfig,
+};
 
 // ─── full schema roundtrip test ────────────────────────────────────────────
 
@@ -70,24 +71,39 @@ fn resourcefully_config_full_schema_roundtrip_without_raw_secrets() {
     assert!(!lower.contains("api_key"), "api_key leaked into YAML");
     assert!(!lower.contains("apikey"), "apikey leaked into YAML");
     assert!(!lower.contains("secret_key"), "secret_key leaked into YAML");
-    assert!(!lower.contains("access_token"), "access_token leaked into YAML");
+    assert!(
+        !lower.contains("access_token"),
+        "access_token leaked into YAML"
+    );
 
     // Roundtrip: deserialize and compare
     let restored: ResourcefullyConfig = serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(restored.summary.provider, cfg.summary.provider);
     assert_eq!(restored.summary.model, cfg.summary.model);
     assert_eq!(restored.summary.whisper_model, cfg.summary.whisper_model);
-    assert_eq!(restored.summary.ollama_endpoint, cfg.summary.ollama_endpoint);
+    assert_eq!(
+        restored.summary.ollama_endpoint,
+        cfg.summary.ollama_endpoint
+    );
     assert_eq!(restored.transcript.provider, cfg.transcript.provider);
     assert_eq!(restored.transcript.model, cfg.transcript.model);
     assert_eq!(restored.custom_openai.endpoint, cfg.custom_openai.endpoint);
     assert_eq!(restored.custom_openai.model, cfg.custom_openai.model);
-    assert_eq!(restored.custom_openai.max_tokens, cfg.custom_openai.max_tokens);
-    assert_eq!(restored.custom_openai.temperature, cfg.custom_openai.temperature);
+    assert_eq!(
+        restored.custom_openai.max_tokens,
+        cfg.custom_openai.max_tokens
+    );
+    assert_eq!(
+        restored.custom_openai.temperature,
+        cfg.custom_openai.temperature
+    );
     assert_eq!(restored.custom_openai.top_p, cfg.custom_openai.top_p);
     assert_eq!(restored.knowledge_graph.profiles.len(), 1);
     assert_eq!(restored.knowledge_graph.profiles[0].id, "kg-1");
-    assert_eq!(restored.knowledge_graph.active_profile, KnowledgeGraphSelection::Profile("kg-1".to_string()));
+    assert_eq!(
+        restored.knowledge_graph.active_profile,
+        KnowledgeGraphSelection::Profile("kg-1".to_string())
+    );
     assert_eq!(restored.preferences.language, "en");
 }
 
@@ -115,16 +131,19 @@ preferences:
 
     // Defaulted fields
     assert_eq!(cfg.summary.whisper_model, "large-v3-turbo"); // default
-    assert_eq!(cfg.summary.ollama_endpoint, None);            // default
+    assert_eq!(cfg.summary.ollama_endpoint, None); // default
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8"); // default
-    assert_eq!(cfg.custom_openai.endpoint, "");               // default
-    assert_eq!(cfg.custom_openai.model, "");                  // default
-    assert_eq!(cfg.custom_openai.max_tokens, None);           // default
-    assert_eq!(cfg.custom_openai.temperature, None);          // default
-    assert_eq!(cfg.custom_openai.top_p, None);                // default
-    assert!(cfg.knowledge_graph.profiles.is_empty());         // default
-    assert_eq!(cfg.knowledge_graph.active_profile, KnowledgeGraphSelection::None); // default
-    assert_eq!(cfg.preferences.language, "fr");                // set
+    assert_eq!(cfg.custom_openai.endpoint, ""); // default
+    assert_eq!(cfg.custom_openai.model, ""); // default
+    assert_eq!(cfg.custom_openai.max_tokens, None); // default
+    assert_eq!(cfg.custom_openai.temperature, None); // default
+    assert_eq!(cfg.custom_openai.top_p, None); // default
+    assert!(cfg.knowledge_graph.profiles.is_empty()); // default
+    assert_eq!(
+        cfg.knowledge_graph.active_profile,
+        KnowledgeGraphSelection::None
+    ); // default
+    assert_eq!(cfg.preferences.language, "fr"); // set
 }
 
 // ─── completely empty YAML ─────────────────────────────────────────────────
@@ -143,7 +162,10 @@ fn empty_yaml_produces_all_defaults() {
     assert_eq!(cfg.custom_openai.endpoint, "");
     assert_eq!(cfg.custom_openai.model, "");
     assert!(cfg.knowledge_graph.profiles.is_empty());
-    assert_eq!(cfg.knowledge_graph.active_profile, KnowledgeGraphSelection::None);
+    assert_eq!(
+        cfg.knowledge_graph.active_profile,
+        KnowledgeGraphSelection::None
+    );
     assert_eq!(cfg.preferences.language, "auto-translate");
 }
 
@@ -163,7 +185,9 @@ fn malformed_yaml_returns_error_without_deleting_file() {
     assert!(result.is_err(), "Malformed YAML should produce an error");
     let err = result.unwrap_err();
     assert!(
-        err.to_string().contains("parse") || err.to_string().contains("YAML") || err.to_string().contains("yaml"),
+        err.to_string().contains("parse")
+            || err.to_string().contains("YAML")
+            || err.to_string().contains("yaml"),
         "Error should mention parse/yaml: got '{}'",
         err
     );
@@ -218,7 +242,10 @@ fn save_and_load_roundtrip_via_file() {
     assert_eq!(restored.summary.provider, "ollama");
     assert_eq!(restored.summary.model, "llama3.1:8b");
     assert_eq!(restored.summary.whisper_model, "medium");
-    assert_eq!(restored.summary.ollama_endpoint.as_deref(), Some("http://192.168.1.100:11434"));
+    assert_eq!(
+        restored.summary.ollama_endpoint.as_deref(),
+        Some("http://192.168.1.100:11434")
+    );
     assert_eq!(restored.transcript.provider, "localWhisper");
     assert_eq!(restored.transcript.model, "large-v3");
     assert_eq!(restored.custom_openai.endpoint, "http://localhost:8000/v1");
@@ -258,8 +285,16 @@ fn kg_profile_without_secrets_excludes_api_key() {
     assert!(yaml.contains("secret-profile"));
     assert!(yaml.contains("With Secret"));
     assert!(yaml.contains("Has an API key"));
-    assert!(!yaml.contains("sk-super-secret-key-12345"), "API key leaked into YAML: {}", yaml);
-    assert!(!yaml.to_lowercase().contains("api_key"), "api_key field leaked: {}", yaml);
+    assert!(
+        !yaml.contains("sk-super-secret-key-12345"),
+        "API key leaked into YAML: {}",
+        yaml
+    );
+    assert!(
+        !yaml.to_lowercase().contains("api_key"),
+        "api_key field leaked: {}",
+        yaml
+    );
 }
 
 // ─── load_default / save_default convenience methods ───────────────────────
@@ -273,9 +308,9 @@ fn load_default_returns_default_config() {
 
 #[test]
 fn load_from_file_missing_returns_default() {
-    let cfg = ResourcefullyConfig::load_from_path(
-        &std::path::PathBuf::from("/nonexistent/path/resourcefully.yml")
-    );
+    let cfg = ResourcefullyConfig::load_from_path(&std::path::PathBuf::from(
+        "/nonexistent/path/resourcefully.yml",
+    ));
     assert!(cfg.is_ok(), "Missing file should return default, not error");
     let cfg = cfg.unwrap();
     assert_eq!(cfg.summary.provider, "openai");
@@ -376,13 +411,19 @@ fn startup_creates_default_resourcefully_yaml_without_config_tables() {
     let repo = ConfigRepository::with_path(file_path.clone());
 
     // Fresh start: no YAML file should exist
-    assert!(!file_path.exists(), "Fresh start: no YAML config should exist yet");
+    assert!(
+        !file_path.exists(),
+        "Fresh start: no YAML config should exist yet"
+    );
 
     // Startup bootstrap: load_or_create_default writes defaults on first run
     let cfg = repo.load_or_create_default().unwrap();
 
     // File was created
-    assert!(file_path.exists(), "load_or_create_default must create YAML file on first run");
+    assert!(
+        file_path.exists(),
+        "load_or_create_default must create YAML file on first run"
+    );
 
     // Returned config has correct defaults
     assert_eq!(cfg.summary.provider, "openai");
@@ -394,16 +435,31 @@ fn startup_creates_default_resourcefully_yaml_without_config_tables() {
 
     // Verify actual file contents
     let contents = fs::read_to_string(&file_path).unwrap();
-    assert!(contents.contains("openai"), "YAML must contain default summary provider");
-    assert!(contents.contains("parakeet"), "YAML must contain transcript provider");
-    assert!(contents.contains("auto-translate"), "YAML must contain default language");
+    assert!(
+        contents.contains("openai"),
+        "YAML must contain default summary provider"
+    );
+    assert!(
+        contents.contains("parakeet"),
+        "YAML must contain transcript provider"
+    );
+    assert!(
+        contents.contains("auto-translate"),
+        "YAML must contain default language"
+    );
 
     // Second startup: file already exists — must NOT be overwritten
     let mtime_before = fs::metadata(&file_path).unwrap().modified().unwrap();
     let cfg2 = repo.load_or_create_default().unwrap();
     let mtime_after = fs::metadata(&file_path).unwrap().modified().unwrap();
 
-    assert_eq!(mtime_before, mtime_after, "Existing YAML must not be overwritten on subsequent loads");
-    assert_eq!(cfg2.summary.provider, cfg.summary.provider, "Reloaded config must match original");
+    assert_eq!(
+        mtime_before, mtime_after,
+        "Existing YAML must not be overwritten on subsequent loads"
+    );
+    assert_eq!(
+        cfg2.summary.provider, cfg.summary.provider,
+        "Reloaded config must match original"
+    );
     assert_eq!(cfg2.transcript.provider, cfg.transcript.provider);
 }

@@ -480,7 +480,9 @@ pub async fn api_get_model_config<R: Runtime>(
     _auth_token: Option<String>,
 ) -> Result<Option<ModelConfig>, String> {
     log_info!("api_get_model_config called (native)");
-    let cfg = state.config_repo.load()
+    let cfg = state
+        .config_repo
+        .load()
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
     log_info!(
@@ -537,21 +539,26 @@ pub async fn api_save_model_config<R: Runtime>(
             let store = KeyringFirstSecretStore::default_store()
                 .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
             let secret_ref = refs::summary_provider_key(&provider);
-            store.set(&secret_ref, &key)
+            store
+                .set(&secret_ref, &key)
                 .await
                 .map_err(|e| format!("Failed to save API key: {}", e))?;
         }
     }
 
     // 2. Load current config, update summary section, save atomically to YAML
-    let mut cfg = state.config_repo.load()
+    let mut cfg = state
+        .config_repo
+        .load()
         .map_err(|e| format!("Failed to load config: {}", e))?;
     cfg.summary.provider = provider;
     cfg.summary.model = model;
     cfg.summary.whisper_model = whisper_model;
     cfg.summary.ollama_endpoint = ollama_endpoint;
 
-    state.config_repo.save_atomic(&cfg)
+    state
+        .config_repo
+        .save_atomic(&cfg)
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     // 3. Trigger graceful shutdown of built-in AI sidecar if running
@@ -631,7 +638,9 @@ pub async fn api_get_transcript_config<R: Runtime>(
     _auth_token: Option<String>,
 ) -> Result<Option<TranscriptConfig>, String> {
     log_info!("api_get_transcript_config called (native)");
-    let cfg = state.config_repo.load()
+    let cfg = state
+        .config_repo
+        .load()
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
     log_info!(
@@ -675,19 +684,24 @@ pub async fn api_save_transcript_config<R: Runtime>(
             let store = KeyringFirstSecretStore::default_store()
                 .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
             let secret_ref = refs::transcript_provider_key(&provider);
-            store.set(&secret_ref, &key)
+            store
+                .set(&secret_ref, &key)
                 .await
                 .map_err(|e| format!("Failed to save transcript API key: {}", e))?;
         }
     }
 
     // 2. Load config, update transcript section, save atomically to YAML
-    let mut cfg = state.config_repo.load()
+    let mut cfg = state
+        .config_repo
+        .load()
         .map_err(|e| format!("Failed to load config: {}", e))?;
     cfg.transcript.provider = provider;
     cfg.transcript.model = model;
 
-    state.config_repo.save_atomic(&cfg)
+    state
+        .config_repo
+        .save_atomic(&cfg)
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
     log_info!("Successfully saved transcript configuration.");
@@ -864,7 +878,10 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
     meeting_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<MeetingMetadata, String> {
-    log_info!("api_get_meeting_metadata called for meeting_id: {}", meeting_id);
+    log_info!(
+        "api_get_meeting_metadata called for meeting_id: {}",
+        meeting_id
+    );
 
     let pool = state.db_manager.pool();
 
@@ -908,7 +925,9 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
-    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset).await {
+    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset)
+        .await
+    {
         Ok((transcripts, total_count)) => {
             log_info!(
                 "Successfully retrieved {} transcripts for meeting {} (total: {})",
@@ -939,7 +958,11 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
             })
         }
         Err(e) => {
-            log_error!("Error retrieving transcripts for meeting {}: {}", meeting_id, e);
+            log_error!(
+                "Error retrieving transcripts for meeting {}: {}",
+                meeting_id,
+                e
+            );
             Err(format!("Failed to retrieve transcripts: {}", e))
         }
     }
@@ -1007,7 +1030,10 @@ pub async fn api_save_transcript<R: Runtime>(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             log_error!("Failed to parse transcript segments: {}", e);
-            format!("Invalid transcript data format: {}. Please check the data structure.", e)
+            format!(
+                "Invalid transcript data format: {}. Please check the data structure.",
+                e
+            )
         })?;
 
     // Log parsed segments count and first segment details
@@ -1269,13 +1295,16 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
         let store = KeyringFirstSecretStore::default_store()
             .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
         let secret_ref = refs::custom_openai_key();
-        store.set(&secret_ref, &key)
+        store
+            .set(&secret_ref, &key)
             .await
             .map_err(|e| format!("Failed to save custom OpenAI API key: {}", e))?;
     }
 
     // 2. Load config, update custom_openai section, save atomically to YAML
-    let mut cfg = state.config_repo.load()
+    let mut cfg = state
+        .config_repo
+        .load()
         .map_err(|e| format!("Failed to load config: {}", e))?;
     cfg.custom_openai.endpoint = endpoint.trim().to_string();
     cfg.custom_openai.model = model.trim().to_string();
@@ -1283,10 +1312,15 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
     cfg.custom_openai.temperature = temperature;
     cfg.custom_openai.top_p = top_p;
 
-    state.config_repo.save_atomic(&cfg)
+    state
+        .config_repo
+        .save_atomic(&cfg)
         .map_err(|e| format!("Failed to save config: {}", e))?;
 
-    log_info!("Successfully saved custom OpenAI config for endpoint: {}", cfg.custom_openai.endpoint);
+    log_info!(
+        "Successfully saved custom OpenAI config for endpoint: {}",
+        cfg.custom_openai.endpoint
+    );
     Ok(serde_json::json!({
         "status": "success",
         "message": "Custom OpenAI configuration saved successfully"
@@ -1302,7 +1336,9 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
 ) -> Result<Option<CustomOpenAIConfig>, String> {
     log_info!("api_get_custom_openai_config called");
 
-    let cfg = state.config_repo.load()
+    let cfg = state
+        .config_repo
+        .load()
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
     let co = &cfg.custom_openai;
@@ -1313,7 +1349,11 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
         return Ok(None);
     }
 
-    log_info!("Found custom OpenAI config: endpoint='{}', model='{}'", co.endpoint, co.model);
+    log_info!(
+        "Found custom OpenAI config: endpoint='{}', model='{}'",
+        co.endpoint,
+        co.model
+    );
     Ok(Some(CustomOpenAIConfig {
         endpoint: co.endpoint.clone(),
         api_key: None,
@@ -1394,7 +1434,7 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
                                             .get("message")
                                             .and_then(|m| {
                                                 m.get("content")
-                                                .or_else(|| m.get("reasoning_content"))
+                                                    .or_else(|| m.get("reasoning_content"))
                                             })
                                             .is_some();
 
@@ -1412,17 +1452,33 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
                         }
 
                         // Response was 200 but doesn't match OpenAI format
-                        log_warn!("⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}", response_text);
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}",
+                            response_text
+                        );
                         Err("Endpoint is reachable but doesn't appear to be OpenAI-compatible. Response is missing 'choices' array or 'message.content' / 'message.reasoning_content' field.".to_string())
                     }
                     Err(e) => {
-                        log_warn!("⚠️ Endpoint returned 200 but response is not valid JSON: {}", e);
-                        Err(format!("Endpoint is reachable but returned invalid JSON: {}. Response: {}", e, response_text))
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response is not valid JSON: {}",
+                            e
+                        );
+                        Err(format!(
+                            "Endpoint is reachable but returned invalid JSON: {}. Response: {}",
+                            e, response_text
+                        ))
                     }
                 }
             } else {
-                log_warn!("⚠️ Custom OpenAI connection test failed with status {}: {}", status, response_text);
-                Err(format!("Connection failed with status {}: {}", status, response_text))
+                log_warn!(
+                    "⚠️ Custom OpenAI connection test failed with status {}: {}",
+                    status,
+                    response_text
+                );
+                Err(format!(
+                    "Connection failed with status {}: {}",
+                    status, response_text
+                ))
             }
         }
         Err(e) => {

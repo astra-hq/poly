@@ -94,9 +94,10 @@
             "icons/app_icon.icns",
             "icons/app_icon.ico"
         ],
-        "resources": [
-            "templates/*.json"
-        ],
+        "resources": {
+            "templates/*.json": "templates/",
+            "../../docker-compose.kg.yml": "docker-compose.kg.yml"
+        },
         "externalBin": [
             "binaries/llama-helper",
             "binaries/ffmpeg"

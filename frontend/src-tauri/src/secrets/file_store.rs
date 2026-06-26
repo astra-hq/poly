@@ -32,29 +32,19 @@ impl FileSecretStore {
         if !self.path.exists() {
             return Ok(HashMap::new());
         }
-        let content =
-            fs::read_to_string(&self.path).map_err(SecretStoreError::from)?;
+        let content = fs::read_to_string(&self.path).map_err(SecretStoreError::from)?;
         if content.trim().is_empty() {
             return Ok(HashMap::new());
         }
         serde_yaml::from_str(&content).map_err(|e| {
-            SecretStoreError::SerializationError(format!(
-                "failed to parse secrets file: {}",
-                e
-            ))
+            SecretStoreError::SerializationError(format!("failed to parse secrets file: {}", e))
         })
     }
 
     /// Atomically write the map to the YAML file.
-    fn write_all(
-        &self,
-        map: &HashMap<String, String>,
-    ) -> Result<(), SecretStoreError> {
+    fn write_all(&self, map: &HashMap<String, String>) -> Result<(), SecretStoreError> {
         let yaml = serde_yaml::to_string(map).map_err(|e| {
-            SecretStoreError::SerializationError(format!(
-                "failed to serialize secrets: {}",
-                e
-            ))
+            SecretStoreError::SerializationError(format!("failed to serialize secrets: {}", e))
         })?;
 
         // Write to a sibling temp file, then rename atomically.
@@ -79,37 +69,24 @@ impl FileSecretStore {
 
 #[async_trait]
 impl SecretStore for FileSecretStore {
-    async fn get(
-        &self,
-        key: &SecretRef,
-    ) -> Result<Option<String>, SecretStoreError> {
+    async fn get(&self, key: &SecretRef) -> Result<Option<String>, SecretStoreError> {
         let map = self.read_all()?;
         Ok(map.get(key.as_str()).cloned())
     }
 
-    async fn set(
-        &self,
-        key: &SecretRef,
-        value: &str,
-    ) -> Result<(), SecretStoreError> {
+    async fn set(&self, key: &SecretRef, value: &str) -> Result<(), SecretStoreError> {
         let mut map = self.read_all()?;
         map.insert(key.as_str().to_string(), value.to_string());
         self.write_all(&map)
     }
 
-    async fn delete(
-        &self,
-        key: &SecretRef,
-    ) -> Result<(), SecretStoreError> {
+    async fn delete(&self, key: &SecretRef) -> Result<(), SecretStoreError> {
         let mut map = self.read_all()?;
         map.remove(key.as_str());
         self.write_all(&map)
     }
 
-    async fn exists(
-        &self,
-        key: &SecretRef,
-    ) -> Result<bool, SecretStoreError> {
+    async fn exists(&self, key: &SecretRef) -> Result<bool, SecretStoreError> {
         let map = self.read_all()?;
         Ok(map.contains_key(key.as_str()))
     }
@@ -120,9 +97,8 @@ impl SecretStore for FileSecretStore {
 /// This is the canonical file fallback path used by `KeyringFirstSecretStore`
 /// and migration.
 pub fn default_file_store() -> Result<FileSecretStore, SecretStoreError> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        SecretStoreError::StoreError("cannot determine home directory".into())
-    })?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| SecretStoreError::StoreError("cannot determine home directory".into()))?;
     let path = home.join(".resourcefully").join("secrets.yml");
     Ok(FileSecretStore::new(path))
 }
@@ -225,7 +201,10 @@ mod tests {
         // Simulate a crash during write by checking that no `.tmp` file lingers
         // after a successful write.
         let tmp_path = dir.path().join("secrets.yml.tmp");
-        assert!(!tmp_path.exists(), "tmp file should not persist after write");
+        assert!(
+            !tmp_path.exists(),
+            "tmp file should not persist after write"
+        );
 
         // Re-read from the same file (simulating a process restart).
         let store2 = FileSecretStore::new(dir.path().join("secrets.yml"));
