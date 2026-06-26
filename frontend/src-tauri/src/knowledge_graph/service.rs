@@ -204,6 +204,7 @@ impl KnowledgeGraphIngestionService {
             let request = KnowledgeGraphInsertTextRequest {
                 text: chunk.text.clone(),
                 source: Some(file_source.clone()),
+                chunking: None,
             };
 
             match provider.insert_text(request).await {
@@ -363,13 +364,13 @@ impl KnowledgeGraphIngestionService {
         })
     }
 
-    async fn get_summary_document_status(
+    pub async fn get_summary_document_status(
         &self,
         meeting_id: &str,
         profile_id: &str,
     ) -> Result<Option<crate::knowledge_graph::types::SummaryDocumentStatus>, String> {
         let row = sqlx::query(
-            "SELECT status, file_source, error, updated_at \
+            "SELECT status, file_source, error, updated_at, track_id, document_id \
              FROM knowledge_graph_summary_documents \
              WHERE meeting_id = ? AND profile_id = ?",
         )
@@ -393,10 +394,30 @@ impl KnowledgeGraphIngestionService {
                     file_source: r.get("file_source"),
                     error: r.get("error"),
                     updated_at: r.get("updated_at"),
+                    track_id: r.get("track_id"),
+                    document_id: r.get("document_id"),
                 }))
             }
             None => Ok(None),
         }
+    }
+
+    pub async fn get_summary_document_id(
+        &self,
+        meeting_id: &str,
+        profile_id: &str,
+    ) -> Result<Option<String>, String> {
+        let row = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT document_id FROM knowledge_graph_summary_documents \
+             WHERE meeting_id = ? AND profile_id = ?",
+        )
+        .bind(meeting_id)
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to fetch summary document id: {}", e))?;
+
+        Ok(row.flatten())
     }
 
     /// Track summary document ingestion result.
@@ -407,6 +428,8 @@ impl KnowledgeGraphIngestionService {
         file_source: &str,
         state: crate::knowledge_graph::types::SummaryDocumentState,
         error: Option<&str>,
+        track_id: Option<&str>,
+        document_id: Option<&str>,
     ) -> Result<(), String> {
         let now = Utc::now().to_rfc3339();
         let status = match state {
@@ -418,12 +441,14 @@ impl KnowledgeGraphIngestionService {
 
         sqlx::query(
             "INSERT INTO knowledge_graph_summary_documents \
-             (meeting_id, profile_id, file_source, status, error, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             (meeting_id, profile_id, file_source, status, error, track_id, document_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(meeting_id, profile_id) DO UPDATE SET \
              file_source = excluded.file_source, \
              status = excluded.status, \
              error = excluded.error, \
+             track_id = excluded.track_id, \
+             document_id = excluded.document_id, \
              updated_at = excluded.updated_at",
         )
         .bind(meeting_id)
@@ -431,6 +456,8 @@ impl KnowledgeGraphIngestionService {
         .bind(file_source)
         .bind(status)
         .bind(error)
+        .bind(track_id)
+        .bind(document_id)
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
@@ -499,6 +526,10 @@ mod tests {
         }
 
         async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
+            Ok(())
+        }
+
+        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
             Ok(())
         }
 
@@ -884,7 +915,7 @@ mod tests {
         let service = KnowledgeGraphIngestionService::new(pool);
 
         let status = service
-            .get_meeting_status("meeting-1", None)
+            .get_meeting_status("meeting-1", None, None)
             .await
             .expect("status");
 
@@ -904,7 +935,7 @@ mod tests {
         let service = KnowledgeGraphIngestionService::new(pool);
 
         let status = service
-            .get_meeting_status("meeting-1", Some("none"))
+            .get_meeting_status("meeting-1", Some("none"), None)
             .await
             .expect("status");
 
@@ -920,7 +951,7 @@ mod tests {
         // First, check status is zero before ingestion.
         let service = KnowledgeGraphIngestionService::new(pool.clone());
         let status_before = service
-            .get_meeting_status("meeting-stat", Some("default"))
+            .get_meeting_status("meeting-stat", Some("default"), None)
             .await
             .expect("status before");
         assert_eq!(status_before.submitted_count, 0);
@@ -935,7 +966,7 @@ mod tests {
 
         // Check status after.
         let status_after = service
-            .get_meeting_status("meeting-stat", Some("default"))
+            .get_meeting_status("meeting-stat", Some("default"), None)
             .await
             .expect("status after");
         assert_eq!(status_after.submitted_count, 1);
@@ -961,7 +992,7 @@ mod tests {
             .expect("ingestion with failure");
 
         let status = service
-            .get_meeting_status("meeting-err", Some("default"))
+            .get_meeting_status("meeting-err", Some("default"), None)
             .await
             .expect("status");
 
@@ -978,7 +1009,7 @@ mod tests {
         let service = KnowledgeGraphIngestionService::new(pool);
 
         let status = service
-            .get_meeting_status("empty-meeting", Some("default"))
+            .get_meeting_status("empty-meeting", Some("default"), None)
             .await
             .expect("status");
 

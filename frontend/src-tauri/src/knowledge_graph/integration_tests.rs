@@ -82,6 +82,12 @@ mod integration {
             })
         }
 
+        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "delete_by_doc_ids",
+            })
+        }
+
         async fn query(
             &self,
             _request: KnowledgeGraphQueryRequest,
@@ -362,6 +368,12 @@ mod integration {
         async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "delete_by_file_source",
+            })
+        }
+
+        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "delete_by_doc_ids",
             })
         }
 

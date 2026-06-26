@@ -31,8 +31,44 @@ pub struct KnowledgeGraphEdge {
 pub struct KnowledgeGraphInsertTextRequest {
     pub text: String,
     /// LightRAG requires `file_source` — maps to this field via serde rename.
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "file_source")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "file_source"
+    )]
     pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunking: Option<TextChunkingConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextChunkingConfig {
+    pub strategy: TextChunkingStrategy,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub params: BTreeMap<String, serde_json::Value>,
+}
+
+impl TextChunkingConfig {
+    pub fn recursive_character(chunk_token_size: usize) -> Self {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "chunk_token_size".to_string(),
+            serde_json::Value::from(chunk_token_size),
+        );
+        Self {
+            strategy: TextChunkingStrategy::RecursiveCharacter,
+            params,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextChunkingStrategy {
+    FixedToken,
+    RecursiveCharacter,
+    SemanticVector,
+    ParagraphSemantic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,11 +136,35 @@ pub enum KnowledgeGraphJobState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KnowledgeGraphTrackStatus {
-    pub track_id: KnowledgeGraphTrackId,
-    pub state: KnowledgeGraphJobState,
+pub struct TrackStatusDocument {
+    pub id: String,
+    #[serde(default)]
+    pub content_summary: String,
+    #[serde(default)]
+    pub content_length: usize,
+    pub status: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunks_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_msg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KnowledgeGraphTrackStatus {
+    pub track_id: String,
+    pub documents: Vec<TrackStatusDocument>,
+    pub total_count: usize,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub status_summary: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,10 +185,80 @@ pub struct SummaryDocumentStatus {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
 }
 
 fn default_top_k() -> usize {
     5
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentQueryRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_filter: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_filters: Option<Vec<String>>,
+    #[serde(default = "default_page")]
+    pub page: usize,
+    #[serde(default = "default_page_size")]
+    pub page_size: usize,
+    #[serde(default = "default_sort_field")]
+    pub sort_field: String,
+    #[serde(default = "default_sort_direction")]
+    pub sort_direction: String,
+}
+
+fn default_page() -> usize {
+    1
+}
+fn default_page_size() -> usize {
+    200
+}
+fn default_sort_field() -> String {
+    "file_path".to_string()
+}
+fn default_sort_direction() -> String {
+    "asc".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentStatus {
+    pub id: String,
+    pub content_summary: String,
+    pub content_length: usize,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunks_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_msg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaginationInfo {
+    pub page: usize,
+    pub page_size: usize,
+    pub total_count: usize,
+    pub total_pages: usize,
+    pub has_next: bool,
+    pub has_prev: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentQueryResponse {
+    pub documents: Vec<DocumentStatus>,
+    pub pagination: PaginationInfo,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub status_counts: BTreeMap<String, usize>,
 }
 
 #[cfg(test)]
@@ -179,6 +309,22 @@ mod tests {
     }
 
     #[test]
+    fn insert_text_request_serializes_recursive_chunking() {
+        let request = KnowledgeGraphInsertTextRequest {
+            text: "summary".to_string(),
+            source: Some("meeting-summary-123".to_string()),
+            chunking: Some(TextChunkingConfig::recursive_character(1000)),
+        };
+
+        let json = serde_json::to_value(&request).expect("serialize request");
+
+        assert_eq!(json["text"], "summary");
+        assert_eq!(json["file_source"], "meeting-summary-123");
+        assert_eq!(json["chunking"]["strategy"], "recursive_character");
+        assert_eq!(json["chunking"]["params"]["chunk_token_size"], 1000);
+    }
+
+    #[test]
     fn query_mode_local_serializes_as_local() {
         assert_eq!(
             serde_json::to_string(&QueryMode::Local).unwrap(),
@@ -212,10 +358,7 @@ mod tests {
 
     #[test]
     fn query_mode_mix_serializes_as_mix() {
-        assert_eq!(
-            serde_json::to_string(&QueryMode::Mix).unwrap(),
-            r#""mix""#
-        );
+        assert_eq!(serde_json::to_string(&QueryMode::Mix).unwrap(), r#""mix""#);
     }
 
     #[test]

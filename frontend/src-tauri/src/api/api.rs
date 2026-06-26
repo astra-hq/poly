@@ -12,6 +12,14 @@ use crate::{
             transcript::TranscriptsRepository,
         },
     },
+    resourcefully_config::config::ResourcefullyConfig,
+    secrets::{
+        keyring_first_store::KeyringFirstSecretStore,
+        refs,
+        status::{build_api_key_status, ApiKeyStatus},
+        store::SecretStore,
+        types::SecretStoreError,
+    },
     state::AppState,
     summary::CustomOpenAIConfig,
 };
@@ -72,8 +80,9 @@ pub struct ModelConfig {
     pub model: String,
     #[serde(rename = "whisperModel")]
     pub whisper_model: String,
-    #[serde(rename = "apiKey")]
-    pub api_key: Option<String>,
+    /// API key status (never the raw key). Use `api_get_api_key` to fetch the raw key.
+    #[serde(rename = "apiKeyStatus", skip_serializing_if = "Option::is_none")]
+    pub api_key_status: Option<ApiKeyStatus>,
     #[serde(rename = "ollamaEndpoint")]
     pub ollama_endpoint: Option<String>,
 }
@@ -99,8 +108,9 @@ pub struct GetApiKeyRequest {
 pub struct TranscriptConfig {
     pub provider: String,
     pub model: String,
-    #[serde(rename = "apiKey")]
-    pub api_key: Option<String>,
+    /// API key status (never the raw key). Use `api_get_transcript_api_key` to fetch the raw key.
+    #[serde(rename = "apiKeyStatus", skip_serializing_if = "Option::is_none")]
+    pub api_key_status: Option<ApiKeyStatus>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -470,47 +480,37 @@ pub async fn api_get_model_config<R: Runtime>(
     _auth_token: Option<String>,
 ) -> Result<Option<ModelConfig>, String> {
     log_info!("api_get_model_config called (native)");
-    let pool = state.db_manager.pool();
+    let cfg = state
+        .config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
 
-    match SettingsRepository::get_model_config(pool).await {
-        Ok(Some(config)) => {
-            log_info!(
-                "✅ Found model config in database: provider={}, model={}, whisperModel={}, ollamaEndpoint={:?}",
-                &config.provider,
-                &config.model,
-                &config.whisper_model,
-                &config.ollama_endpoint
-            );
-            match SettingsRepository::get_api_key(pool, &config.provider).await {
-                Ok(api_key) => {
-                    log_info!("Successfully retrieved model config and API key.");
-                    Ok(Some(ModelConfig {
-                        provider: config.provider,
-                        model: config.model,
-                        whisper_model: config.whisper_model,
-                        api_key,
-                        ollama_endpoint: config.ollama_endpoint,
-                    }))
-                }
-                Err(e) => {
-                    log_error!(
-                        "Failed to get API key for provider {}: {}",
-                        &config.provider,
-                        e
-                    );
-                    Err(e.to_string())
-                }
-            }
-        }
-        Ok(None) => {
-            log_warn!("⚠️ No model config found in database - database may be empty or settings table not initialized");
-            Ok(None)
-        }
-        Err(e) => {
-            log_error!("❌ Failed to get model config from database: {}", e);
-            Err(e.to_string())
-        }
-    }
+    log_info!(
+        "Loaded model config: provider={}, model={}, whisperModel={}, ollamaEndpoint={:?}",
+        &cfg.summary.provider,
+        &cfg.summary.model,
+        &cfg.summary.whisper_model,
+        &cfg.summary.ollama_endpoint
+    );
+
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let secret_ref = if cfg.summary.provider == "custom-openai" {
+        refs::custom_openai_key()
+    } else {
+        refs::summary_provider_key(&cfg.summary.provider)
+    };
+    let api_key_status = build_api_key_status(&store, &secret_ref)
+        .await
+        .map_err(|e| format!("Failed to check API key status: {}", e))?;
+
+    Ok(Some(ModelConfig {
+        provider: cfg.summary.provider,
+        model: cfg.summary.model,
+        whisper_model: cfg.summary.whisper_model,
+        api_key_status: Some(api_key_status),
+        ollama_endpoint: cfg.summary.ollama_endpoint,
+    }))
 }
 
 #[tauri::command]
@@ -525,46 +525,48 @@ pub async fn api_save_model_config<R: Runtime>(
     _auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "💾 api_save_model_config called (native): provider='{}', model='{}', whisperModel='{}', ollamaEndpoint={:?}",
+        "api_save_model_config called (native): provider='{}', model='{}', whisperModel='{}', ollamaEndpoint={:?}",
         &provider,
         &model,
         &whisper_model,
         &ollama_endpoint
     );
-    let pool = state.db_manager.pool();
 
-    if let Err(e) = SettingsRepository::save_model_config(
-        pool,
-        &provider,
-        &model,
-        &whisper_model,
-        ollama_endpoint.as_deref(),
-    )
-    .await
-    {
-        log_error!("❌ Failed to save model config to database: {}", e);
-        return Err(e.to_string());
-    }
-
-    // Skip API key saving for custom-openai provider (it uses customOpenAIConfig JSON instead)
-    if let Some(key) = api_key {
-        if !key.is_empty() && provider != "custom-openai" {
-            log_info!("🔑 API key provided, saving...");
-            if let Err(e) = SettingsRepository::save_api_key(pool, &provider, &key).await {
-                log_error!("❌ Failed to save API key: {}", e);
-                return Err(e.to_string());
-            }
+    // 1. Write API key to SecretStore FIRST (fail-fast: if this fails, YAML is untouched)
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        if provider != "custom-openai" {
+            log_info!("API key provided, saving to SecretStore...");
+            let store = KeyringFirstSecretStore::default_store()
+                .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+            let secret_ref = refs::summary_provider_key(&provider);
+            store
+                .set(&secret_ref, &key)
+                .await
+                .map_err(|e| format!("Failed to save API key: {}", e))?;
         }
     }
 
-    // Trigger graceful shutdown of built-in AI sidecar if it's running
-    // This ensures that if the user switched models/providers, the old one is cleaned up
-    // The shutdown happens in the background, so it won't block the UI
+    // 2. Load current config, update summary section, save atomically to YAML
+    let mut cfg = state
+        .config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    cfg.summary.provider = provider;
+    cfg.summary.model = model;
+    cfg.summary.whisper_model = whisper_model;
+    cfg.summary.ollama_endpoint = ollama_endpoint;
+
+    state
+        .config_repo
+        .save_atomic(&cfg)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    // 3. Trigger graceful shutdown of built-in AI sidecar if running
     if let Err(e) = crate::summary::summary_engine::client::shutdown_sidecar_gracefully().await {
         log_warn!("Failed to initiate graceful sidecar shutdown: {}", e);
     }
 
-    log_info!("✅ Successfully saved model configuration to database");
+    log_info!("Successfully saved model configuration to YAML");
     Ok(
         serde_json::json!({ "status": "success", "message": "Model configuration saved successfully" }),
     )
@@ -573,7 +575,7 @@ pub async fn api_save_model_config<R: Runtime>(
 #[tauri::command]
 pub async fn api_get_api_key<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     provider: String,
     _auth_token: Option<String>,
 ) -> Result<String, String> {
@@ -581,7 +583,9 @@ pub async fn api_get_api_key<R: Runtime>(
         "api_get_api_key called (native) for provider '{}'",
         &provider
     );
-    match SettingsRepository::get_api_key(&state.db_manager.pool(), &provider).await {
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    match SettingsRepository::get_api_key(&store, &provider).await {
         Ok(key) => {
             log_info!(
                 "Successfully retrieved API key for provider '{}'.",
@@ -597,53 +601,66 @@ pub async fn api_get_api_key<R: Runtime>(
 }
 
 #[tauri::command]
+pub async fn api_get_api_key_status<R: Runtime>(
+    _app: AppHandle<R>,
+    _state: tauri::State<'_, AppState>,
+    provider: String,
+    _auth_token: Option<String>,
+) -> Result<ApiKeyStatus, String> {
+    log_info!(
+        "api_get_api_key_status called (native) for provider '{}'",
+        &provider
+    );
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+
+    let secret_ref = if provider == "builtin-ai" {
+        return Ok(ApiKeyStatus {
+            has_secret: false,
+            secret_ref: String::new(),
+            masked_hint: None,
+        });
+    } else if provider == "custom-openai" {
+        refs::custom_openai_key()
+    } else {
+        refs::summary_provider_key(&provider)
+    };
+
+    build_api_key_status(&store, &secret_ref)
+        .await
+        .map_err(|e| format!("Failed to check API key status: {}", e))
+}
+
+#[tauri::command]
 pub async fn api_get_transcript_config<R: Runtime>(
     _app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     _auth_token: Option<String>,
 ) -> Result<Option<TranscriptConfig>, String> {
     log_info!("api_get_transcript_config called (native)");
-    let pool = state.db_manager.pool();
+    let cfg = state
+        .config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
 
-    match SettingsRepository::get_transcript_config(pool).await {
-        Ok(Some(config)) => {
-            log_info!(
-                "Found transcript config: provider={}, model={}",
-                &config.provider,
-                &config.model
-            );
-            match SettingsRepository::get_transcript_api_key(pool, &config.provider).await {
-                Ok(api_key) => {
-                    log_info!("Successfully retrieved transcript config and API key.");
-                    Ok(Some(TranscriptConfig {
-                        provider: config.provider,
-                        model: config.model,
-                        api_key,
-                    }))
-                }
-                Err(e) => {
-                    log_error!(
-                        "Failed to get transcript API key for provider {}: {}",
-                        &config.provider,
-                        e
-                    );
-                    Err(e.to_string())
-                }
-            }
-        }
-        Ok(None) => {
-            log_info!("No transcript config found, returning default.");
-            Ok(Some(TranscriptConfig {
-                provider: "parakeet".to_string(),
-                model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
-                api_key: None,
-            }))
-        }
-        Err(e) => {
-            log_error!("Failed to get transcript config: {}", e);
-            Err(e.to_string())
-        }
-    }
+    log_info!(
+        "Loaded transcript config: provider={}, model={}",
+        &cfg.transcript.provider,
+        &cfg.transcript.model
+    );
+
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let secret_ref = refs::transcript_provider_key(&cfg.transcript.provider);
+    let api_key_status = build_api_key_status(&store, &secret_ref)
+        .await
+        .map_err(|e| format!("Failed to check API key status: {}", e))?;
+
+    Ok(Some(TranscriptConfig {
+        provider: cfg.transcript.provider,
+        model: cfg.transcript.model,
+        api_key_status: Some(api_key_status),
+    }))
 }
 
 #[tauri::command]
@@ -659,23 +676,33 @@ pub async fn api_save_transcript_config<R: Runtime>(
         "api_save_transcript_config called (native) for provider '{}'",
         &provider
     );
-    let pool = state.db_manager.pool();
 
-    if let Err(e) = SettingsRepository::save_transcript_config(pool, &provider, &model).await {
-        log_error!("Failed to save transcript config: {}", e);
-        return Err(e.to_string());
-    }
-
-    if let Some(key) = api_key {
-        if !key.is_empty() {
+    // 1. Write API key to SecretStore FIRST (fail-fast contract)
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        if provider != "parakeet" {
             log_info!("API key provided, saving for transcript provider...");
-            if let Err(e) = SettingsRepository::save_transcript_api_key(pool, &provider, &key).await
-            {
-                log_error!("Failed to save transcript API key: {}", e);
-                return Err(e.to_string());
-            }
+            let store = KeyringFirstSecretStore::default_store()
+                .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+            let secret_ref = refs::transcript_provider_key(&provider);
+            store
+                .set(&secret_ref, &key)
+                .await
+                .map_err(|e| format!("Failed to save transcript API key: {}", e))?;
         }
     }
+
+    // 2. Load config, update transcript section, save atomically to YAML
+    let mut cfg = state
+        .config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    cfg.transcript.provider = provider;
+    cfg.transcript.model = model;
+
+    state
+        .config_repo
+        .save_atomic(&cfg)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
 
     log_info!("Successfully saved transcript configuration.");
     Ok(
@@ -686,7 +713,7 @@ pub async fn api_save_transcript_config<R: Runtime>(
 #[tauri::command]
 pub async fn api_get_transcript_api_key<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     provider: String,
     _auth_token: Option<String>,
 ) -> Result<String, String> {
@@ -694,7 +721,9 @@ pub async fn api_get_transcript_api_key<R: Runtime>(
         "api_get_transcript_api_key called (native) for provider '{}'",
         &provider
     );
-    match SettingsRepository::get_transcript_api_key(&state.db_manager.pool(), &provider).await {
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    match SettingsRepository::get_transcript_api_key(&store, &provider).await {
         Ok(key) => {
             log_info!(
                 "Successfully retrieved transcript API key for provider '{}'.",
@@ -716,7 +745,7 @@ pub async fn api_get_transcript_api_key<R: Runtime>(
 #[tauri::command]
 pub async fn api_delete_api_key<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     provider: String,
     _auth_token: Option<String>,
 ) -> Result<(), String> {
@@ -724,7 +753,9 @@ pub async fn api_delete_api_key<R: Runtime>(
         "log_api_delete_api_key called (native) for provider '{}'",
         &provider
     );
-    match SettingsRepository::delete_api_key(&state.db_manager.pool(), &provider).await {
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    match SettingsRepository::delete_api_key(&store, &provider).await {
         Ok(_) => {
             log_info!("Successfully deleted API key for provider '{}'.", &provider);
             Ok(())
@@ -732,6 +763,38 @@ pub async fn api_delete_api_key<R: Runtime>(
         Err(e) => {
             log_error!(
                 "Failed to delete API key for provider '{}': {}",
+                &provider,
+                e
+            );
+            Err(e.to_string())
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn api_delete_transcript_api_key<R: Runtime>(
+    _app: AppHandle<R>,
+    _state: tauri::State<'_, AppState>,
+    provider: String,
+    _auth_token: Option<String>,
+) -> Result<(), String> {
+    log_info!(
+        "api_delete_transcript_api_key called (native) for provider '{}'",
+        &provider
+    );
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    match SettingsRepository::delete_transcript_api_key(&store, &provider).await {
+        Ok(_) => {
+            log_info!(
+                "Successfully deleted transcript API key for provider '{}'.",
+                &provider
+            );
+            Ok(())
+        }
+        Err(e) => {
+            log_error!(
+                "Failed to delete transcript API key for provider '{}': {}",
                 &provider,
                 e
             );
@@ -815,7 +878,10 @@ pub async fn api_get_meeting_metadata<R: Runtime>(
     meeting_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<MeetingMetadata, String> {
-    log_info!("api_get_meeting_metadata called for meeting_id: {}", meeting_id);
+    log_info!(
+        "api_get_meeting_metadata called for meeting_id: {}",
+        meeting_id
+    );
 
     let pool = state.db_manager.pool();
 
@@ -859,7 +925,9 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
-    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset).await {
+    match MeetingsRepository::get_meeting_transcripts_paginated(pool, &meeting_id, limit, offset)
+        .await
+    {
         Ok((transcripts, total_count)) => {
             log_info!(
                 "Successfully retrieved {} transcripts for meeting {} (total: {})",
@@ -890,7 +958,11 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
             })
         }
         Err(e) => {
-            log_error!("Error retrieving transcripts for meeting {}: {}", meeting_id, e);
+            log_error!(
+                "Error retrieving transcripts for meeting {}: {}",
+                meeting_id,
+                e
+            );
             Err(format!("Failed to retrieve transcripts: {}", e))
         }
     }
@@ -958,7 +1030,10 @@ pub async fn api_save_transcript<R: Runtime>(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| {
             log_error!("Failed to parse transcript segments: {}", e);
-            format!("Invalid transcript data format: {}. Please check the data structure.", e)
+            format!(
+                "Invalid transcript data format: {}. Please check the data structure.",
+                e
+            )
         })?;
 
     // Log parsed segments count and first segment details
@@ -1166,8 +1241,8 @@ pub async fn open_external_url(url: String) -> Result<(), String> {
 
 // ===== CUSTOM OPENAI API COMMANDS =====
 
-/// Saves the custom OpenAI configuration
-/// This configuration is stored as JSON and includes endpoint, apiKey, model, and optional parameters
+/// Saves the custom OpenAI configuration.
+/// Non-secret fields are stored in YAML via ConfigRepository; the API key is stored in SecretStore.
 #[tauri::command]
 pub async fn api_save_custom_openai_config<R: Runtime>(
     _app: AppHandle<R>,
@@ -1215,33 +1290,45 @@ pub async fn api_save_custom_openai_config<R: Runtime>(
         }
     }
 
-    let config = CustomOpenAIConfig {
-        endpoint: endpoint.trim().to_string(),
-        api_key: api_key.filter(|k| !k.trim().is_empty()),
-        model: model.trim().to_string(),
-        max_tokens,
-        temperature,
-        top_p,
-    };
-
-    let pool = state.db_manager.pool();
-
-    match SettingsRepository::save_custom_openai_config(pool, &config).await {
-        Ok(()) => {
-            log_info!("✅ Successfully saved custom OpenAI config for endpoint: {}", config.endpoint);
-            Ok(serde_json::json!({
-                "status": "success",
-                "message": "Custom OpenAI configuration saved successfully"
-            }))
-        }
-        Err(e) => {
-            log_error!("❌ Failed to save custom OpenAI config: {}", e);
-            Err(format!("Failed to save custom OpenAI configuration: {}", e))
-        }
+    // 1. Write API key to SecretStore FIRST (fail-fast contract)
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        let store = KeyringFirstSecretStore::default_store()
+            .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+        let secret_ref = refs::custom_openai_key();
+        store
+            .set(&secret_ref, &key)
+            .await
+            .map_err(|e| format!("Failed to save custom OpenAI API key: {}", e))?;
     }
+
+    // 2. Load config, update custom_openai section, save atomically to YAML
+    let mut cfg = state
+        .config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    cfg.custom_openai.endpoint = endpoint.trim().to_string();
+    cfg.custom_openai.model = model.trim().to_string();
+    cfg.custom_openai.max_tokens = max_tokens;
+    cfg.custom_openai.temperature = temperature;
+    cfg.custom_openai.top_p = top_p;
+
+    state
+        .config_repo
+        .save_atomic(&cfg)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+
+    log_info!(
+        "Successfully saved custom OpenAI config for endpoint: {}",
+        cfg.custom_openai.endpoint
+    );
+    Ok(serde_json::json!({
+        "status": "success",
+        "message": "Custom OpenAI configuration saved successfully"
+    }))
 }
 
-/// Gets the custom OpenAI configuration
+/// Gets the custom OpenAI configuration.
+/// The response includes api_key: None — raw keys are never returned.
 #[tauri::command]
 pub async fn api_get_custom_openai_config<R: Runtime>(
     _app: AppHandle<R>,
@@ -1249,23 +1336,32 @@ pub async fn api_get_custom_openai_config<R: Runtime>(
 ) -> Result<Option<CustomOpenAIConfig>, String> {
     log_info!("api_get_custom_openai_config called");
 
-    let pool = state.db_manager.pool();
+    let cfg = state
+        .config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
 
-    match SettingsRepository::get_custom_openai_config(pool).await {
-        Ok(config) => {
-            if let Some(ref c) = config {
-                log_info!("✅ Found custom OpenAI config: endpoint='{}', model='{}'",
-                    c.endpoint, c.model);
-            } else {
-                log_info!("No custom OpenAI config found");
-            }
-            Ok(config)
-        }
-        Err(e) => {
-            log_error!("❌ Failed to get custom OpenAI config: {}", e);
-            Err(format!("Failed to get custom OpenAI configuration: {}", e))
-        }
+    let co = &cfg.custom_openai;
+
+    // Return None when the endpoint has never been configured (empty string default)
+    if co.endpoint.is_empty() {
+        log_info!("No custom OpenAI config found (empty endpoint)");
+        return Ok(None);
     }
+
+    log_info!(
+        "Found custom OpenAI config: endpoint='{}', model='{}'",
+        co.endpoint,
+        co.model
+    );
+    Ok(Some(CustomOpenAIConfig {
+        endpoint: co.endpoint.clone(),
+        api_key: None,
+        model: co.model.clone(),
+        max_tokens: co.max_tokens,
+        temperature: co.temperature,
+        top_p: co.top_p,
+    }))
 }
 
 /// Tests the connection to a custom OpenAI-compatible endpoint
@@ -1338,7 +1434,7 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
                                             .get("message")
                                             .and_then(|m| {
                                                 m.get("content")
-                                                .or_else(|| m.get("reasoning_content"))
+                                                    .or_else(|| m.get("reasoning_content"))
                                             })
                                             .is_some();
 
@@ -1356,17 +1452,33 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
                         }
 
                         // Response was 200 but doesn't match OpenAI format
-                        log_warn!("⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}", response_text);
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response doesn't match OpenAI format: {}",
+                            response_text
+                        );
                         Err("Endpoint is reachable but doesn't appear to be OpenAI-compatible. Response is missing 'choices' array or 'message.content' / 'message.reasoning_content' field.".to_string())
                     }
                     Err(e) => {
-                        log_warn!("⚠️ Endpoint returned 200 but response is not valid JSON: {}", e);
-                        Err(format!("Endpoint is reachable but returned invalid JSON: {}. Response: {}", e, response_text))
+                        log_warn!(
+                            "⚠️ Endpoint returned 200 but response is not valid JSON: {}",
+                            e
+                        );
+                        Err(format!(
+                            "Endpoint is reachable but returned invalid JSON: {}. Response: {}",
+                            e, response_text
+                        ))
                     }
                 }
             } else {
-                log_warn!("⚠️ Custom OpenAI connection test failed with status {}: {}", status, response_text);
-                Err(format!("Connection failed with status {}: {}", status, response_text))
+                log_warn!(
+                    "⚠️ Custom OpenAI connection test failed with status {}: {}",
+                    status,
+                    response_text
+                );
+                Err(format!(
+                    "Connection failed with status {}: {}",
+                    status, response_text
+                ))
             }
         }
         Err(e) => {
@@ -1380,4 +1492,94 @@ pub async fn api_test_custom_openai_connection<R: Runtime>(
             }
         }
     }
+}
+
+// ===== SECRET STORAGE DIAGNOSTICS =====
+
+/// Secret storage diagnostics: counts of secrets by category, sourced from
+/// YAML config + SecretStore (never from SQLite).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretStorageStatus {
+    /// Whether a summary provider API key exists in the SecretStore.
+    pub summary: u32,
+    /// Whether a transcript provider API key exists in the SecretStore.
+    pub transcript: u32,
+    /// Whether a custom OpenAI API key exists in the SecretStore.
+    pub custom_openai: u32,
+    /// Number of knowledge graph profiles that have an API key in the SecretStore.
+    pub kg_profiles: u32,
+    /// Total count across all categories.
+    pub total: u32,
+}
+
+/// Count secrets by category using the canonical secret references and
+/// knowledge graph profiles discovered from YAML config.
+///
+/// # Fixed provider secrets
+///
+/// Checks existence of:
+/// - `summary_provider_key(cfg.summary.provider)`
+/// - `transcript_provider_key(cfg.transcript.provider)`
+/// - `custom_openai_key()`
+///
+/// # KG profile secrets
+///
+/// Iterates every profile in `cfg.knowledge_graph.profiles` and checks
+/// `knowledge_graph_profile_key(profile.id)`.
+///
+/// No SQLite queries are performed.
+pub async fn count_secrets(
+    store: &dyn SecretStore,
+    cfg: &ResourcefullyConfig,
+) -> Result<SecretStorageStatus, SecretStoreError> {
+    let summary = u32::from(
+        store
+            .exists(&refs::summary_provider_key(&cfg.summary.provider))
+            .await?,
+    );
+    let transcript = u32::from(
+        store
+            .exists(&refs::transcript_provider_key(&cfg.transcript.provider))
+            .await?,
+    );
+    let custom_openai = u32::from(store.exists(&refs::custom_openai_key()).await?);
+
+    let mut kg_profiles = 0u32;
+    for profile in &cfg.knowledge_graph.profiles {
+        if store
+            .exists(&refs::knowledge_graph_profile_key(&profile.id))
+            .await?
+        {
+            kg_profiles += 1;
+        }
+    }
+
+    let total = summary + transcript + custom_openai + kg_profiles;
+    Ok(SecretStorageStatus {
+        summary,
+        transcript,
+        custom_openai,
+        kg_profiles,
+        total,
+    })
+}
+
+/// Returns a diagnostic view of secret storage status.
+///
+/// Counts secrets from YAML config + SecretStore.  Never queries SQLite.
+#[tauri::command]
+pub async fn api_get_secret_storage_status<R: Runtime>(
+    _app: AppHandle<R>,
+    state: tauri::State<'_, AppState>,
+) -> Result<SecretStorageStatus, String> {
+    log_info!("api_get_secret_storage_status called (native)");
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let cfg = state
+        .config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
+    count_secrets(&store, &cfg)
+        .await
+        .map_err(|e| format!("Failed to count secrets: {}", e))
 }

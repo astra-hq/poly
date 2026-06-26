@@ -1,6 +1,17 @@
 -- Migration: Add PRO License and Custom OpenAI Configuration (RSA-based)
-
--- This column stores: {endpoint, apiKey, model, maxTokens, temperature, topP}
+CREATE TABLE IF NOT EXISTS settings (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    whisperModel TEXT NOT NULL DEFAULT '',
+    groqApiKey TEXT,
+    openaiApiKey TEXT,
+    anthropicApiKey TEXT,
+    ollamaApiKey TEXT,
+    openRouterApiKey TEXT,
+    ollamaEndpoint TEXT,
+    knowledge_graph_settings TEXT
+);
 ALTER TABLE settings ADD COLUMN customOpenAIConfig TEXT;
 
 -- Drop and recreate licensing table with RSA structure

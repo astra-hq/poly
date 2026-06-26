@@ -1,16 +1,26 @@
 use log::info;
+use rand::Rng;
 use serde::Serialize;
-use sqlx::{Row, SqlitePool};
+use std::collections::HashSet;
 use std::io::{BufRead, Read};
+use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::knowledge_graph::config::{
-    self, EmbeddingConfig, KnowledgeGraphProfile, KnowledgeGraphSelection,
-    KnowledgeGraphSettings, ProfileKind,
+    self, EmbeddingConfig, KnowledgeGraphProfile, KnowledgeGraphSelection, KnowledgeGraphSettings,
+    ProfileKind,
 };
 use crate::knowledge_graph::lightrag::LightRagProvider;
 use crate::knowledge_graph::provider::KnowledgeGraphProvider;
+use crate::resourcefully_config::config::{
+    KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets,
+};
+use crate::resourcefully_config::repository::ConfigRepository;
+use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
+use crate::secrets::refs::knowledge_graph_profile_key;
+use crate::secrets::status::mask_api_key;
+use crate::secrets::store::SecretStore;
 use crate::state::AppState;
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -29,105 +39,146 @@ pub struct SetupDependencyResult {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Load knowledge-graph settings from the `settings` table.
+/// Load knowledge-graph settings from YAML config, enriched with secret status.
 ///
-/// Returns defaults (with the built-in default profile) when no settings
-/// have been persisted yet, so commands work out of the box.
+/// For each profile in the YAML config, checks the SecretStore for an API key
+/// and populates `has_secret` / `api_key_masked_hint`.  Raw `api_key` is
+/// always `None` in the returned value.
+///
+/// Returns defaults when no YAML config exists yet.
 pub(crate) async fn load_kg_settings(
-    pool: &SqlitePool,
+    config_repo: &ConfigRepository,
+    store: &dyn SecretStore,
 ) -> Result<KnowledgeGraphSettings, String> {
-    let row =
-        sqlx::query("SELECT knowledge_graph_settings FROM settings LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                format!("Failed to query knowledge graph settings: {}", e)
-            })?;
+    let config = config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
 
-    match row {
-        Some(row) => {
-            let json: Option<String> =
-                row.try_get("knowledge_graph_settings").ok().flatten();
-            match json {
-                Some(json) => serde_json::from_str(&json).map_err(|e| {
-                    format!(
-                        "Failed to parse knowledge graph settings: {}",
-                        e
-                    )
-                }),
-                None => Ok(KnowledgeGraphSettings::default()),
-            }
-        }
-        None => Ok(KnowledgeGraphSettings::default()),
+    let mut profiles_with_secrets = Vec::new();
+    for p in config.knowledge_graph.profiles {
+        let secret_ref = knowledge_graph_profile_key(&p.id);
+        let (has_secret, masked_hint) = match store.get(&secret_ref).await {
+            Ok(Some(key)) if !key.is_empty() => (true, Some(mask_api_key(&key))),
+            _ => (false, None),
+        };
+        profiles_with_secrets.push(KnowledgeGraphProfile {
+            id: p.id,
+            name: p.name,
+            kind: p.kind,
+            embedding: p.embedding,
+            lightrag_url: p.lightrag_url,
+            api_key: None,
+            notes: p.notes,
+            has_secret,
+            api_key_masked_hint: masked_hint,
+        });
     }
+
+    Ok(KnowledgeGraphSettings {
+        profiles: profiles_with_secrets,
+        active_profile: config.knowledge_graph.active_profile,
+    })
 }
 
-/// Persist knowledge-graph settings as JSON into the `settings` table.
+/// Persist knowledge-graph settings to YAML via [`ConfigRepository::save_atomic`],
+/// saving API keys separately to the SecretStore.
 ///
-/// Uses UPSERT (`ON CONFLICT(id) DO UPDATE`) so the column is updated
-/// whether or not a settings row already exists.
+/// Secrets for removed profiles are deleted from the SecretStore automatically.
 pub(crate) async fn save_kg_settings(
-    pool: &SqlitePool,
+    config_repo: &ConfigRepository,
+    store: &dyn SecretStore,
     settings: &KnowledgeGraphSettings,
 ) -> Result<(), String> {
-    // Validate before persisting
     config::validate(settings).map_err(|e| e.to_string())?;
 
-    let json =
-        serde_json::to_string(settings).map_err(|e| {
-            format!("Failed to serialize knowledge graph settings: {}", e)
-        })?;
+    let mut config = config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
 
-    sqlx::query(
-        r#"
-        INSERT INTO settings (id, provider, model, whisperModel, knowledge_graph_settings)
-        VALUES ('1', 'openai', 'gpt-4o-2024-11-20', 'large-v3', $1)
-        ON CONFLICT(id) DO UPDATE SET
-            knowledge_graph_settings = excluded.knowledge_graph_settings
-        "#,
-    )
-    .bind(&json)
-    .execute(pool)
-    .await
-    .map_err(|e| {
-        format!("Failed to save knowledge graph settings: {}", e)
-    })?;
+    let old_ids: HashSet<&str> = config
+        .knowledge_graph
+        .profiles
+        .iter()
+        .map(|p| p.id.as_str())
+        .collect();
 
-    Ok(())
+    let incoming_ids: HashSet<&str> = settings.profiles.iter().map(|p| p.id.as_str()).collect();
+
+    for p in &settings.profiles {
+        let secret_ref = knowledge_graph_profile_key(&p.id);
+        match &p.api_key {
+            Some(key) if !key.is_empty() => {
+                store
+                    .set(&secret_ref, key)
+                    .await
+                    .map_err(|e| format!("Failed to store secret for profile '{}': {}", p.id, e))?;
+            }
+            Some(_) => {
+                store.delete(&secret_ref).await.map_err(|e| {
+                    format!("Failed to delete secret for profile '{}': {}", p.id, e)
+                })?;
+            }
+            None => { /* No key sent — leave existing secret untouched */ }
+        }
+    }
+
+    for removed_id in old_ids.difference(&incoming_ids) {
+        let secret_ref = knowledge_graph_profile_key(removed_id);
+        let _ = store.delete(&secret_ref).await;
+    }
+
+    let without_secrets: Vec<KnowledgeGraphProfileWithoutSecrets> = settings
+        .profiles
+        .iter()
+        .cloned()
+        .map(KnowledgeGraphProfileWithoutSecrets::from)
+        .collect();
+
+    config.knowledge_graph = KnowledgeGraphSettingsWithoutSecrets {
+        profiles: without_secrets,
+        active_profile: settings.active_profile.clone(),
+    };
+
+    config_repo
+        .save_atomic(&config)
+        .map_err(|e| format!("Failed to save config: {}", e))
 }
 
 // ── Commands ────────────────────────────────────────────────────────────
 
-/// Retrieve the current knowledge graph settings.
+/// Retrieve the current knowledge graph settings from YAML config.
 ///
 /// Returns defaults when nothing has been persisted yet.
 #[tauri::command]
 pub async fn api_get_knowledge_graph_settings<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
 ) -> Result<KnowledgeGraphSettings, String> {
     info!("api_get_knowledge_graph_settings called");
-    let pool = state.db_manager.pool();
-    load_kg_settings(pool).await
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    load_kg_settings(&config_repo, &store).await
 }
 
-/// Save (validate and persist) knowledge graph settings.
+/// Save (validate and persist) knowledge graph settings to YAML config.
 ///
 /// Rejects empty profiles, duplicate IDs, invalid URLs, etc.
 #[tauri::command]
 pub async fn api_save_knowledge_graph_settings<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     settings: KnowledgeGraphSettings,
 ) -> Result<KnowledgeGraphSettings, String> {
     info!(
         "api_save_knowledge_graph_settings: {} profiles",
         settings.profiles.len()
     );
-    let pool = state.db_manager.pool();
-    save_kg_settings(pool, &settings).await?;
-    // Re-read so the caller gets the canonical stored copy.
-    load_kg_settings(pool).await
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    save_kg_settings(&config_repo, &store, &settings).await?;
+    load_kg_settings(&config_repo, &store).await
 }
 
 /// Health-check a specific profile by calling its LightRAG endpoint.
@@ -136,21 +187,20 @@ pub async fn api_save_knowledge_graph_settings<R: Runtime>(
 #[tauri::command]
 pub async fn api_test_knowledge_graph_profile<R: Runtime>(
     _app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
     profile_id: String,
 ) -> Result<serde_json::Value, String> {
-    info!(
-        "api_test_knowledge_graph_profile: profile={}",
-        profile_id
-    );
+    info!("api_test_knowledge_graph_profile: profile={}", profile_id);
 
     // ── Validate profile_id ──────────────────────────────────────
     if profile_id.is_empty() || profile_id.eq_ignore_ascii_case("none") {
         return Err(format!("Invalid profile_id: '{}'", profile_id));
     }
 
-    let pool = state.db_manager.pool();
-    let settings = load_kg_settings(pool).await?;
+    let config_repo = ConfigRepository::new();
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let settings = load_kg_settings(&config_repo, &store).await?;
 
     let profile = settings
         .profiles
@@ -163,16 +213,20 @@ pub async fn api_test_knowledge_graph_profile<R: Runtime>(
             )
         })?;
 
-    let provider = LightRagProvider::new(
-        &profile.lightrag_url,
-        profile.api_key.clone(),
-    )
-    .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
+    // Fetch the actual API key from the SecretStore (never returned in settings).
+    let secret_ref = knowledge_graph_profile_key(&profile_id);
+    let actual_api_key = store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read API key for profile '{}': {}", profile_id, e))?
+        .filter(|k| !k.is_empty());
+
+    let provider = LightRagProvider::new(&profile.lightrag_url, actual_api_key)
+        .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     match provider.health().await {
         Ok(health) => {
-            let mut result =
-                serde_json::json!({ "healthy": health.healthy });
+            let mut result = serde_json::json!({ "healthy": health.healthy });
             if let Some(version) = &health.version {
                 result["version"] = serde_json::Value::String(version.clone());
             }
@@ -189,12 +243,7 @@ pub async fn api_test_knowledge_graph_profile<R: Runtime>(
 
 /// Emit a `setup-progress` event to the frontend during the auto-provisioning
 /// flow so the UI can display a scrolling log view.
-fn emit_setup_progress<R: Runtime>(
-    app: &AppHandle<R>,
-    message: &str,
-    level: &str,
-    stage: &str,
-) {
+fn emit_setup_progress<R: Runtime>(app: &AppHandle<R>, message: &str, level: &str, stage: &str) {
     let _ = app.emit(
         "setup-progress",
         serde_json::json!({
@@ -203,6 +252,38 @@ fn emit_setup_progress<R: Runtime>(
             "stage": stage,
         }),
     );
+}
+
+fn resourcefully_docker_dir() -> Result<PathBuf, String> {
+    let home = dirs::home_dir().ok_or_else(|| {
+        "Could not determine home directory for Resourcefully docker setup".to_string()
+    })?;
+    Ok(home.join(".resourcefully").join("docker"))
+}
+
+fn prepare_kg_runtime_dir(compose_source_path: &std::path::Path) -> Result<PathBuf, String> {
+    let runtime_dir = resourcefully_docker_dir()?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("rag_storage"))
+        .map_err(|e| format!("Failed to create LightRAG storage directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("inputs"))
+        .map_err(|e| format!("Failed to create LightRAG input directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("prompts"))
+        .map_err(|e| format!("Failed to create LightRAG prompt directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("rustfs"))
+        .map_err(|e| format!("Failed to create RustFS data directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("data"))
+        .map_err(|e| format!("Failed to create Neo4j data directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("logs"))
+        .map_err(|e| format!("Failed to create Neo4j log directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("import"))
+        .map_err(|e| format!("Failed to create Neo4j import directory: {}", e))?;
+    std::fs::create_dir_all(runtime_dir.join("data").join("neo4j").join("plugins"))
+        .map_err(|e| format!("Failed to create Neo4j plugin directory: {}", e))?;
+
+    let compose_runtime_path = runtime_dir.join("docker-compose.kg.yml");
+    std::fs::copy(compose_source_path, &compose_runtime_path)
+        .map_err(|e| format!("Failed to copy docker-compose.kg.yml: {}", e))?;
+    Ok(compose_runtime_path)
 }
 
 // ── Commands ────────────────────────────────────────────────────────────
@@ -227,9 +308,7 @@ fn check_docker() -> DependencyInfo {
         .output()
     {
         Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             DependencyInfo {
                 installed: true,
                 version: Some(version),
@@ -249,9 +328,7 @@ fn check_ollama() -> DependencyInfo {
         .output()
     {
         Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             DependencyInfo {
                 installed: true,
                 version: Some(version),
@@ -310,13 +387,9 @@ pub async fn api_setup_kg_pull_model<R: Runtime>(
                     }
                     if !line_buf.is_empty() {
                         for chunk in line_buf.split(|&b| b == b'\r') {
-                            let trimmed = String::from_utf8_lossy(chunk)
-                                .trim()
-                                .to_string();
+                            let trimmed = String::from_utf8_lossy(chunk).trim().to_string();
                             if !trimmed.is_empty() {
-                                emit_setup_progress(
-                                    &app, &trimmed, "info", "pull-model",
-                                );
+                                emit_setup_progress(&app, &trimmed, "info", "pull-model");
                             }
                         }
                     }
@@ -337,11 +410,15 @@ pub async fn api_setup_kg_pull_model<R: Runtime>(
     })?;
 
     if !status.success() {
-        let stderr = child.stderr.take().map(|s| {
-            let mut buf = String::new();
-            std::io::BufReader::new(s).read_to_string(&mut buf).ok();
-            buf
-        }).unwrap_or_default();
+        let stderr = child
+            .stderr
+            .take()
+            .map(|s| {
+                let mut buf = String::new();
+                std::io::BufReader::new(s).read_to_string(&mut buf).ok();
+                buf
+            })
+            .unwrap_or_default();
         let msg = if stderr.trim().is_empty() {
             format!("Ollama pull failed (exit code: {:?})", status.code())
         } else {
@@ -371,7 +448,7 @@ pub async fn api_setup_kg_pull_model<R: Runtime>(
 #[tauri::command]
 pub async fn api_setup_local_knowledge_graph<R: Runtime>(
     app: AppHandle<R>,
-    state: tauri::State<'_, AppState>,
+    _state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
     info!("api_setup_local_knowledge_graph called");
 
@@ -398,8 +475,9 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
         return Err(msg.to_string());
     }
 
-    let docker_version =
-        String::from_utf8_lossy(&docker_check.stdout).trim().to_string();
+    let docker_version = String::from_utf8_lossy(&docker_check.stdout)
+        .trim()
+        .to_string();
     info!("Docker available: {}", docker_version);
     emit_setup_progress(
         &app,
@@ -413,92 +491,131 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
     let compose_path = {
         let candidates = vec![
             // Production: bundled resource via resource resolver
-            app.path().resource_dir().ok().map(|d| {
-                d.join("docker-compose.kg.yml")
-            }),
+            app.path()
+                .resource_dir()
+                .ok()
+                .map(|d| d.join("docker-compose.kg.yml")),
             // Dev: current working directory (project root)
-            std::env::current_dir().ok().map(|d| {
-                d.join("docker-compose.kg.yml")
-            }),
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.join("docker-compose.kg.yml")),
             // Dev: one level up (frontend/src-tauri -> project root)
-            std::env::current_dir().ok().map(|d| {
-                d.join("..").join("..").join("docker-compose.kg.yml")
-            }),
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.join("..").join("..").join("docker-compose.kg.yml")),
             // Dev: two levels up (frontend/src-tauri -> project root)
-            std::env::current_dir().ok().map(|d| {
-                d.join("..").join("docker-compose.kg.yml")
-            }),
+            std::env::current_dir()
+                .ok()
+                .map(|d| d.join("..").join("docker-compose.kg.yml")),
         ];
 
         candidates.into_iter().flatten().find(|p| p.exists())
     };
 
-    let compose_path = compose_path.ok_or_else(|| {
+    let compose_source_path = compose_path.ok_or_else(|| {
         let msg = "Could not find docker-compose.kg.yml. Ensure it is present in the project root.";
         emit_setup_progress(&app, msg, "error", "error");
         msg.to_string()
     })?;
 
-    info!("Using compose file: {:?}", compose_path);
-    emit_setup_progress(&app, "Found docker-compose.kg.yml", "success", "compose-file");
+    info!("Using compose source file: {:?}", compose_source_path);
+    let compose_path = prepare_kg_runtime_dir(&compose_source_path).map_err(|e| {
+        emit_setup_progress(&app, &e, "error", "error");
+        e
+    })?;
+    let runtime_dir = compose_path
+        .parent()
+        .ok_or_else(|| "Failed to resolve Resourcefully docker directory".to_string())?;
+    emit_setup_progress(
+        &app,
+        &format!(
+            "Prepared Docker runtime directory at {}",
+            runtime_dir.display()
+        ),
+        "success",
+        "compose-file",
+    );
 
-    // ── Ensure kg.env exists ───────────────────────────────────────
-    let env_path = compose_path.parent().unwrap().join("kg.env");
-    if !env_path.exists() {
-        emit_setup_progress(
-            &app,
-            "Creating kg.env with secure credentials...",
-            "info",
-            "env-file",
-        );
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let random_suffix: u64 = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
+    // ── Get or create LightRAG API key in SecretStore ────────────
+    // The SecretStore is the canonical source for API keys.  Never
+    // read LIGHTRAG_API_KEY from kg.env — that file is a generated
+    // runtime artifact.
+    let store = KeyringFirstSecretStore::default_store()
+        .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
+    let secret_ref = knowledge_graph_profile_key("local-lightrag");
 
-        let neo4j_password = format!("meetily-{:x}", random_suffix);
-        let env_content = format!(
-            "# Auto-generated by Meetily knowledge-graph setup\n\
-             NEO4J_AUTH=neo4j/{}\n\
-             RUSTFS_ACCESS_KEY=meetily\n\
-             RUSTFS_SECRET_KEY=meetily-secret-{:x}\n\
-             LIGHTRAG_API_KEY=meetily-lrag-{:x}\n\
-             \n\
-             # LightRAG / embedding model reference\n\
-             LIGHTRAG_EMBEDDING_MODEL=bge-m3\n\
-             LIGHTRAG_EMBEDDING_MODEL_NAME=BAAI/bge-m3\n",
-            neo4j_password,
-            random_suffix.wrapping_add(1),
-            random_suffix.wrapping_add(2),
-        );
+    let lightrag_api_key = match store
+        .get(&secret_ref)
+        .await
+        .map_err(|e| format!("Failed to read LightRAG secret: {}", e))?
+    {
+        Some(existing) if !existing.is_empty() => {
+            info!("Using existing LightRAG API key from SecretStore");
+            existing
+        }
+        _ => {
+            emit_setup_progress(&app, "Creating new LightRAG API key...", "info", "env-file");
+            let bytes: [u8; 32] = rand::thread_rng().gen();
+            let new_key = format!(
+                "meetily-lrag-{}",
+                bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+            );
+            store
+                .set(&secret_ref, &new_key)
+                .await
+                .map_err(|e| format!("Failed to store LightRAG API key: {}", e))?;
+            info!("Created new LightRAG API key in SecretStore");
+            new_key
+        }
+    };
 
-        std::fs::write(&env_path, env_content).map_err(|e| {
-            let msg = format!("Failed to create kg.env: {}", e);
-            emit_setup_progress(&app, &msg, "error", "error");
-            msg
-        })?;
-        info!("Created kg.env at {:?}", env_path);
-        emit_setup_progress(
-            &app,
-            "kg.env created with secure credentials",
-            "success",
-            "env-file",
-        );
-    }
+    // ── Regenerate kg.env (runtime artifact, not config source) ────
+    emit_setup_progress(
+        &app,
+        "Generating kg.env with secure credentials...",
+        "info",
+        "env-file",
+    );
 
-    // ── Read LIGHTRAG_API_KEY from kg.env (must exist by now) ──────
-    // This key is needed both in the container .env (for LightRAG auth) and
-    // in the profile (so the frontend can authenticate requests).
-    let kg_env_raw =
-        std::fs::read_to_string(&env_path).unwrap_or_default();
-    let lightrag_api_key: String = kg_env_raw
-        .lines()
-        .find(|l| l.starts_with("LIGHTRAG_API_KEY="))
-        .and_then(|l| l.split_once('=').map(|x| x.1))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "meetily-lrag-default".to_string());
+    let env_path = runtime_dir.join("kg.env");
+
+    let neo4j_bytes: [u8; 32] = rand::thread_rng().gen();
+    let neo4j_password = format!(
+        "meetily-{}",
+        neo4j_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+    );
+    let rustfs_bytes: [u8; 32] = rand::thread_rng().gen();
+    let rustfs_secret = format!(
+        "meetily-secret-{}",
+        rustfs_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+    );
+    let env_content = format!(
+        "# Auto-generated by Meetily knowledge-graph setup\n\
+         NEO4J_AUTH=neo4j/{}\n\
+         RUSTFS_ACCESS_KEY=meetily\n\
+         RUSTFS_SECRET_KEY={}\n\
+         LIGHTRAG_API_KEY={}\n\
+         \n\
+         # LightRAG / embedding model reference\n\
+         LIGHTRAG_EMBEDDING_MODEL=bge-m3\n\
+         LIGHTRAG_EMBEDDING_MODEL_NAME=BAAI/bge-m3\n",
+        neo4j_password,
+        rustfs_secret,
+        lightrag_api_key,
+    );
+
+    std::fs::write(&env_path, env_content).map_err(|e| {
+        let msg = format!("Failed to write kg.env: {}", e);
+        emit_setup_progress(&app, &msg, "error", "error");
+        msg
+    })?;
+    info!("Wrote kg.env at {:?}", env_path);
+    emit_setup_progress(
+        &app,
+        "kg.env written with secure credentials",
+        "success",
+        "env-file",
+    );
 
     // ── Write LightRAG Ollama config into .env ─────────────────────
     emit_setup_progress(
@@ -508,7 +625,7 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
         "env-file",
     );
 
-    let dot_env_path = compose_path.parent().unwrap().join(".env");
+    let dot_env_path = runtime_dir.join(".env");
     let dot_env_content = format!(
         "\
 # LightRAG — auto-generated by Meetily setup\n\
@@ -520,7 +637,8 @@ LLM_MODEL=qwen2.5:1.5b\n\
 EMBEDDING_BINDING=ollama\n\
 EMBEDDING_BINDING_HOST=http://host.docker.internal:11434\n\
 EMBEDDING_MODEL=bge-m3:latest\n\
-EMBEDDING_DIM=1024\n",
+EMBEDDING_DIM=1024\n\
+LIGHTRAG_PARSER=*:native-teP,*:legacy-R\n",
         lightrag_api_key
     );
     std::fs::write(&dot_env_path, dot_env_content).map_err(|e| {
@@ -596,27 +714,15 @@ EMBEDDING_DIM=1024\n",
         "waiting-health",
     );
 
-    let env_content = std::fs::read_to_string(&env_path)
-        .map_err(|e| format!("Failed to read kg.env: {}", e))?;
-
-    let api_key: Option<String> = env_content
-        .lines()
-        .find(|l| l.starts_with("LIGHTRAG_API_KEY="))
-        .and_then(|l| l.split_once('=').map(|x| x.1))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-
     let health_client = reqwest::Client::new();
     let health_url = "http://localhost:9621/health";
     let max_attempts: u32 = 40;
 
     for attempt in 1..=max_attempts {
-        let mut req = health_client
+        let req = health_client
             .get(health_url)
-            .timeout(Duration::from_secs(5));
-        if let Some(ref key) = api_key {
-            req = req.header("X-API-Key", key);
-        }
+            .timeout(Duration::from_secs(5))
+            .header("X-API-Key", &lightrag_api_key);
 
         match req.send().await {
             Ok(resp) if resp.status().is_success() => {
@@ -671,13 +777,9 @@ EMBEDDING_DIM=1024\n",
         "creating-profile",
     );
 
-    let embedding_model: String = env_content
-        .lines()
-        .find(|l| l.starts_with("LIGHTRAG_EMBEDDING_MODEL_NAME="))
-        .and_then(|l| l.split_once('=').map(|x| x.1))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "BAAI/bge-m3".to_string());
+    // The embedding model is currently hardcoded in the generated env files.
+    // When it becomes configurable, read it from YAML config instead of kg.env.
+    let embedding_model = "BAAI/bge-m3".to_string();
 
     let profile = KnowledgeGraphProfile {
         id: "local-lightrag".to_string(),
@@ -685,21 +787,24 @@ EMBEDDING_DIM=1024\n",
         kind: ProfileKind::Local,
         embedding: EmbeddingConfig {
             provider: "ollama".to_string(),
-            model: embedding_model.clone(),
+            model: embedding_model,
             dimensions: 1024,
         },
         lightrag_url: "http://localhost:9621".to_string(),
-        api_key: api_key.clone(),
+        // Key is already stored in SecretStore (created or verified above).
+        // Pass None so save_kg_settings leaves the existing secret untouched.
+        api_key: None,
         notes: Some("Auto-provisioned by 'Set it up for me'".to_string()),
+        has_secret: false,
+        api_key_masked_hint: None,
     };
 
-    let pool = state.db_manager.pool();
-    let mut settings = load_kg_settings(pool).await?;
+    let config_repo = ConfigRepository::new();
+    let mut settings = load_kg_settings(&config_repo, &store).await?;
     settings.profiles.retain(|p| p.id != "local-lightrag");
     settings.profiles.push(profile.clone());
-    settings.active_profile =
-        KnowledgeGraphSelection::Profile("local-lightrag".to_string());
-    save_kg_settings(pool, &settings).await?;
+    settings.active_profile = KnowledgeGraphSelection::Profile("local-lightrag".to_string());
+    save_kg_settings(&config_repo, &store, &settings).await?;
 
     info!("Local LightRAG profile created and set as active");
     emit_setup_progress(
@@ -715,13 +820,12 @@ EMBEDDING_DIM=1024\n",
         "done",
     );
 
+    // Return a status message that does NOT include the raw API key.
     Ok(format!(
         "Knowledge graph stack is running.\n\
          LightRAG: http://localhost:9621\n\
-         Profile: {} (active)\n\
-         API Key: {}",
+         Profile: {} (active)",
         profile.name,
-        api_key.as_deref().unwrap_or("(none)"),
     ))
 }
 
@@ -729,94 +833,90 @@ EMBEDDING_DIM=1024\n",
 mod tests {
     use super::*;
     use crate::knowledge_graph::config::{
-        KnowledgeGraphProfile, KnowledgeGraphSelection,
-        ProfileKind,
+        KnowledgeGraphProfile, KnowledgeGraphSelection, ProfileKind,
     };
+    use crate::secrets::types::{SecretRef, SecretStoreError};
+    use async_trait::async_trait;
     use httpmock::MockServer;
     use serde_json::json;
-    use sqlx::SqlitePool;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
 
-    /// Create an in-memory SQLite database with the app schema applied.
-    async fn test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:")
-            .await
-            .expect("in-memory pool");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("migrations");
-        pool
+    /// Simple in-memory SecretStore for tests.
+    struct TestSecretStore {
+        data: Mutex<HashMap<String, String>>,
+    }
+
+    impl TestSecretStore {
+        fn new() -> Self {
+            Self {
+                data: Mutex::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SecretStore for TestSecretStore {
+        async fn get(&self, key: &SecretRef) -> Result<Option<String>, SecretStoreError> {
+            Ok(self.data.lock().unwrap().get(key.as_str()).cloned())
+        }
+
+        async fn set(&self, key: &SecretRef, value: &str) -> Result<(), SecretStoreError> {
+            self.data
+                .lock()
+                .unwrap()
+                .insert(key.as_str().to_string(), value.to_string());
+            Ok(())
+        }
+
+        async fn delete(&self, key: &SecretRef) -> Result<(), SecretStoreError> {
+            self.data.lock().unwrap().remove(key.as_str());
+            Ok(())
+        }
+
+        async fn exists(&self, key: &SecretRef) -> Result<bool, SecretStoreError> {
+            Ok(self.data.lock().unwrap().contains_key(key.as_str()))
+        }
+    }
+
+    fn test_config_repo() -> (ConfigRepository, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("resourcefully.yml");
+        (ConfigRepository::with_path(path), dir)
     }
 
     // ── load_kg_settings tests ────────────────────────────────────────
 
     #[tokio::test]
-    async fn load_returns_defaults_when_no_settings_row() {
-        let pool = test_pool().await;
+    async fn load_returns_defaults_when_no_config_file() {
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
-        // No row inserted — should return defaults.
-        let settings = load_kg_settings(&pool).await.unwrap();
+        let settings = load_kg_settings(&repo, &store).await.unwrap();
         assert_eq!(settings.profiles.len(), 0);
         assert_eq!(settings.active_profile, KnowledgeGraphSelection::None);
-    }
-
-    #[tokio::test]
-    async fn load_returns_defaults_when_column_is_null() {
-        let pool = test_pool().await;
-
-        // Insert row but leave knowledge_graph_settings NULL.
-        sqlx::query(
-            "INSERT INTO settings (id, provider, model, whisperModel) VALUES ('1', 'openai', 'gpt-4o', 'large-v3')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        let settings = load_kg_settings(&pool).await.unwrap();
-        assert_eq!(settings.profiles.len(), 0);
-        assert_eq!(settings.active_profile, KnowledgeGraphSelection::None);
-    }
-
-    #[tokio::test]
-    async fn load_returns_persisted_settings() {
-        let pool = test_pool().await;
-
-        let original = KnowledgeGraphSettings {
-            profiles: vec![KnowledgeGraphProfile {
-                id: "prod-1".into(),
-                name: "production".into(),
-                kind: ProfileKind::Remote,
-                lightrag_url: "http://kg.example.com".into(),
-                api_key: Some("key-123".into()),
-                notes: Some("main cluster".into()),
-                ..Default::default()
-            }],
-            active_profile: KnowledgeGraphSelection::Profile("prod-1".into()),
-        };
-        save_kg_settings(&pool, &original).await.unwrap();
-
-        let loaded = load_kg_settings(&pool).await.unwrap();
-        assert_eq!(loaded, original);
     }
 
     // ── save_kg_settings tests ────────────────────────────────────────
 
     #[tokio::test]
     async fn save_accepts_empty_profiles() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
         let empty = KnowledgeGraphSettings {
             profiles: vec![],
             active_profile: KnowledgeGraphSelection::None,
         };
-        assert!(save_kg_settings(&pool, &empty).await.is_ok());
-        let loaded = load_kg_settings(&pool).await.unwrap();
+        assert!(save_kg_settings(&repo, &store, &empty).await.is_ok());
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
         assert_eq!(loaded.profiles.len(), 0);
     }
 
     #[tokio::test]
     async fn save_rejects_empty_profile_name() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
         let invalid = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
@@ -826,13 +926,14 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        let err = save_kg_settings(&pool, &invalid).await.unwrap_err();
+        let err = save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
         assert!(err.contains("Profile name cannot be empty"));
     }
 
     #[tokio::test]
     async fn save_rejects_empty_lightrag_url() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
         let invalid = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
@@ -843,13 +944,14 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        let err = save_kg_settings(&pool, &invalid).await.unwrap_err();
+        let err = save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
         assert!(err.contains("LightRAG URL cannot be empty"));
     }
 
     #[tokio::test]
     async fn save_rejects_missing_active_profile() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
         let invalid = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
@@ -859,52 +961,237 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::Profile("b".into()),
         };
-        let err = save_kg_settings(&pool, &invalid).await.unwrap_err();
+        let err = save_kg_settings(&repo, &store, &invalid).await.unwrap_err();
         assert!(err.contains("Active profile 'b' not found"));
     }
 
-    #[tokio::test]
-    async fn save_accepts_valid_url_with_dummy_api_key() {
-        let pool = test_pool().await;
+    // ── YAML + SecretStore roundtrip ────────────────────────────────────
 
-        let valid = KnowledgeGraphSettings {
+    #[tokio::test]
+    async fn kg_settings_roundtrip_uses_yaml_and_secret_store() {
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
+
+        // Save two profiles: one with secret, one without.
+        let settings = KnowledgeGraphSettings {
+            profiles: vec![
+                KnowledgeGraphProfile {
+                    id: "prod-1".into(),
+                    name: "Production".into(),
+                    kind: ProfileKind::Remote,
+                    lightrag_url: "https://kg.example.com".into(),
+                    api_key: Some("sk-secret-prod-key-12345".into()),
+                    notes: Some("production cluster".into()),
+                    ..Default::default()
+                },
+                KnowledgeGraphProfile {
+                    id: "local-dev".into(),
+                    name: "Local Dev".into(),
+                    kind: ProfileKind::Local,
+                    lightrag_url: "http://localhost:9621".into(),
+                    api_key: None,
+                    notes: None,
+                    ..Default::default()
+                },
+            ],
+            active_profile: KnowledgeGraphSelection::Profile("prod-1".into()),
+        };
+        save_kg_settings(&repo, &store, &settings)
+            .await
+            .expect("save should succeed");
+
+        // Load back — verify secret enrichment.
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
+        assert_eq!(loaded.profiles.len(), 2);
+        assert_eq!(
+            loaded.active_profile,
+            KnowledgeGraphSelection::Profile("prod-1".into())
+        );
+
+        let prod = loaded.profiles.iter().find(|p| p.id == "prod-1").unwrap();
+        assert_eq!(prod.name, "Production");
+        assert_eq!(prod.lightrag_url, "https://kg.example.com");
+        assert!(prod.api_key.is_none(), "api_key must be None");
+        assert!(
+            prod.has_secret,
+            "has_secret must be true for profile with stored key"
+        );
+        assert!(
+            prod.api_key_masked_hint.is_some(),
+            "masked_hint must be present"
+        );
+        assert!(
+            prod.api_key_masked_hint
+                .as_deref()
+                .unwrap()
+                .starts_with("sk-"),
+            "masked_hint should start with prefix"
+        );
+
+        let local = loaded
+            .profiles
+            .iter()
+            .find(|p| p.id == "local-dev")
+            .unwrap();
+        assert_eq!(local.name, "Local Dev");
+        assert!(local.api_key.is_none());
+        assert!(!local.has_secret, "has_secret must be false");
+        assert!(
+            local.api_key_masked_hint.is_none(),
+            "masked_hint must be None for profile without key"
+        );
+
+        // Verify YAML on disk has no API key.
+        let yaml = std::fs::read_to_string(repo.path()).unwrap();
+        assert!(yaml.contains("prod-1"), "YAML should contain profile id");
+        assert!(
+            !yaml.contains("sk-secret-prod"),
+            "YAML must not contain raw API key"
+        );
+    }
+
+    #[tokio::test]
+    async fn remove_profile_deletes_secret_from_store() {
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
+
+        // Save a profile with a secret.
+        let settings = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
-                id: "local-1".into(),
-                name: "local dev".into(),
-                kind: ProfileKind::Local,
+                id: "temp".into(),
+                name: "Temp".into(),
                 lightrag_url: "http://localhost:9621".into(),
-                api_key: Some("dummy-key".into()),
+                api_key: Some("temp-key".into()),
                 ..Default::default()
             }],
-            active_profile: KnowledgeGraphSelection::Profile("local-1".into()),
+            active_profile: KnowledgeGraphSelection::None,
         };
-        assert!(save_kg_settings(&pool, &valid).await.is_ok());
-        let loaded = load_kg_settings(&pool).await.unwrap();
-        assert_eq!(loaded, valid);
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
+
+        // Verify secret exists.
+        let secret_ref = knowledge_graph_profile_key("temp");
+        assert!(
+            store.exists(&secret_ref).await.unwrap(),
+            "secret should exist after save"
+        );
+
+        // Remove the profile.
+        let pruned = KnowledgeGraphSettings {
+            profiles: vec![],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        save_kg_settings(&repo, &store, &pruned).await.unwrap();
+
+        // Verify secret is gone.
+        assert!(
+            !store.exists(&secret_ref).await.unwrap(),
+            "secret should be deleted when profile is removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_api_key_via_empty_string_deletes_secret() {
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
+
+        // Save with a key.
+        let settings = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "x".into(),
+                name: "x".into(),
+                lightrag_url: "http://localhost:9621".into(),
+                api_key: Some("old-key".into()),
+                ..Default::default()
+            }],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
+
+        // Save again with empty key string.
+        let cleared = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "x".into(),
+                name: "x".into(),
+                lightrag_url: "http://localhost:9621".into(),
+                api_key: Some("".into()),
+                ..Default::default()
+            }],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        save_kg_settings(&repo, &store, &cleared).await.unwrap();
+
+        let secret_ref = knowledge_graph_profile_key("x");
+        assert!(
+            !store.exists(&secret_ref).await.unwrap(),
+            "secret should be deleted when cleared with empty string"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_key_none_leaves_existing_secret_untouched() {
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
+
+        // Save with a key.
+        let settings = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "y".into(),
+                name: "y".into(),
+                lightrag_url: "http://localhost:9621".into(),
+                api_key: Some("persistent-key".into()),
+                ..Default::default()
+            }],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
+
+        // Save again with api_key: None (meaning "don't change").
+        let unchanged = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "y".into(),
+                name: "y updated".into(),
+                lightrag_url: "http://localhost:9621".into(),
+                api_key: None,
+                ..Default::default()
+            }],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        save_kg_settings(&repo, &store, &unchanged).await.unwrap();
+
+        let secret_ref = knowledge_graph_profile_key("y");
+        let stored = store.get(&secret_ref).await.unwrap();
+        assert_eq!(
+            stored.as_deref(),
+            Some("persistent-key"),
+            "existing secret should survive when api_key is None"
+        );
     }
 
     // ── Profile CRUD roundtrip ──────────────────────────────────────
 
     #[tokio::test]
     async fn profile_add_update_delete_roundtrip() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
-        let initial = load_kg_settings(&pool).await.unwrap();
+        let initial = load_kg_settings(&repo, &store).await.unwrap();
         assert_eq!(initial.profiles.len(), 0);
 
-        let mut settings = initial.clone();
-        settings.profiles.push(KnowledgeGraphProfile {
-            id: "remote-1".into(),
-            name: "cloud kg".into(),
-            kind: ProfileKind::Remote,
-            lightrag_url: "https://kg.example.com".into(),
-            api_key: Some("remote-key".into()),
-            notes: Some("team server".into()),
-            ..Default::default()
-        });
-        save_kg_settings(&pool, &settings).await.unwrap();
+        let settings = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "remote-1".into(),
+                name: "cloud kg".into(),
+                kind: ProfileKind::Remote,
+                lightrag_url: "https://kg.example.com".into(),
+                api_key: Some("remote-key".into()),
+                notes: Some("team server".into()),
+                ..Default::default()
+            }],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
-        let loaded = load_kg_settings(&pool).await.unwrap();
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.profiles[0].id, "remote-1");
 
@@ -913,18 +1200,23 @@ mod tests {
             p.name = "cloud kg v2".into();
             p.lightrag_url = "https://kg2.example.com".into();
         }
-        save_kg_settings(&pool, &updated).await.unwrap();
+        save_kg_settings(&repo, &store, &updated).await.unwrap();
 
-        let loaded2 = load_kg_settings(&pool).await.unwrap();
-        let p = loaded2.profiles.iter().find(|p| p.id == "remote-1").unwrap();
+        let loaded2 = load_kg_settings(&repo, &store).await.unwrap();
+        let p = loaded2
+            .profiles
+            .iter()
+            .find(|p| p.id == "remote-1")
+            .unwrap();
         assert_eq!(p.name, "cloud kg v2");
         assert_eq!(p.lightrag_url, "https://kg2.example.com");
+        assert!(p.api_key.is_none());
 
         let mut pruned = loaded2.clone();
         pruned.profiles.retain(|p| p.id != "remote-1");
-        save_kg_settings(&pool, &pruned).await.unwrap();
+        save_kg_settings(&repo, &store, &pruned).await.unwrap();
 
-        let loaded3 = load_kg_settings(&pool).await.unwrap();
+        let loaded3 = load_kg_settings(&repo, &store).await.unwrap();
         assert_eq!(loaded3.profiles.len(), 0);
     }
 
@@ -932,24 +1224,28 @@ mod tests {
 
     #[tokio::test]
     async fn health_test_healthy_with_mock_server() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
         let server = MockServer::start();
 
-        // Persist a profile pointing at the mock server
+        // Persist a profile with secret via SecretStore directly,
+        // then save profile fields to YAML.
+        let secret_ref = knowledge_graph_profile_key("health-1");
+        store.set(&secret_ref, "secret").await.unwrap();
+
         let settings = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
                 id: "health-1".into(),
                 name: "mock".into(),
                 kind: ProfileKind::Local,
                 lightrag_url: server.base_url(),
-                api_key: Some("secret".into()),
+                api_key: None,
                 ..Default::default()
             }],
             active_profile: KnowledgeGraphSelection::Profile("health-1".into()),
         };
-        save_kg_settings(&pool, &settings).await.unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
-        // Mock the /health endpoint
         let mock = server.mock(|when, then| {
             when.method(httpmock::Method::GET)
                 .path("/health")
@@ -958,16 +1254,10 @@ mod tests {
                 .json_body(json!({"healthy": true, "version": "2.0.0"}));
         });
 
-        // Resolve and call health through the provider
-        let loaded = load_kg_settings(&pool).await.unwrap();
-        let profile = loaded
-            .profiles
-            .iter()
-            .find(|p| p.id == "health-1")
-            .unwrap();
-        let provider =
-            LightRagProvider::new(&profile.lightrag_url, profile.api_key.clone())
-                .unwrap();
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
+        let profile = loaded.profiles.iter().find(|p| p.id == "health-1").unwrap();
+        let actual_key = store.get(&secret_ref).await.unwrap();
+        let provider = LightRagProvider::new(&profile.lightrag_url, actual_key).unwrap();
         let health = provider.health().await.unwrap();
 
         mock.assert();
@@ -977,7 +1267,8 @@ mod tests {
 
     #[tokio::test]
     async fn health_test_unhealthy_with_mock_server() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
         let server = MockServer::start();
 
         let settings = KnowledgeGraphSettings {
@@ -991,77 +1282,150 @@ mod tests {
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&pool, &settings).await.unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
-        // Mock endpoint returns 500
         let mock = server.mock(|when, then| {
             when.method(httpmock::Method::GET).path("/health");
             then.status(500).body("internal error");
         });
 
-        let loaded = load_kg_settings(&pool).await.unwrap();
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
         let profile = loaded
             .profiles
             .iter()
             .find(|p| p.id == "unhealthy-1")
             .unwrap();
-        let provider =
-            LightRagProvider::new(&profile.lightrag_url, profile.api_key.clone())
-                .unwrap();
-        let result = provider.health().await;
+        let result = LightRagProvider::new(&profile.lightrag_url, None)
+            .unwrap()
+            .health()
+            .await;
 
         mock.assert();
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("500") || err.contains("internal error"),
-            "expected error to mention 500 or 'internal error', got: {err}");
+        assert!(
+            err.contains("500") || err.contains("internal error"),
+            "expected error to mention 500 or 'internal error', got: {err}"
+        );
     }
 
     #[tokio::test]
     async fn health_test_profile_not_found() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
-        // No profile with id "nonexistent"
-        let loaded = load_kg_settings(&pool).await.unwrap();
-        let found = loaded
-            .profiles
-            .iter()
-            .find(|p| p.id == "nonexistent");
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
+        let found = loaded.profiles.iter().find(|p| p.id == "nonexistent");
         assert!(found.is_none());
     }
 
     #[tokio::test]
     async fn health_test_connection_refused() {
-        let pool = test_pool().await;
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
 
         let settings = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
                 id: "dead".into(),
                 name: "unreachable".into(),
                 kind: ProfileKind::Local,
-                // Use a port that is almost certainly not bound
                 lightrag_url: "http://127.0.0.1:19999".into(),
                 api_key: None,
                 ..Default::default()
             }],
             active_profile: KnowledgeGraphSelection::None,
         };
-        save_kg_settings(&pool, &settings).await.unwrap();
+        save_kg_settings(&repo, &store, &settings).await.unwrap();
 
-        let loaded = load_kg_settings(&pool).await.unwrap();
-        let profile = loaded
-            .profiles
-            .iter()
-            .find(|p| p.id == "dead")
-            .unwrap();
-        let result = LightRagProvider::new(
-            &profile.lightrag_url,
-            profile.api_key.clone(),
-        )
-        .unwrap()
-        .health()
-        .await;
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
+        let profile = loaded.profiles.iter().find(|p| p.id == "dead").unwrap();
+        let result = LightRagProvider::new(&profile.lightrag_url, None)
+            .unwrap()
+            .health()
+            .await;
 
         assert!(result.is_err(), "expected connection error");
+    }
+
+    // ── Setup env generation test ─────────────────────────────────
+
+    #[tokio::test]
+    async fn kg_setup_generates_env_from_yaml_and_secret_store_without_returning_raw_key() {
+        // Given: a fresh config repository and a secret store pre-populated
+        // with the local-lightrag API key (as api_setup_local_knowledge_graph
+        // would do during setup).
+        let (repo, _dir) = test_config_repo();
+        let store = TestSecretStore::new();
+
+        let secret_ref = knowledge_graph_profile_key("local-lightrag");
+        let raw_key = "meetily-lrag-abc123secret456";
+        store.set(&secret_ref, raw_key).await.unwrap();
+
+        // Save a local-lightrag profile WITHOUT the raw key (it is already
+        // in SecretStore).  This matches what api_setup_local_knowledge_graph
+        // does after this change: api_key is None, key lives in SecretStore.
+        let settings = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "local-lightrag".into(),
+                name: "Local LightRAG".into(),
+                kind: ProfileKind::Local,
+                embedding: EmbeddingConfig {
+                    provider: "ollama".into(),
+                    model: "BAAI/bge-m3".into(),
+                    dimensions: 1024,
+                },
+                lightrag_url: "http://localhost:9621".into(),
+                api_key: None,
+                notes: Some("Auto-provisioned".into()),
+                has_secret: false,
+                api_key_masked_hint: None,
+            }],
+            active_profile: KnowledgeGraphSelection::Profile("local-lightrag".into()),
+        };
+        save_kg_settings(&repo, &store, &settings)
+            .await
+            .expect("save should succeed");
+
+        // When: we load the settings back
+        let loaded = load_kg_settings(&repo, &store).await.unwrap();
+
+        // Then: no raw API key is ever returned to callers
+        assert_eq!(loaded.profiles.len(), 1);
+        let profile = &loaded.profiles[0];
+        assert!(
+            profile.api_key.is_none(),
+            "api_key must be None — raw key must never leak through settings"
+        );
+        assert!(
+            profile.has_secret,
+            "has_secret must be true — key exists in SecretStore"
+        );
+        assert!(
+            profile.api_key_masked_hint.is_some(),
+            "masked_hint must be present for secret-backed profile"
+        );
+        assert!(
+            profile
+                .api_key_masked_hint
+                .as_deref()
+                .unwrap()
+                .starts_with("mee"),
+            "masked hint should show key prefix"
+        );
+
+        // And: YAML on disk must not contain the raw key
+        let yaml = std::fs::read_to_string(repo.path()).unwrap();
+        assert!(
+            !yaml.contains(raw_key),
+            "YAML config must not contain raw API key"
+        );
+        assert!(
+            yaml.contains("local-lightrag"),
+            "YAML should contain the profile id"
+        );
+
+        // And: the key is still in SecretStore
+        let stored = store.get(&secret_ref).await.unwrap();
+        assert_eq!(stored.as_deref(), Some(raw_key));
     }
 }

@@ -19,6 +19,7 @@ import type {
   KnowledgeGraphQueryResponse,
   KnowledgeGraphSelection,
   KnowledgeGraphSettings,
+  KnowledgeGraphTrackStatus,
   MeetingKnowledgeGraphSelection,
   MeetingKnowledgeGraphStatus,
   QueryMode,
@@ -195,6 +196,15 @@ export class KnowledgeGraphService {
     return invoke<KnowledgeGraphPipelineStatus>(
       'api_get_knowledge_graph_pipeline_status',
       { profileId }
+    );
+  }
+
+  async getSummaryTrackStatus(
+    meetingId: string
+  ): Promise<KnowledgeGraphTrackStatus> {
+    return invoke<KnowledgeGraphTrackStatus>(
+      'api_get_summary_track_status',
+      { meetingId }
     );
   }
 

@@ -12,13 +12,13 @@ This guide walks you through running the LightRAG knowledge-graph stack locally 
 
 ## Quick Start
 
-1. **Copy the environment template**
+1. **Auto-setup (recommended)**
 
-   ```bash
-   cp kg.env.example kg.env
-   ```
+   Open **Settings** → **Knowledge Graph** in the Meetily app and add a **Local** profile. The app automatically creates `~/.resourcefully/docker/`, copies the compose template, and generates `kg.env` with sensible defaults.
 
-2. **Edit `kg.env` and replace the placeholders**
+   If you prefer to set up the files manually, create `~/.resourcefully/docker/` and place `docker-compose.kg.yml` and `kg.env` there.
+
+2. **Edit `~/.resourcefully/docker/kg.env` and replace the placeholders**
 
    ```bash
    # Neo4j credentials
@@ -41,13 +41,13 @@ This guide walks you through running the LightRAG knowledge-graph stack locally 
 3. **Start the stack**
 
    ```bash
-   docker compose -f docker-compose.kg.yml --env-file kg.env up -d
+   docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml --env-file ~/.resourcefully/docker/kg.env up -d
    ```
 
 4. **Check health**
 
    ```bash
-   docker compose -f docker-compose.kg.yml ps
+   docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml ps
    ```
 
    All three services (`rustfs`, `neo4j`, `lightrag`) should show `healthy` or `running`.
@@ -145,16 +145,16 @@ The following features are **not** part of the Week 2 release:
 
 ```bash
 # Start
-docker compose -f docker-compose.kg.yml --env-file kg.env up -d
+docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml --env-file ~/.resourcefully/docker/kg.env up -d
 
 # View logs
-docker compose -f docker-compose.kg.yml logs -f
+docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml logs -f
 
 # Stop (keeps data)
-docker compose -f docker-compose.kg.yml down
+docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml down
 
 # Stop and delete all data (irreversible)
-docker compose -f docker-compose.kg.yml down -v
+docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml down -v
 ```
 
 ## Reset
@@ -162,8 +162,8 @@ docker compose -f docker-compose.kg.yml down -v
 If you change the embedding model, or want to wipe all indexed data:
 
 ```bash
-docker compose -f docker-compose.kg.yml down -v
-docker compose -f docker-compose.kg.yml --env-file kg.env up -d
+docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml down -v
+docker compose -f ~/.resourcefully/docker/docker-compose.kg.yml --env-file ~/.resourcefully/docker/kg.env up -d
 ```
 
 This recreates the named volumes from scratch.
@@ -172,9 +172,9 @@ This recreates the named volumes from scratch.
 
 | Symptom | Fix |
 |---------|-----|
-| `port 9000 already in use` | Change the host port in `docker-compose.kg.yml` or stop the conflicting service |
+| `port 9000 already in use` | Change the host port in `~/.resourcefully/docker/docker-compose.kg.yml` or stop the conflicting service |
 | LightRAG logs show `Connection refused` to Neo4j | Wait 10–20 s after `neo4j` starts before LightRAG first connects; restart LightRAG container if needed |
-| `kg.env` not loaded | Make sure you pass `--env-file kg.env` (not `kg.env.example`) to every `docker compose` command |
+| `kg.env` not loaded | Make sure you pass `--env-file ~/.resourcefully/docker/kg.env` to every `docker compose` command |
 | Queries return empty | Confirm a meeting was explicitly ingested via the **Index to Knowledge Graph** button; ingestion is not automatic |
 
 ## Architecture
