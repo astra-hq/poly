@@ -24,6 +24,42 @@ pub struct IngestionSummary {
     pub profile_id: String,
 }
 
+/// Snapshot of a meeting's knowledge-graph ingestion ledger.
+///
+/// Returned by `api_get_meeting_knowledge_graph_status`.  Always succeeds
+/// (returns zeroes when no profile is selected or the ledger is empty) —
+/// failures only happen for infrastructure errors (DB down, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeetingKnowledgeGraphStatus {
+    pub meeting_id: String,
+    /// The profile that would be used for indexing (meeting-specific
+    /// selection, falling back to global active profile).  `None` when
+    /// no profile is selected anywhere.
+    pub selected_profile_id: Option<String>,
+    /// Whether the user can start indexing — a profile is selected and
+    /// the meeting has at least one transcript row.
+    pub is_indexing_available: bool,
+    /// Number of chunks with status = 'submitted' in the ledger.
+    pub submitted_count: u64,
+    /// Number of chunks with status = 'failed' in the ledger.
+    pub failed_count: u64,
+    /// Number of chunks with status = 'pending' in the ledger.
+    pub pending_count: u64,
+    /// Total number of ledger rows for this meeting + effective profile.
+    pub total_chunks: u64,
+    /// Last N error messages from failed chunks (most recent first).
+    pub last_errors: Vec<String>,
+    /// Summary document ingestion status for this meeting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_document: Option<crate::knowledge_graph::types::SummaryDocumentStatus>,
+    /// LightRAG pipeline status (pending/indexing/failed documents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_status: Option<crate::knowledge_graph::types::KnowledgeGraphPipelineStatus>,
+    /// LightRAG endpoint URL for this profile (for UI links).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lightrag_url: Option<String>,
+}
+
 pub struct KnowledgeGraphIngestionService {
     pool: SqlitePool,
 }
@@ -31,6 +67,10 @@ pub struct KnowledgeGraphIngestionService {
 impl KnowledgeGraphIngestionService {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    fn transcript_chunk_file_source(meeting_id: &str, sequence: usize) -> String {
+        format!("{}_{}", meeting_id, sequence)
     }
 
     /// Ingest all transcript chunks for a meeting into the knowledge graph.
@@ -102,8 +142,7 @@ impl KnowledgeGraphIngestionService {
                 hasher.update(chunk.text.as_bytes());
                 format!("{:x}", hasher.finalize())
             };
-            let file_source =
-                format!("resourcefully/meetings/{}/chunks/{}.txt", meeting_id, seq);
+            let file_source = Self::transcript_chunk_file_source(meeting_id, seq);
 
             // ── Check ledger for already-submitted/completed chunk ─
             let existing = sqlx::query(
@@ -145,10 +184,27 @@ impl KnowledgeGraphIngestionService {
             .await
             .map_err(|e| format!("Failed to create ledger entry: {}", e))?;
 
+            sqlx::query(
+                "UPDATE knowledge_graph_ingestion_chunks \
+                 SET file_source = ?, updated_at = ? \
+                 WHERE meeting_id = ? AND profile_id = ? AND chunk_sequence = ? AND chunk_fingerprint = ? \
+                 AND status IN ('pending', 'failed')",
+            )
+            .bind(&file_source)
+            .bind(Utc::now().to_rfc3339())
+            .bind(meeting_id)
+            .bind(profile_id)
+            .bind(seq as i64)
+            .bind(&fingerprint)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| format!("Failed to update ledger file source: {}", e))?;
+
             // ── Call provider ─────────────────────────────────────
             let request = KnowledgeGraphInsertTextRequest {
                 text: chunk.text.clone(),
                 source: Some(file_source.clone()),
+                chunking: None,
             };
 
             match provider.insert_text(request).await {
@@ -198,6 +254,218 @@ impl KnowledgeGraphIngestionService {
 
         Ok(summary)
     }
+
+    /// Query the ingestion ledger for a snapshot of chunk statuses.
+    ///
+    /// Lightweight: no chunking or provider calls.  Only reads from the
+    /// `knowledge_graph_ingestion_chunks` table and the transcripts count.
+    pub async fn get_meeting_status(
+        &self,
+        meeting_id: &str,
+        profile_id: Option<&str>,
+        lightrag_url: Option<&str>,
+    ) -> Result<MeetingKnowledgeGraphStatus, String> {
+        let is_indexing_available = if let Some(pid) = profile_id {
+            if pid.is_empty() || pid.eq_ignore_ascii_case("none") {
+                false
+            } else {
+                let transcript_count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM transcripts WHERE meeting_id = ?")
+                        .bind(meeting_id)
+                        .fetch_one(&self.pool)
+                        .await
+                        .map_err(|e| format!("Failed to count transcripts: {}", e))?;
+                transcript_count > 0
+            }
+        } else {
+            false
+        };
+
+        if profile_id.is_none()
+            || profile_id.unwrap().is_empty()
+            || profile_id.unwrap().eq_ignore_ascii_case("none")
+        {
+            return Ok(MeetingKnowledgeGraphStatus {
+                meeting_id: meeting_id.to_string(),
+                selected_profile_id: profile_id.map(|s| s.to_string()),
+                is_indexing_available: false,
+                submitted_count: 0,
+                failed_count: 0,
+                pending_count: 0,
+                total_chunks: 0,
+                last_errors: vec![],
+                summary_document: None,
+                pipeline_status: None,
+                lightrag_url: lightrag_url.map(|s| s.to_string()),
+            });
+        }
+
+        let pid = profile_id.unwrap();
+
+        // ── Count chunks by status ──────────────────────────────
+        let submitted: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM knowledge_graph_ingestion_chunks \
+             WHERE meeting_id = ? AND profile_id = ? AND status = 'submitted'",
+        )
+        .bind(meeting_id)
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to count submitted chunks: {}", e))?;
+
+        let failed: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM knowledge_graph_ingestion_chunks \
+             WHERE meeting_id = ? AND profile_id = ? AND status = 'failed'",
+        )
+        .bind(meeting_id)
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to count failed chunks: {}", e))?;
+
+        let pending: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM knowledge_graph_ingestion_chunks \
+             WHERE meeting_id = ? AND profile_id = ? AND status = 'pending'",
+        )
+        .bind(meeting_id)
+        .bind(pid)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to count pending chunks: {}", e))?;
+
+        // ── Last errors ─────────────────────────────────────────
+        let errors: Vec<String> = sqlx::query_scalar(
+            "SELECT last_error FROM knowledge_graph_ingestion_chunks \
+             WHERE meeting_id = ? AND profile_id = ? AND last_error IS NOT NULL \
+             ORDER BY updated_at DESC LIMIT 5",
+        )
+        .bind(meeting_id)
+        .bind(pid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to fetch last errors: {}", e))?;
+
+        let summary_doc = self.get_summary_document_status(meeting_id, pid).await?;
+
+        let total = (submitted + failed + pending) as u64;
+
+        Ok(MeetingKnowledgeGraphStatus {
+            meeting_id: meeting_id.to_string(),
+            selected_profile_id: Some(pid.to_string()),
+            is_indexing_available,
+            submitted_count: submitted as u64,
+            failed_count: failed as u64,
+            pending_count: pending as u64,
+            total_chunks: total,
+            last_errors: errors,
+            summary_document: summary_doc,
+            pipeline_status: None,
+            lightrag_url: lightrag_url.map(|s| s.to_string()),
+        })
+    }
+
+    pub async fn get_summary_document_status(
+        &self,
+        meeting_id: &str,
+        profile_id: &str,
+    ) -> Result<Option<crate::knowledge_graph::types::SummaryDocumentStatus>, String> {
+        let row = sqlx::query(
+            "SELECT status, file_source, error, updated_at, track_id, document_id \
+             FROM knowledge_graph_summary_documents \
+             WHERE meeting_id = ? AND profile_id = ?",
+        )
+        .bind(meeting_id)
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to fetch summary document status: {}", e))?;
+
+        match row {
+            Some(r) => {
+                let status: String = r.get("status");
+                let state = match status.as_str() {
+                    "ingested" => crate::knowledge_graph::types::SummaryDocumentState::Ingested,
+                    "failed" => crate::knowledge_graph::types::SummaryDocumentState::Failed,
+                    "deleted" => crate::knowledge_graph::types::SummaryDocumentState::Deleted,
+                    _ => crate::knowledge_graph::types::SummaryDocumentState::Pending,
+                };
+                Ok(Some(crate::knowledge_graph::types::SummaryDocumentStatus {
+                    state,
+                    file_source: r.get("file_source"),
+                    error: r.get("error"),
+                    updated_at: r.get("updated_at"),
+                    track_id: r.get("track_id"),
+                    document_id: r.get("document_id"),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn get_summary_document_id(
+        &self,
+        meeting_id: &str,
+        profile_id: &str,
+    ) -> Result<Option<String>, String> {
+        let row = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT document_id FROM knowledge_graph_summary_documents \
+             WHERE meeting_id = ? AND profile_id = ?",
+        )
+        .bind(meeting_id)
+        .bind(profile_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to fetch summary document id: {}", e))?;
+
+        Ok(row.flatten())
+    }
+
+    /// Track summary document ingestion result.
+    pub async fn track_summary_document(
+        &self,
+        meeting_id: &str,
+        profile_id: &str,
+        file_source: &str,
+        state: crate::knowledge_graph::types::SummaryDocumentState,
+        error: Option<&str>,
+        track_id: Option<&str>,
+        document_id: Option<&str>,
+    ) -> Result<(), String> {
+        let now = Utc::now().to_rfc3339();
+        let status = match state {
+            crate::knowledge_graph::types::SummaryDocumentState::Pending => "pending",
+            crate::knowledge_graph::types::SummaryDocumentState::Ingested => "ingested",
+            crate::knowledge_graph::types::SummaryDocumentState::Failed => "failed",
+            crate::knowledge_graph::types::SummaryDocumentState::Deleted => "deleted",
+        };
+
+        sqlx::query(
+            "INSERT INTO knowledge_graph_summary_documents \
+             (meeting_id, profile_id, file_source, status, error, track_id, document_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(meeting_id, profile_id) DO UPDATE SET \
+             file_source = excluded.file_source, \
+             status = excluded.status, \
+             error = excluded.error, \
+             track_id = excluded.track_id, \
+             document_id = excluded.document_id, \
+             updated_at = excluded.updated_at",
+        )
+        .bind(meeting_id)
+        .bind(profile_id)
+        .bind(file_source)
+        .bind(status)
+        .bind(error)
+        .bind(track_id)
+        .bind(document_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| format!("Failed to track summary document: {}", e))?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -209,9 +477,9 @@ mod tests {
 
     use crate::knowledge_graph::provider::*;
     use crate::knowledge_graph::types::{
-        KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse,
-        KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest,
-        KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
+        KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse, KnowledgeGraphPipelineStatus,
+        KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId,
+        KnowledgeGraphTrackStatus,
     };
 
     /// A mock provider that records every `insert_text` call and can be
@@ -257,6 +525,14 @@ mod tests {
             })
         }
 
+        async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
+            Ok(())
+        }
+
+        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
+            Ok(())
+        }
+
         async fn insert_text(
             &self,
             request: KnowledgeGraphInsertTextRequest,
@@ -282,14 +558,10 @@ mod tests {
             &self,
             _request: KnowledgeGraphQueryRequest,
         ) -> KnowledgeGraphResult<KnowledgeGraphQueryResponse> {
-            Err(KnowledgeGraphProviderError::UnsupportedOperation {
-                operation: "query",
-            })
+            Err(KnowledgeGraphProviderError::UnsupportedOperation { operation: "query" })
         }
 
-        async fn pipeline_status(
-            &self,
-        ) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
+        async fn pipeline_status(&self) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "pipeline_status",
             })
@@ -362,9 +634,7 @@ mod tests {
         let service = KnowledgeGraphIngestionService::new(pool);
         let provider = MockProvider::new();
 
-        let result = service
-            .ingest_meeting(&provider, "meeting-1", "none")
-            .await;
+        let result = service.ingest_meeting(&provider, "meeting-1", "none").await;
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -593,6 +863,158 @@ mod tests {
         .await
         .expect("source");
 
-        assert_eq!(source, "resourcefully/meetings/meeting-src/chunks/0.txt");
+        assert_eq!(source, "meeting-src_0");
+    }
+
+    #[tokio::test]
+    async fn failed_retry_updates_legacy_file_source() {
+        let pool = setup_test_db().await;
+        insert_transcript(&pool, "t1", "meeting-src", "text", 0.0).await;
+
+        let service = KnowledgeGraphIngestionService::new(pool.clone());
+        let failing_provider = MockProvider::new().fail_at(0);
+        let failed = service
+            .ingest_meeting(&failing_provider, "meeting-src", "default")
+            .await
+            .expect("failed ingestion summary");
+        assert_eq!(failed.failed_count, 1);
+
+        sqlx::query(
+            "UPDATE knowledge_graph_ingestion_chunks \
+             SET file_source = 'resourcefully/meetings/meeting-src/chunks/0.txt' \
+             WHERE meeting_id = ? AND profile_id = ? AND chunk_sequence = 0",
+        )
+        .bind("meeting-src")
+        .bind("default")
+        .execute(&pool)
+        .await
+        .expect("legacy source update");
+
+        let retry_provider = MockProvider::new();
+        service
+            .ingest_meeting(&retry_provider, "meeting-src", "default")
+            .await
+            .expect("retry ingestion");
+
+        let source = sqlx::query_scalar::<_, String>(
+            "SELECT file_source FROM knowledge_graph_ingestion_chunks WHERE meeting_id = ? AND chunk_sequence = 0",
+        )
+        .bind("meeting-src")
+        .fetch_one(&pool)
+        .await
+        .expect("source");
+
+        assert_eq!(source, "meeting-src_0");
+    }
+
+    // ── get_meeting_status tests ─────────────────────────────────
+
+    #[tokio::test]
+    async fn status_returns_zeroes_when_no_profile() {
+        let pool = setup_test_db().await;
+        let service = KnowledgeGraphIngestionService::new(pool);
+
+        let status = service
+            .get_meeting_status("meeting-1", None, None)
+            .await
+            .expect("status");
+
+        assert_eq!(status.meeting_id, "meeting-1");
+        assert_eq!(status.selected_profile_id, None);
+        assert!(!status.is_indexing_available);
+        assert_eq!(status.submitted_count, 0);
+        assert_eq!(status.failed_count, 0);
+        assert_eq!(status.pending_count, 0);
+        assert_eq!(status.total_chunks, 0);
+        assert!(status.last_errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn status_returns_zeroes_for_none_profile() {
+        let pool = setup_test_db().await;
+        let service = KnowledgeGraphIngestionService::new(pool);
+
+        let status = service
+            .get_meeting_status("meeting-1", Some("none"), None)
+            .await
+            .expect("status");
+
+        assert_eq!(status.selected_profile_id, Some("none".to_string()));
+        assert!(!status.is_indexing_available);
+    }
+
+    #[tokio::test]
+    async fn status_reflects_ledger_after_ingestion() {
+        let pool = setup_test_db().await;
+        insert_transcript(&pool, "t1", "meeting-stat", "hello world", 0.0).await;
+
+        // First, check status is zero before ingestion.
+        let service = KnowledgeGraphIngestionService::new(pool.clone());
+        let status_before = service
+            .get_meeting_status("meeting-stat", Some("default"), None)
+            .await
+            .expect("status before");
+        assert_eq!(status_before.submitted_count, 0);
+        assert_eq!(status_before.total_chunks, 0);
+
+        // Ingest.
+        let provider = MockProvider::new();
+        service
+            .ingest_meeting(&provider, "meeting-stat", "default")
+            .await
+            .expect("ingestion");
+
+        // Check status after.
+        let status_after = service
+            .get_meeting_status("meeting-stat", Some("default"), None)
+            .await
+            .expect("status after");
+        assert_eq!(status_after.submitted_count, 1);
+        assert_eq!(status_after.failed_count, 0);
+        assert_eq!(status_after.pending_count, 0);
+        assert_eq!(status_after.total_chunks, 1);
+        assert!(status_after.is_indexing_available);
+    }
+
+    #[tokio::test]
+    async fn status_shows_failed_and_errors() {
+        let pool = setup_test_db().await;
+        insert_transcript(&pool, "t1", "meeting-err", "chunk-a", 0.0).await;
+        insert_transcript(&pool, "t2", "meeting-err", "chunk-b", 25.0).await;
+
+        let service = KnowledgeGraphIngestionService::new(pool.clone());
+
+        // Fail the first chunk.
+        let provider = MockProvider::new().fail_at(0);
+        service
+            .ingest_meeting(&provider, "meeting-err", "default")
+            .await
+            .expect("ingestion with failure");
+
+        let status = service
+            .get_meeting_status("meeting-err", Some("default"), None)
+            .await
+            .expect("status");
+
+        assert_eq!(status.submitted_count, 1); // second chunk succeeded
+        assert_eq!(status.failed_count, 1); // first chunk failed
+        assert_eq!(status.total_chunks, 2);
+        assert_eq!(status.last_errors.len(), 1);
+        assert!(status.last_errors[0].contains("mock failure"));
+    }
+
+    #[tokio::test]
+    async fn status_is_indexing_available_false_when_no_transcripts() {
+        let pool = setup_test_db().await;
+        let service = KnowledgeGraphIngestionService::new(pool);
+
+        let status = service
+            .get_meeting_status("empty-meeting", Some("default"), None)
+            .await
+            .expect("status");
+
+        assert_eq!(status.selected_profile_id, Some("default".to_string()));
+        assert!(!status.is_indexing_available);
+        assert_eq!(status.total_chunks, 0);
     }
 }

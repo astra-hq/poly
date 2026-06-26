@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Summary, SummaryResponse } from '@/types';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -57,7 +57,6 @@ export default function PageContent({
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isRecording] = useState(false);
   const [summaryResponse] = useState<SummaryResponse | null>(null);
-
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
 
@@ -140,11 +139,19 @@ export default function PageContent({
   }, []);
 
   // Auto-generate summary when flag is set
+  const hasTriggeredAutoGen = useRef(false);
+
   useEffect(() => {
     let cancelled = false;
 
     const autoGenerate = async () => {
+      // Guard: only fire once — transcripts load in batches via pagination,
+      // but we only need the first batch to trigger summary generation
+      // (handleGenerateSummary fetches ALL transcripts from the DB internally)
+      if (hasTriggeredAutoGen.current) return;
+
       if (shouldAutoGenerate && meetingData.transcripts.length > 0 && !cancelled) {
+        hasTriggeredAutoGen.current = true;
         console.log(`🤖 Auto-generating summary with ${modelConfig.provider}/${modelConfig.model}...`);
         await summaryGeneration.handleGenerateSummary('');
 
@@ -161,7 +168,7 @@ export default function PageContent({
     return () => {
       cancelled = true;
     };
-  }, [shouldAutoGenerate, meeting.id]); // Re-run if meeting changes
+  }, [shouldAutoGenerate, meeting.id, meetingData.transcripts]); // transcripts dep: re-run when paginated hook finishes loading
 
   return (
     <motion.div
@@ -192,6 +199,7 @@ export default function PageContent({
           meetingFolderPath={meeting.folder_path}
           onRefetchTranscripts={onRefetchTranscripts}
         />
+
         <SummaryPanel
           meeting={meeting}
           meetingTitle={meetingData.meetingTitle}

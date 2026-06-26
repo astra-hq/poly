@@ -1,0 +1,134 @@
+# Default values for resourcefully-kg.
+# This is a YAML-formatted file.
+
+# -- External S3-compatible blob storage (replaces local rustfs in remote deployments)
+s3:
+  # -- S3 endpoint URL (e.g. https://s3.amazonaws.com or https://minio.example.com:9000)
+  endpoint: "CHANGE_ME_S3_ENDPOINT"
+  # -- S3 bucket name for LightRAG document storage
+  bucket: "CHANGE_ME_S3_BUCKET"
+  # -- S3 region (e.g. us-east-1)
+  region: "CHANGE_ME_S3_REGION"
+  # -- Use SSL for S3 connections
+  useSsl: true
+  # -- Existing Kubernetes secret name that holds S3 credentials.
+  # The secret must contain keys: access-key-id, secret-access-key.
+  # If empty, the chart creates a placeholder secret from s3.existingSecretAccessKeyId / s3.existingSecretSecretAccessKey.
+  existingSecret: ""
+  # -- S3 access key ID (only used when existingSecret is empty). CHANGE_ME.
+  existingSecretAccessKeyId: "CHANGE_ME_S3_ACCESS_KEY_ID"
+  # -- S3 secret access key (only used when existingSecret is empty). CHANGE_ME.
+  existingSecretSecretAccessKey: "CHANGE_ME_S3_SECRET_ACCESS_KEY"
+
+# -- LightRAG API / query service
+lightrag:
+  image:
+    repository: ghcr.io/hkuds/lightrag
+    tag: latest
+    pullPolicy: IfNotPresent
+  # -- Number of replicas
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 9621
+  # -- LightRAG API key (used to secure the query endpoint)
+  # Set via a Kubernetes secret; the chart creates a placeholder if apiKey.existingSecret is empty.
+  apiKey:
+    # -- Existing Kubernetes secret that holds the API key at key 'api-key'.
+    existingSecret: ""
+    # -- Plaintext API key (only used when existingSecret is empty). CHANGE_ME.
+    value: "CHANGE_ME_LIGHTRAG_API_KEY"
+  # -- Embedding model configuration
+  embedding:
+    model: "bge-m3"
+    modelName: "BAAI/bge-m3"
+  # -- Resource limits and requests
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # -- Container security context
+  securityContext: {}
+  # -- Extra environment variables
+  extraEnv: []
+  # -- Node selector
+  nodeSelector: {}
+  # -- Tolerations
+  tolerations: []
+  # -- Affinity
+  affinity: {}
+
+# -- Neo4j graph database
+neo4j:
+  image:
+    repository: neo4j
+    tag: "5.26"
+    pullPolicy: IfNotPresent
+  # -- Number of replicas (set to 1 for single-node; >1 requires Neo4j Enterprise clustering)
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    boltPort: 7687
+    httpPort: 7474
+  # -- Neo4j authentication credentials
+  auth:
+    # -- Existing Kubernetes secret that holds 'neo4j-auth' key in 'username/password' format.
+    existingSecret: ""
+    # -- Username (only used when existingSecret is empty)
+    username: "neo4j"
+    # -- Password (only used when existingSecret is empty). CHANGE_ME.
+    password: "CHANGE_ME_NEO4J_PASSWORD"
+  # -- Persistent storage for Neo4j data
+  persistence:
+    enabled: true
+    # -- StorageClass to use. Leave empty for default.
+    storageClass: ""
+    # -- Storage size for data volume
+    size: 20Gi
+    # -- Storage size for logs volume
+    logsSize: 5Gi
+  # -- Resource limits and requests
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  # -- Container security context
+  securityContext: {}
+  # -- Extra environment variables
+  extraEnv: []
+  # -- Node selector
+  nodeSelector: {}
+  # -- Tolerations
+  tolerations: []
+  # -- Affinity
+  affinity: {}
+
+# -- Ingress configuration (disabled by default)
+ingress:
+  enabled: false
+  # -- Ingress class name
+  className: ""
+  # -- Annotations
+  annotations: {}
+  # -- Host configuration
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # -- TLS configuration (do NOT add production TLS in this scaffold)
+  tls: []
+
+# -- Common labels applied to all resources
+commonLabels: {}
+
+# -- Name override
+nameOverride: ""
+# -- Full name override
+fullnameOverride: ""

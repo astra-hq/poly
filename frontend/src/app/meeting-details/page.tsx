@@ -48,25 +48,23 @@ function MeetingDetailsContent() {
     error: transcriptError,
   } = usePaginatedTranscripts({ meetingId: meetingId || '' });
 
-  // Check if gemma3:1b model is available in Ollama
-  const checkForGemmaModel = useCallback(async (): Promise<boolean> => {
-    try {
-      const models = await invoke('get_ollama_models', { endpoint: null }) as any[];
-      const hasGemma = models.some((m: any) => m.name === 'gemma3:1b');
-      console.log('🔍 Checked for gemma3:1b:', hasGemma);
-      return hasGemma;
-    } catch (error) {
-      console.error('❌ Failed to check Ollama models:', error);
-      return false;
-    }
-  }, []);
+  const consumePendingAutoSummary = useCallback((): boolean => {
+    if (!meetingId || typeof window === 'undefined') return false;
+    const pendingMeetingId = sessionStorage.getItem('pending_auto_summary_meeting_id');
+    if (pendingMeetingId !== meetingId) return false;
+    sessionStorage.removeItem('pending_auto_summary_meeting_id');
+    return true;
+  }, [meetingId]);
 
   // Set up auto-generation - respects DB as source of truth
-  const setupAutoGeneration = useCallback(async () => {
+  const setupAutoGeneration = useCallback(() => {
     if (hasCheckedAutoGen) return; // Only check once
 
+    const hasPendingAutoSummary = consumePendingAutoSummary();
+    const shouldRunForRecording = source === 'recording' || hasPendingAutoSummary;
+
     // Only auto-generate if navigated from recording
-    if (source !== 'recording') {
+    if (!shouldRunForRecording) {
       console.log('Not from recording navigation, skipping auto-generation');
       setHasCheckedAutoGen(true);
       return;
@@ -79,42 +77,10 @@ function MeetingDetailsContent() {
       return;
     }
 
-    try {
-      // Check what's currently in database
-      const currentConfig = await invoke('api_get_model_config') as any;
-
-      // If DB already has a model, use it (never override!)
-      if (currentConfig && currentConfig.model) {
-        console.log('Using existing model from DB:', currentConfig.model);
-        setShouldAutoGenerate(true);
-        setHasCheckedAutoGen(true);
-        return;
-      }
-
-      // DB is empty - check if gemma3:1b exists as fallback
-      const hasGemma = await checkForGemmaModel();
-
-      if (hasGemma) {
-        console.log('💾 DB empty, using gemma3:1b as initial default');
-
-        await invoke('api_save_model_config', {
-          provider: 'ollama',
-          model: '',
-          whisperModel: 'large-v3',
-          apiKey: null,
-          ollamaEndpoint: null,
-        });
-
-        setShouldAutoGenerate(true);
-      } else {
-        console.log('⚠️ No model configured and gemma3:1b not found');
-      }
-    } catch (error) {
-      console.error('❌ Failed to setup auto-generation:', error);
-    }
-
+    console.log('Auto-summary enabled for recording navigation');
+    setShouldAutoGenerate(true);
     setHasCheckedAutoGen(true);
-  }, [hasCheckedAutoGen, checkForGemmaModel, source, isAutoSummary]);
+  }, [hasCheckedAutoGen, source, isAutoSummary, consumePendingAutoSummary]);
 
   // Sync meeting metadata from pagination hook to meeting details state
   useEffect(() => {

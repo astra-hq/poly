@@ -127,16 +127,15 @@ export const TranscriptView: React.FC<TranscriptViewProps> = ({ transcripts, isR
   const lastStreamedIdRef = useRef<string | null>(null); // Track which transcript we've streamed
 
   // Load preference for showing confidence indicator
-  const [showConfidence, setShowConfidence] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('showConfidenceIndicator');
-      return saved !== null ? saved === 'true' : true; // Default to true
-    }
-    return true;
-  });
+  const [showConfidence, setShowConfidence] = useState<boolean>(true);
 
-  // Listen for preference changes from settings
+  // Load saved preference on mount and listen for live changes from settings
   useEffect(() => {
+    const saved = localStorage.getItem('showConfidenceIndicator');
+    if (saved !== null) {
+      setShowConfidence(saved === 'true');
+    }
+
     const handleConfidenceChange = (e: Event) => {
       const customEvent = e as CustomEvent<boolean>;
       setShowConfidence(customEvent.detail);

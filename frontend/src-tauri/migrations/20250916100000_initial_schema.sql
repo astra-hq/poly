@@ -47,26 +47,9 @@ CREATE TABLE IF NOT EXISTS transcript_chunks (
     FOREIGN KEY (meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
 );
 
--- Create settings table
-CREATE TABLE IF NOT EXISTS settings (
-    id TEXT PRIMARY KEY,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    whisperModel TEXT NOT NULL,
-    groqApiKey TEXT,
-    openaiApiKey TEXT,
-    anthropicApiKey TEXT,
-    ollamaApiKey TEXT
-);
-
--- Create transcript_settings table
-CREATE TABLE IF NOT EXISTS transcript_settings (
-    id TEXT PRIMARY KEY,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    whisperApiKey TEXT,
-    deepgramApiKey TEXT,
-    elevenLabsApiKey TEXT,
-    groqApiKey TEXT,
-    openaiApiKey TEXT
-);
+-- Config tables (`settings`, `transcript_settings`) are no longer created
+-- for fresh databases.  Legacy installations keep them in place so the
+-- LegacyConfigExtractor (one-shot SQLite → YAML + SecretStore) can read
+-- them.  Subsequent ALTER TABLE migrations that reference these tables
+-- are guarded with CREATE TABLE IF NOT EXISTS so they succeed on both
+-- fresh and legacy databases.

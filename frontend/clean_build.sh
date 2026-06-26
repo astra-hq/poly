@@ -49,8 +49,6 @@ pnpm install
 echo "Building Next.js application..."
 pnpm run build
 
-# Set environment variables for the build
-
 echo "Building Tauri app..."
 pnpm run tauri build
 sleep

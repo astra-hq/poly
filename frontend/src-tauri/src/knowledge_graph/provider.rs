@@ -28,6 +28,10 @@ pub trait KnowledgeGraphProvider: Send + Sync {
         request: KnowledgeGraphInsertTextRequest,
     ) -> KnowledgeGraphResult<KnowledgeGraphInsertTextResponse>;
 
+    async fn delete_by_file_source(&self, file_source: &str) -> KnowledgeGraphResult<()>;
+
+    async fn delete_by_doc_ids(&self, doc_ids: &[String]) -> KnowledgeGraphResult<()>;
+
     async fn query(
         &self,
         request: KnowledgeGraphQueryRequest,
@@ -47,9 +51,8 @@ pub trait KnowledgeGraphProvider: Send + Sync {
 mod tests {
     use super::*;
     use crate::knowledge_graph::types::{
-        KnowledgeGraphEdge, KnowledgeGraphJobState, KnowledgeGraphNode, KnowledgeGraphNodeId,
-        KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId,
-        KnowledgeGraphTrackStatus,
+        KnowledgeGraphEdge, KnowledgeGraphNode, KnowledgeGraphNodeId, KnowledgeGraphQueryRequest,
+        KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
     };
     use std::collections::BTreeMap;
 
@@ -62,6 +65,14 @@ mod tests {
                 healthy: true,
                 version: Some("1.0.0".into()),
             })
+        }
+
+        async fn delete_by_file_source(&self, _file_source: &str) -> KnowledgeGraphResult<()> {
+            Ok(())
+        }
+
+        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
+            Ok(())
         }
 
         async fn insert_text(
@@ -107,12 +118,13 @@ mod tests {
 
         async fn track_status(
             &self,
-            track_id: KnowledgeGraphTrackId,
+            _track_id: KnowledgeGraphTrackId,
         ) -> KnowledgeGraphResult<KnowledgeGraphTrackStatus> {
             Ok(KnowledgeGraphTrackStatus {
-                track_id,
-                state: KnowledgeGraphJobState::Completed,
-                detail: Some("done".into()),
+                track_id: "track-123".into(),
+                documents: vec![],
+                total_count: 0,
+                status_summary: BTreeMap::new(),
             })
         }
 
@@ -128,6 +140,7 @@ mod tests {
         let response = provider
             .query(KnowledgeGraphQueryRequest {
                 query: "meeting summary".into(),
+                mode: Default::default(),
                 top_k: 3,
             })
             .await
@@ -148,8 +161,8 @@ mod tests {
             .await
             .expect("track status");
 
-        assert_eq!(status.track_id.0, "track-123");
-        assert_eq!(status.state, KnowledgeGraphJobState::Completed);
+        assert_eq!(status.track_id, "track-123");
+        assert_eq!(status.total_count, 0);
     }
 
     #[test]

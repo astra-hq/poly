@@ -1,25 +1,51 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 
+/// Whether a profile targets a local or remote LightRAG instance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileKind {
+    #[default]
+    Local,
+    Remote,
+}
+
 /// Top-level knowledge graph settings container.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct KnowledgeGraphSettings {
     pub profiles: Vec<KnowledgeGraphProfile>,
     #[serde(default)]
     pub active_profile: KnowledgeGraphSelection,
 }
 
-/// A named knowledge graph profile (server + embedding configuration).
+/// A knowledge graph profile (server + embedding configuration).
+///
+/// The `id` field is the stable identity of the profile; `name` is a
+/// human-readable display label that can change without breaking references.
+///
+/// `api_key` is always `None` in responses — raw secrets are never returned
+/// from the backend.  The `has_secret` and `api_key_masked_hint` fields
+/// carry the enriched secret-status information that the frontend displays.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KnowledgeGraphProfile {
+    pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub kind: ProfileKind,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
     pub lightrag_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    #[serde(default)]
+    pub has_secret: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_masked_hint: Option<String>,
 }
 
 /// Embedding provider and model configuration.
@@ -30,18 +56,13 @@ pub struct EmbeddingConfig {
     pub dimensions: usize,
 }
 
-/// Which profile is currently selected.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// Which profile is currently selected (keyed by stable profile `id`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum KnowledgeGraphSelection {
+    #[default]
     None,
     Profile(String),
-}
-
-impl Default for KnowledgeGraphSelection {
-    fn default() -> Self {
-        KnowledgeGraphSelection::None
-    }
 }
 
 impl Default for EmbeddingConfig {
@@ -57,19 +78,15 @@ impl Default for EmbeddingConfig {
 impl Default for KnowledgeGraphProfile {
     fn default() -> Self {
         KnowledgeGraphProfile {
+            id: "default".to_string(),
             name: "default".to_string(),
+            kind: ProfileKind::default(),
             embedding: EmbeddingConfig::default(),
             lightrag_url: "http://localhost:9621".to_string(),
             api_key: None,
-        }
-    }
-}
-
-impl Default for KnowledgeGraphSettings {
-    fn default() -> Self {
-        KnowledgeGraphSettings {
-            profiles: vec![KnowledgeGraphProfile::default()],
-            active_profile: KnowledgeGraphSelection::default(),
+            notes: None,
+            has_secret: false,
+            api_key_masked_hint: None,
         }
     }
 }
@@ -82,64 +99,72 @@ pub fn load(json: &str) -> Result<KnowledgeGraphSettings> {
 }
 
 /// Resolve the currently active profile, if any.
+/// Searches by stable profile `id`, not display `name`.
 pub fn resolve(settings: &KnowledgeGraphSettings) -> Option<&KnowledgeGraphProfile> {
     match &settings.active_profile {
         KnowledgeGraphSelection::None => None,
-        KnowledgeGraphSelection::Profile(name) => {
-            settings.profiles.iter().find(|p| p.name == *name)
-        }
+        KnowledgeGraphSelection::Profile(id) => settings.profiles.iter().find(|p| p.id == *id),
     }
 }
 
 /// Validate a `KnowledgeGraphSettings` value.
 ///
 /// Checks:
-/// - at least one profile exists
+/// - no duplicate profile IDs
+/// - no empty profile IDs
 /// - no empty profile names
 /// - no empty LightRAG URLs
 /// - embedding config is well-formed
 /// - the active profile (if set) exists in the profile list
+///
+/// Empty profiles are allowed — the user may not have configured any yet.
 pub fn validate(settings: &KnowledgeGraphSettings) -> Result<()> {
-    if settings.profiles.is_empty() {
-        return Err(anyhow!("At least one profile is required"));
-    }
-
+    let mut seen_ids = HashSet::with_capacity(settings.profiles.len());
     for profile in &settings.profiles {
+        if profile.id.trim().is_empty() {
+            return Err(anyhow!("Profile ID cannot be empty"));
+        }
+        if !seen_ids.insert(&profile.id) {
+            return Err(anyhow!(
+                "Duplicate profile ID '{}' is not allowed",
+                profile.id
+            ));
+        }
         if profile.name.trim().is_empty() {
-            return Err(anyhow!("Profile name cannot be empty"));
+            return Err(anyhow!("Profile name cannot be empty for '{}'", profile.id));
         }
         if profile.lightrag_url.trim().is_empty() {
             return Err(anyhow!(
                 "LightRAG URL cannot be empty for profile '{}'",
-                profile.name
+                profile.id
             ));
         }
         if profile.embedding.provider.trim().is_empty() {
             return Err(anyhow!(
                 "Embedding provider cannot be empty for profile '{}'",
-                profile.name
+                profile.id
             ));
         }
         if profile.embedding.model.trim().is_empty() {
             return Err(anyhow!(
                 "Embedding model cannot be empty for profile '{}'",
-                profile.name
+                profile.id
             ));
         }
         if profile.embedding.dimensions == 0 {
             return Err(anyhow!(
                 "Embedding dimensions must be greater than 0 for profile '{}'",
-                profile.name
+                profile.id
             ));
         }
     }
 
     match &settings.active_profile {
-        KnowledgeGraphSelection::Profile(name) => {
-            if !settings.profiles.iter().any(|p| p.name == *name) {
+        KnowledgeGraphSelection::Profile(id) => {
+            if !settings.profiles.iter().any(|p| p.id == *id) {
                 return Err(anyhow!(
                     "Active profile '{}' not found in profiles list",
-                    name
+                    id
                 ));
             }
         }
@@ -151,9 +176,14 @@ pub fn validate(settings: &KnowledgeGraphSettings) -> Result<()> {
 
 /// Compute a stable fingerprint for a profile so callers can detect
 /// meaningful configuration changes.
+///
+/// Hashes the stable identity (`id`), behavioural fields (`kind`,
+/// `lightrag_url`, embedding config) but not cosmetic labels (`name`,
+/// `notes`) or secrets (`api_key`).
 pub fn fingerprint(profile: &KnowledgeGraphProfile) -> String {
     let mut hasher = DefaultHasher::new();
-    profile.name.hash(&mut hasher);
+    profile.id.hash(&mut hasher);
+    profile.kind.hash(&mut hasher);
     profile.embedding.provider.hash(&mut hasher);
     profile.embedding.model.hash(&mut hasher);
     profile.embedding.dimensions.hash(&mut hasher);
@@ -180,10 +210,9 @@ mod tests {
     }
 
     #[test]
-    fn default_settings_has_one_profile() {
+    fn default_settings_has_no_profiles() {
         let s = KnowledgeGraphSettings::default();
-        assert_eq!(s.profiles.len(), 1);
-        assert_eq!(s.profiles[0].name, "default");
+        assert_eq!(s.profiles.len(), 0);
         assert_eq!(s.active_profile, KnowledgeGraphSelection::None);
     }
 
@@ -192,6 +221,7 @@ mod tests {
         let json = r#"{
             "profiles": [
                 {
+                    "id": "local-1",
                     "name": "local",
                     "embedding": {
                         "provider": "mlx",
@@ -201,23 +231,26 @@ mod tests {
                     "lightrag_url": "http://localhost:9621"
                 }
             ],
-            "active_profile": {"profile": "local"}
+            "active_profile": {"profile": "local-1"}
         }"#;
         let s = load(json).unwrap();
         assert_eq!(s.profiles.len(), 1);
         assert_eq!(s.profiles[0].name, "local");
+        assert_eq!(s.profiles[0].id, "local-1");
         assert_eq!(
             s.active_profile,
-            KnowledgeGraphSelection::Profile("local".into())
+            KnowledgeGraphSelection::Profile("local-1".into())
         );
     }
 
     #[test]
     fn load_json_with_defaults() {
-        let json = r#"{"profiles": [{"name": "x", "lightrag_url": "http://localhost:9621"}]}"#;
+        let json =
+            r#"{"profiles": [{"id": "x", "name": "x", "lightrag_url": "http://localhost:9621"}]}"#;
         let s = load(json).unwrap();
         assert_eq!(s.profiles[0].embedding.provider, "mlx");
         assert_eq!(s.profiles[0].embedding.model, "BAAI/bge-m3");
+        assert_eq!(s.profiles[0].kind, ProfileKind::Local);
         assert_eq!(s.active_profile, KnowledgeGraphSelection::None);
     }
 
@@ -232,18 +265,21 @@ mod tests {
         let s = KnowledgeGraphSettings {
             profiles: vec![
                 KnowledgeGraphProfile {
-                    name: "a".into(),
+                    id: "a".into(),
+                    name: "Alpha".into(),
                     ..Default::default()
                 },
                 KnowledgeGraphProfile {
-                    name: "b".into(),
+                    id: "b".into(),
+                    name: "Beta".into(),
                     ..Default::default()
                 },
             ],
             active_profile: KnowledgeGraphSelection::Profile("b".into()),
         };
         let resolved = resolve(&s).unwrap();
-        assert_eq!(resolved.name, "b");
+        assert_eq!(resolved.id, "b");
+        assert_eq!(resolved.name, "Beta");
     }
 
     #[test]
@@ -253,19 +289,54 @@ mod tests {
     }
 
     #[test]
-    fn validate_empty_profiles_fails() {
+    fn validate_empty_profiles_is_ok() {
         let s = KnowledgeGraphSettings {
             profiles: vec![],
             active_profile: KnowledgeGraphSelection::None,
         };
+        assert!(validate(&s).is_ok());
+    }
+
+    #[test]
+    fn validate_empty_profile_id_fails() {
+        let s = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "".into(),
+                name: "x".into(),
+                ..Default::default()
+            }],
+            active_profile: KnowledgeGraphSelection::None,
+        };
         let err = validate(&s).unwrap_err();
-        assert!(err.to_string().contains("At least one profile is required"));
+        assert!(err.to_string().contains("Profile ID cannot be empty"));
+    }
+
+    #[test]
+    fn validate_duplicate_profile_id_fails() {
+        let s = KnowledgeGraphSettings {
+            profiles: vec![
+                KnowledgeGraphProfile {
+                    id: "dup".into(),
+                    name: "first".into(),
+                    ..Default::default()
+                },
+                KnowledgeGraphProfile {
+                    id: "dup".into(),
+                    name: "second".into(),
+                    ..Default::default()
+                },
+            ],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        let err = validate(&s).unwrap_err();
+        assert!(err.to_string().contains("Duplicate profile ID"));
     }
 
     #[test]
     fn validate_empty_profile_name_fails() {
         let s = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
+                id: "x".into(),
                 name: "".into(),
                 ..Default::default()
             }],
@@ -279,6 +350,7 @@ mod tests {
     fn validate_empty_url_fails() {
         let s = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
+                id: "x".into(),
                 name: "x".into(),
                 lightrag_url: "".into(),
                 ..Default::default()
@@ -293,6 +365,7 @@ mod tests {
     fn validate_zero_dimensions_fails() {
         let s = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
+                id: "x".into(),
                 name: "x".into(),
                 embedding: EmbeddingConfig {
                     provider: "mlx".into(),
@@ -313,7 +386,8 @@ mod tests {
     fn validate_missing_active_profile_fails() {
         let s = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
-                name: "a".into(),
+                id: "a".into(),
+                name: "Alpha".into(),
                 ..Default::default()
             }],
             active_profile: KnowledgeGraphSelection::Profile("missing".into()),
@@ -331,6 +405,20 @@ mod tests {
     }
 
     #[test]
+    fn validate_profile_with_remote_kind_succeeds() {
+        let s = KnowledgeGraphSettings {
+            profiles: vec![KnowledgeGraphProfile {
+                id: "remote-1".into(),
+                name: "cloud".into(),
+                kind: ProfileKind::Remote,
+                ..Default::default()
+            }],
+            active_profile: KnowledgeGraphSelection::None,
+        };
+        assert!(validate(&s).is_ok());
+    }
+
+    #[test]
     fn fingerprint_is_stable() {
         let p = KnowledgeGraphProfile::default();
         let fp1 = fingerprint(&p);
@@ -340,18 +428,31 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_changes_with_content() {
+    fn fingerprint_changes_with_behavioural_content() {
         let p1 = KnowledgeGraphProfile::default();
         let mut p2 = p1.clone();
-        p2.name = "other".into();
+        // Changing the URL is a meaningful config change — fingerprint must differ
+        p2.lightrag_url = "http://other-host:9621".into();
         assert_ne!(fingerprint(&p1), fingerprint(&p2));
+    }
+
+    #[test]
+    fn fingerprint_stable_across_cosmetic_changes() {
+        let p1 = KnowledgeGraphProfile::default();
+        let mut p2 = p1.clone();
+        // Cosmetic changes (name, notes) should NOT affect the fingerprint
+        p2.name = "Renamed Profile".into();
+        p2.notes = Some("some note".into());
+        assert_eq!(fingerprint(&p1), fingerprint(&p2));
     }
 
     #[test]
     fn roundtrip_serialization() {
         let original = KnowledgeGraphSettings {
             profiles: vec![KnowledgeGraphProfile {
+                id: "prod-1".into(),
                 name: "prod".into(),
+                kind: ProfileKind::Remote,
                 embedding: EmbeddingConfig {
                     provider: "mlx".into(),
                     model: "BAAI/bge-m3".into(),
@@ -359,8 +460,11 @@ mod tests {
                 },
                 lightrag_url: "http://localhost:9621".into(),
                 api_key: Some("secret".into()),
+                notes: Some("production profile".into()),
+                has_secret: false,
+                api_key_masked_hint: None,
             }],
-            active_profile: KnowledgeGraphSelection::Profile("prod".into()),
+            active_profile: KnowledgeGraphSelection::Profile("prod-1".into()),
         };
         let json = serde_json::to_string(&original).unwrap();
         let restored: KnowledgeGraphSettings = serde_json::from_str(&json).unwrap();

@@ -95,7 +95,7 @@ export function SummaryPanel({
   selectedTemplate,
   onTemplateSelect,
   isModelConfigLoading = false,
-  onOpenModelSettings
+  onOpenModelSettings,
 }: SummaryPanelProps) {
   const [summaryLang, setSummaryLang] = useState<string | null>(null);
   const [summaryLangStorage, setSummaryLangStorage] = useState<SummaryLanguageStorage>('metadata');
@@ -285,6 +285,7 @@ export function SummaryPanel({
                 isModelConfigLoading={isModelConfigLoading}
                 onOpenModelSettings={onOpenModelSettings}
                 languageSlot={languageSlot}
+                meetingId={meeting.id}
               />
             </div>
 
@@ -325,6 +326,7 @@ export function SummaryPanel({
               hasTranscripts={transcripts.length > 0}
               isModelConfigLoading={isModelConfigLoading}
               onOpenModelSettings={onOpenModelSettings}
+              meetingId={meeting.id}
             />
           </div>
           {/* Loading spinner */}
@@ -355,6 +357,7 @@ export function SummaryPanel({
               isModelConfigLoading={isModelConfigLoading}
               onOpenModelSettings={onOpenModelSettings}
               languageSlot={transcripts.length > 0 ? languageSlot : undefined}
+              meetingId={meeting.id}
             />
           </div>
           {/* Empty state message */}

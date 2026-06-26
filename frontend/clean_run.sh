@@ -32,14 +32,13 @@ rm -rf out
 echo "Installing dependencies..."
 pnpm install
 
-# Build the Next.js application first
-echo "Building Next.js application..."
-pnpm run build
+# Ensure clean .next/ before dev (production build from a prior run can conflict)
+rm -rf .next out
 
 # Set environment variables for the build
 echo "Setting up build environment..."
 
-echo "Building Tauri app..."
+echo "Starting Tauri dev (Next.js dev server starts automatically)..."
 pnpm run tauri dev
 sleep
 

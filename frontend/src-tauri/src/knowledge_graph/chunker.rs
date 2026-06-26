@@ -35,26 +35,26 @@ pub struct TranscriptChunker {
     pub chunk_interval_secs: f64,
 }
 
+impl Default for TranscriptChunker {
+    /// Creates a chunker with the default interval of 20 seconds.
+    fn default() -> Self {
+        Self::new(DEFAULT_CHUNK_INTERVAL_SECS)
+    }
+}
+
 impl TranscriptChunker {
     /// Creates a new chunker. The interval is clamped to [5.0, 120.0].
     pub fn new(chunk_interval_secs: f64) -> Self {
         Self {
-            chunk_interval_secs: chunk_interval_secs.clamp(MIN_CHUNK_INTERVAL_SECS, MAX_CHUNK_INTERVAL_SECS),
+            chunk_interval_secs: chunk_interval_secs
+                .clamp(MIN_CHUNK_INTERVAL_SECS, MAX_CHUNK_INTERVAL_SECS),
         }
-    }
-
-    /// Creates a chunker with the default interval of 20 seconds.
-    pub fn default() -> Self {
-        Self::new(DEFAULT_CHUNK_INTERVAL_SECS)
     }
 
     /// Accepts transcript rows and returns time-based chunks.
     pub fn chunk(&self, rows: Vec<TranscriptRow>) -> Vec<Chunk> {
         // 1. Filter out rows with empty text
-        let rows: Vec<TranscriptRow> = rows
-            .into_iter()
-            .filter(|r| !r.text.is_empty())
-            .collect();
+        let rows: Vec<TranscriptRow> = rows.into_iter().filter(|r| !r.text.is_empty()).collect();
 
         // 2. Deduplicate by ID — keep first occurrence only
         let mut seen: HashSet<String> = HashSet::new();
@@ -67,11 +67,7 @@ impl TranscriptChunker {
         //    A row is untimed when audio_start_time is None, NaN, or infinite.
         let (mut timed, untimed): (Vec<TranscriptRow>, Vec<TranscriptRow>) = rows
             .into_iter()
-            .partition(|r| {
-                r.audio_start_time
-                    .map(|t| t.is_finite())
-                    .unwrap_or(false)
-            });
+            .partition(|r| r.audio_start_time.map(|t| t.is_finite()).unwrap_or(false));
 
         // 4. Sort timed rows by audio_start_time (stable, ascending)
         timed.sort_by(|a, b| {
@@ -346,8 +342,8 @@ mod tests {
         // Window 2: [60, 80) → row at 60
         let chunker = TranscriptChunker::default();
         let rows = vec![
-            row("a", 35.0, 36.0, "alpha"),  // window 0
-            row("b", 50.0, 51.0, "bravo"),  // window 1
+            row("a", 35.0, 36.0, "alpha"),   // window 0
+            row("b", 50.0, 51.0, "bravo"),   // window 1
             row("c", 60.0, 61.0, "charlie"), // window 2
         ];
         let chunks = chunker.chunk(rows);
@@ -400,10 +396,7 @@ mod tests {
     #[test]
     fn only_untimed_rows_produce_single_chunk() {
         let chunker = TranscriptChunker::default();
-        let rows = vec![
-            untimed_row("a", "foo"),
-            untimed_row("b", "bar"),
-        ];
+        let rows = vec![untimed_row("a", "foo"), untimed_row("b", "bar")];
         let chunks = chunker.chunk(rows);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].text, "foo bar");
@@ -431,14 +424,12 @@ mod tests {
     #[test]
     fn infinite_start_time_treated_as_untimed() {
         let chunker = TranscriptChunker::default();
-        let rows = vec![
-            TranscriptRow {
-                id: "inf".into(),
-                audio_start_time: Some(f64::INFINITY),
-                audio_end_time: Some(5.0),
-                text: "infinite row".into(),
-            },
-        ];
+        let rows = vec![TranscriptRow {
+            id: "inf".into(),
+            audio_start_time: Some(f64::INFINITY),
+            audio_end_time: Some(5.0),
+            text: "infinite row".into(),
+        }];
         let chunks = chunker.chunk(rows);
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].start_time, None);

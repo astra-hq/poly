@@ -6,6 +6,8 @@ import {
   DialogContent,
   DialogTrigger,
   DialogTitle,
+  DialogHeader,
+  DialogDescription,
 } from "@/components/ui/dialog"
 import { VisuallyHidden } from "@/components/ui/visually-hidden"
 import { Button } from '@/components/ui/button';
@@ -16,11 +18,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Sparkles, Settings, Loader2, FileText, Check, Square } from 'lucide-react';
+import { KnowledgeGraphPanel } from '@/components/MeetingDetails/KnowledgeGraphPanel';
+import { Sparkles, Settings, Loader2, FileText, Check, Square, Database, X } from 'lucide-react';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
-import { useState, useEffect, useRef, ReactNode } from 'react';
+import { useState, useEffect, ReactNode } from 'react';
 import { isOllamaNotInstalledError } from '@/lib/utils';
 import { BuiltInModelInfo } from '@/lib/builtin-ai';
 
@@ -40,6 +43,7 @@ interface SummaryGeneratorButtonGroupProps {
   hasSummary?: boolean;
   isModelConfigLoading?: boolean;
   onOpenModelSettings?: (openFn: () => void) => void;
+  meetingId: string;
 }
 
 export function SummaryGeneratorButtonGroup({
@@ -57,10 +61,12 @@ export function SummaryGeneratorButtonGroup({
   hasSummary = false,
   isModelConfigLoading = false,
   onOpenModelSettings,
-  languageSlot
+  languageSlot,
+  meetingId,
 }: SummaryGeneratorButtonGroupProps) {
   const [isCheckingModels, setIsCheckingModels] = useState(false);
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false);
+  const [kgDialogOpen, setKgDialogOpen] = useState(false);
 
   // Expose the function to open the modal via callback registration
   useEffect(() => {
@@ -355,6 +361,34 @@ export function SummaryGeneratorButtonGroup({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+
+      {/* Knowledge Graph modal button */}
+      <Dialog open={kgDialogOpen} onOpenChange={setKgDialogOpen}>
+        <DialogTrigger asChild>
+          <Button
+            variant="outline"
+            size="sm"
+            title="Open Knowledge Graph for this meeting"
+          >
+            <Database size={18} />
+            <span className="hidden lg:inline ml-1">Knowledge Graph</span>
+          </Button>
+        </DialogTrigger>
+        <DialogContent
+          aria-describedby={undefined}
+          className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0"
+        >
+          <VisuallyHidden>
+            <DialogTitle>Knowledge Graph</DialogTitle>
+          </VisuallyHidden>
+          <div className="flex justify-between items-center p-6 border-b border-gray-200">
+            <h3 className="text-xl font-semibold text-gray-900">Knowledge Graph</h3>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-8">
+            <KnowledgeGraphPanel meetingId={meetingId} defaultExpanded={true} />
+          </div>
+        </DialogContent>
+      </Dialog>
     </ButtonGroup>
   );
 }

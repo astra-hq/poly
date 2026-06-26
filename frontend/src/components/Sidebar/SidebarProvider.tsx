@@ -38,6 +38,7 @@ interface SidebarContextType {
   isMeetingActive: boolean;
   setIsMeetingActive: (active: boolean) => void;
   handleRecordingToggle: () => void;
+  openRecordingSettings: () => void;
   searchTranscripts: (query: string) => Promise<void>;
   searchResults: TranscriptSearchResult[];
   isSearching: boolean;
@@ -161,6 +162,16 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
       Analytics.trackButtonClick('start_recording', 'sidebar');
     }
     // The actual recording start/stop is handled in the Home component
+  };
+
+  const openRecordingSettings = () => {
+    if (isRecording) return;
+    if (pathname === '/') {
+      window.dispatchEvent(new CustomEvent('open-recording-settings'));
+    } else {
+      sessionStorage.setItem('openRecordingSettingsOnHome', 'true');
+      router.push('/');
+    }
   };
 
   // Function to search through meeting transcripts
@@ -301,6 +312,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
       isMeetingActive,
       setIsMeetingActive,
       handleRecordingToggle,
+      openRecordingSettings,
       searchTranscripts,
       searchResults,
       isSearching,

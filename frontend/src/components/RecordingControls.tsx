@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import Analytics from '@/lib/analytics';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
+import { useLongPress } from '@/hooks/useLongPress';
 
 interface RecordingControlsProps {
   isRecording: boolean;
@@ -26,6 +27,7 @@ interface RecordingControlsProps {
     systemDevice: string | null;
   };
   meetingName?: string;
+  onLongPressStart?: () => void;
 }
 
 export const RecordingControls: React.FC<RecordingControlsProps> = ({
@@ -40,6 +42,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
   isParentProcessing,
   selectedDevices,
   meetingName,
+  onLongPressStart,
 }) => {
   // Use global recording state context for pause state (syncs with tray operations)
   const recordingState = useRecordingState();
@@ -136,6 +139,18 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
       }
     }
   }, [onRecordingStart, isStarting, isValidatingModel, selectedDevices, meetingName, isRecording]);
+
+  const startLongPress = useLongPress({
+    onLongPress: () => {
+      if (onLongPressStart && !isRecording) {
+        onLongPressStart();
+      }
+    },
+    onClick: () => {
+      Analytics.trackButtonClick('start_recording', 'recording_controls');
+      handleStartRecording();
+    },
+  });
 
   const stopRecordingAction = useCallback(async () => {
     console.log('Executing stop recording...');
@@ -392,11 +407,10 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
-                          onClick={() => {
-                            Analytics.trackButtonClick('start_recording', 'recording_controls');
-                            handleStartRecording();
-                          }}
+                          {...startLongPress}
                           disabled={isStarting || isProcessing || isRecordingDisabled || isValidatingModel}
+                          aria-label="Start recording (long press for settings)"
+                          title="Start recording (long press for settings)"
                           className={`w-12 h-12 flex items-center justify-center ${isStarting || isProcessing || isValidatingModel ? 'bg-gray-400' : 'bg-red-500 hover:bg-red-600'
                             } rounded-full text-white transition-colors relative`}
                         >
@@ -408,7 +422,7 @@ export const RecordingControls: React.FC<RecordingControlsProps> = ({
                         </button>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>Start recording</p>
+                        <p>Start recording (long press for settings)</p>
                       </TooltipContent>
                     </Tooltip>
                   ) : (

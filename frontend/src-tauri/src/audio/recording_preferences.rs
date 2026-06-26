@@ -39,41 +39,14 @@ impl Default for RecordingPreferences {
     }
 }
 
-/// Get the default recordings folder based on platform
+/// Get the default recordings folder
+/// All recordings are stored under ~/.resourcefully/media for consistency
+/// across platforms and to keep media data in a single, privacy-focused location.
 pub fn get_default_recordings_folder() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        // Windows: %USERPROFILE%\Music\meetily-recordings
-        if let Some(music_dir) = dirs::audio_dir() {
-            music_dir.join("meetily-recordings")
-        } else {
-            // Fallback to Documents if Music folder is not available
-            dirs::document_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("meetily-recordings")
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // macOS: ~/Movies/meetily-recordings
-        if let Some(movies_dir) = dirs::video_dir() {
-            movies_dir.join("meetily-recordings")
-        } else {
-            // Fallback to Documents if Movies folder is not available
-            dirs::document_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("meetily-recordings")
-        }
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        // Linux/Others: ~/Documents/meetily-recordings
-        dirs::document_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("meetily-recordings")
-    }
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".resourcefully")
+        .join("media")
 }
 
 /// Ensure the recordings directory exists
@@ -384,4 +357,3 @@ pub async fn get_audio_backend_info() -> Result<Vec<BackendInfo>, String> {
         }])
     }
 }
-

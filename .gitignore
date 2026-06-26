@@ -76,5 +76,10 @@ experiments/
 .cursor/
 target/
 
+# LightRAG runtime data
+data/
+kg.env
+
 frontend/src-tauri/binaries/
 .omo
+.playwright-mcp

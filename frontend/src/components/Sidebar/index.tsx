@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
 import { useImportDialog } from '@/contexts/ImportDialogContext';
 import { useConfig } from '@/contexts/ConfigContext';
+import { useLongPress } from '@/hooks/useLongPress';
 
 import {
   Dialog,
@@ -49,6 +50,7 @@ const Sidebar: React.FC = () => {
     isCollapsed,
     toggleCollapse,
     handleRecordingToggle,
+    openRecordingSettings,
     searchTranscripts,
     searchResults,
     isSearching,
@@ -84,6 +86,16 @@ const Sidebar: React.FC = () => {
     currentTitle: ''
   });
   const [editingTitle, setEditingTitle] = useState<string>('');
+
+  const collapsedLongPress = useLongPress({
+    onLongPress: openRecordingSettings,
+    onClick: handleRecordingToggle,
+  });
+
+  const expandedLongPress = useLongPress({
+    onLongPress: openRecordingSettings,
+    onClick: handleRecordingToggle,
+  });
 
   // Ensure 'meetings' folder is always expanded
   useEffect(() => {
@@ -474,8 +486,10 @@ const Sidebar: React.FC = () => {
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={handleRecordingToggle}
+                {...collapsedLongPress}
                 disabled={isRecording}
+                aria-label={isRecording ? "Recording in progress" : "Start recording (long press for settings)"}
+                title={isRecording ? "Recording in progress..." : "Start recording (long press for settings)"}
                 className={`p-2 ${isRecording ? 'bg-red-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-full transition-colors duration-150 shadow-sm`}
               >
                 {isRecording ? (
@@ -486,7 +500,7 @@ const Sidebar: React.FC = () => {
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              <p>{isRecording ? "Recording in progress..." : "Start Recording"}</p>
+              <p>{isRecording ? "Recording in progress..." : "Start Recording (long press for settings)"}</p>
             </TooltipContent>
           </Tooltip>
 
@@ -775,8 +789,10 @@ const Sidebar: React.FC = () => {
 
           <div className="flex-shrink-0 p-2 border-t border-gray-100">
             <button
-              onClick={handleRecordingToggle}
+              {...expandedLongPress}
               disabled={isRecording}
+              aria-label={isRecording ? "Recording in progress" : "Start recording (long press for settings)"}
+              title={isRecording ? "Recording in progress..." : "Start recording (long press for settings)"}
               className={`w-full flex items-center justify-center px-3 py-2 text-sm font-medium text-white ${isRecording ? 'bg-red-300 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600'} rounded-lg transition-colors shadow-sm`}
             >
               {isRecording ? (

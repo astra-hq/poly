@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { RecordingControls } from '@/components/RecordingControls';
 import { useSidebar } from '@/components/Sidebar/SidebarProvider';
@@ -21,12 +21,28 @@ import { TranscriptRecovery } from '@/components/TranscriptRecovery';
 import { indexedDBService } from '@/services/indexedDBService';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
+import { knowledgeGraphService } from '@/services/knowledgeGraphService';
 
 export default function Home() {
   // Local page state (not moved to contexts)
   const [isRecording, setIsRecordingState] = useState(false);
   const [barHeights, setBarHeights] = useState(['58%', '76%', '58%']);
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
+
+  const kgSelectionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    knowledgeGraphService.getSettings().then((settings) => {
+      const active = settings.active_profile;
+      if (typeof active === 'object' && active !== null && 'profile' in active) {
+        const profileId = active.profile;
+        const profile = settings.profiles.find((p) => p.id === profileId);
+        if (profile) {
+          kgSelectionRef.current = profileId;
+        }
+      }
+    }).catch(() => {});
+  }, []);
 
   // Use contexts for state management
   const { meetingTitle } = useTranscripts();
@@ -46,7 +62,8 @@ export default function Home() {
   // Get handleRecordingStop function and setIsStopping (state comes from global context)
   const { handleRecordingStop, setIsStopping } = useRecordingStop(
     setIsRecordingState,
-    setIsRecordingDisabled
+    setIsRecordingDisabled,
+    kgSelectionRef
   );
 
   // Recovery hook
@@ -186,6 +203,24 @@ export default function Home() {
     }
   }, [recordingState.isRecording]);
 
+  useEffect(() => {
+    const handleOpenRecordingSettings = () => {
+      showModal('recordingSettings');
+    };
+    window.addEventListener('open-recording-settings', handleOpenRecordingSettings);
+    return () => {
+      window.removeEventListener('open-recording-settings', handleOpenRecordingSettings);
+    };
+  }, [showModal]);
+
+  useEffect(() => {
+    const flag = sessionStorage.getItem('openRecordingSettingsOnHome');
+    if (flag === 'true') {
+      sessionStorage.removeItem('openRecordingSettingsOnHome');
+      showModal('recordingSettings');
+    }
+  }, [showModal]);
+
   // Computed values using global status
   const isProcessingStop = status === RecordingStatus.PROCESSING_TRANSCRIPTS || isProcessing;
 
@@ -201,6 +236,10 @@ export default function Home() {
         modals={modals}
         messages={messages}
         onClose={hideModal}
+        recordingSettingsProps={{
+          kgSelectionRef,
+          onStartRecording: handleRecordingStart,
+        }}
       />
 
       {/* Recovery Dialog */}
@@ -246,6 +285,7 @@ export default function Home() {
                       isParentProcessing={isProcessingStop}
                       selectedDevices={selectedDevices}
                       meetingName={meetingTitle}
+                      onLongPressStart={() => showModal('recordingSettings')}
                     />
                   </div>
                 </div>
