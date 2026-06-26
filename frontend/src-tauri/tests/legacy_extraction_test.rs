@@ -1,7 +1,7 @@
 use app_lib::database::setup::drop_legacy_config_tables_with_pool;
-use app_lib::resourcefully_config::config::ResourcefullyConfig;
-use app_lib::resourcefully_config::legacy_extraction::LegacyConfigExtractor;
-use app_lib::resourcefully_config::ConfigRepository;
+use app_lib::poly_config::config::{PolyConfig, SummaryConfig};
+use app_lib::poly_config::legacy_extraction::LegacyConfigExtractor;
+use app_lib::poly_config::ConfigRepository;
 use app_lib::secrets::file_store::FileSecretStore;
 use app_lib::secrets::refs;
 use app_lib::secrets::store::SecretStore;
@@ -396,7 +396,7 @@ async fn legacy_sqlite_config_extraction_is_non_destructive_on_secret_write_fail
             );
             assert_eq!(
                 loaded,
-                ResourcefullyConfig::default(),
+                PolyConfig::default(),
                 "YAML should contain only default values after failed extraction"
             );
         }
@@ -577,4 +577,97 @@ async fn legacy_import_preserves_tables_on_extraction_failure() {
         .await
         .unwrap();
     assert_eq!(row.0, "ollama", "non-secret columns should be unchanged");
+}
+
+// ─── extraction + Poly config interaction tests ────────────────────────
+
+/// After extraction creates Poly config, calling `load_or_create_default`
+/// with the Poly path must return the extracted config (Poly file exists)
+/// and must NOT attempt legacy migration again.
+#[tokio::test]
+async fn poly_config_loads_extracted_data_after_extraction() {
+    let pool = setup_test_db().await;
+    let (store, _store_dir) = temp_secret_store();
+    let (config_repo, _config_dir) = temp_config_repo();
+
+    // Seed settings with summary config
+    sqlx::query(
+        r#"
+        INSERT INTO settings (id, provider, model, whisperModel,
+                              openaiApiKey, ollamaEndpoint)
+        VALUES ('1', 'ollama', 'llama3.2:latest', 'large-v3-turbo',
+                'sk-openai-test', 'http://localhost:11434')
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Seed transcript_settings
+    sqlx::query(
+        r#"
+        INSERT INTO transcript_settings (id, provider, model, whisperApiKey)
+        VALUES ('1', 'parakeet', 'parakeet-tdt-0.6b-v3-int8', 'sk-whisper-test')
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Step 1: extract config from SQLite into YAML + SecretStore
+    let result = LegacyConfigExtractor::extract(&pool, &store, &config_repo).await;
+    assert!(result.is_ok(), "extraction failed: {:?}", result.err());
+
+    // Step 2: load config from the repo (Poly file now exists)
+    let loaded = config_repo.load().unwrap();
+
+    assert_eq!(loaded.summary.provider, "ollama");
+    assert_eq!(loaded.summary.model, "llama3.2:latest");
+    assert_eq!(loaded.summary.whisper_model, "large-v3-turbo");
+    assert_eq!(
+        loaded.summary.ollama_endpoint.as_deref(),
+        Some("http://localhost:11434")
+    );
+    assert_eq!(loaded.transcript.provider, "parakeet");
+    assert_eq!(loaded.transcript.model, "parakeet-tdt-0.6b-v3-int8");
+
+    // Secrets were placed in SecretStore (not in YAML)
+    let openai_key = refs::summary_provider_key("openai");
+    assert_eq!(
+        store.get(&openai_key).await.unwrap().as_deref(),
+        Some("sk-openai-test")
+    );
+}
+
+/// When a Poly config already exists (e.g. from a previous run),
+/// `load_or_create_default` must load it as-is — it must not
+/// overwrite it through legacy migration or extraction.
+#[tokio::test]
+async fn existing_poly_config_is_not_overwritten_by_load_or_create_default() {
+    let (config_repo, _config_dir) = temp_config_repo();
+
+    // Write a custom Poly config that simulates data from a previous session.
+    let custom_cfg = PolyConfig {
+        summary: SummaryConfig {
+            provider: "openai".to_string(),
+            model: "my-model".to_string(),
+            whisper_model: "medium".to_string(),
+            ollama_endpoint: Some("http://custom:11434".to_string()),
+        },
+        ..PolyConfig::default()
+    };
+    config_repo.save_atomic(&custom_cfg).unwrap();
+
+    // Now simulate startup: load_or_create_default must return the
+    // existing config unchanged — no legacy fallback, no overwrite.
+    let loaded = config_repo.load_or_create_default().unwrap();
+
+    assert_eq!(loaded.summary.provider, "openai");
+    assert_eq!(loaded.summary.model, "my-model");
+    assert_eq!(loaded.summary.whisper_model, "medium");
+    assert_eq!(
+        loaded.summary.ollama_endpoint.as_deref(),
+        Some("http://custom:11434")
+    );
+    assert_eq!(loaded, custom_cfg);
 }

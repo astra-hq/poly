@@ -1,15 +1,15 @@
 use app_lib::knowledge_graph::config::KnowledgeGraphSelection;
-use app_lib::resourcefully_config::config::{
+use app_lib::poly_config::config::{
     CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets,
-    KnowledgeGraphSettingsWithoutSecrets, PreferencesConfig, ResourcefullyConfig, SummaryConfig,
+    KnowledgeGraphSettingsWithoutSecrets, PolyConfig, PreferencesConfig, SummaryConfig,
     TranscriptConfig,
 };
 
 // ─── full schema roundtrip test ────────────────────────────────────────────
 
 #[test]
-fn resourcefully_config_full_schema_roundtrip_without_raw_secrets() {
-    let cfg = ResourcefullyConfig {
+fn poly_config_full_schema_roundtrip_without_raw_secrets() {
+    let cfg = PolyConfig {
         summary: SummaryConfig {
             provider: "openai".to_string(),
             model: "gpt-4o-2024-11-20".to_string(),
@@ -77,7 +77,7 @@ fn resourcefully_config_full_schema_roundtrip_without_raw_secrets() {
     );
 
     // Roundtrip: deserialize and compare
-    let restored: ResourcefullyConfig = serde_yaml::from_str(&yaml).unwrap();
+    let restored: PolyConfig = serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(restored.summary.provider, cfg.summary.provider);
     assert_eq!(restored.summary.model, cfg.summary.model);
     assert_eq!(restored.summary.whisper_model, cfg.summary.whisper_model);
@@ -122,7 +122,7 @@ preferences:
   language: fr
 "#;
 
-    let cfg: ResourcefullyConfig = serde_yaml::from_str(partial_yaml).unwrap();
+    let cfg: PolyConfig = serde_yaml::from_str(partial_yaml).unwrap();
 
     // Set fields
     assert_eq!(cfg.summary.provider, "claude");
@@ -151,7 +151,7 @@ preferences:
 #[test]
 fn empty_yaml_produces_all_defaults() {
     let yaml = "{}";
-    let cfg: ResourcefullyConfig = serde_yaml::from_str(yaml).unwrap();
+    let cfg: PolyConfig = serde_yaml::from_str(yaml).unwrap();
 
     assert_eq!(cfg.summary.provider, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
@@ -180,7 +180,7 @@ fn malformed_yaml_returns_error_without_deleting_file() {
     std::fs::write(&file_path, "summary: [unclosed\n  provider: openai\n").unwrap();
 
     let contents = std::fs::read_to_string(&file_path).unwrap();
-    let result = ResourcefullyConfig::load_from_str(&contents);
+    let result = PolyConfig::load_from_str(&contents);
 
     assert!(result.is_err(), "Malformed YAML should produce an error");
     let err = result.unwrap_err();
@@ -204,7 +204,7 @@ fn save_and_load_roundtrip_via_file() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("config.yml");
 
-    let cfg = ResourcefullyConfig {
+    let cfg = PolyConfig {
         summary: SummaryConfig {
             provider: "ollama".to_string(),
             model: "llama3.1:8b".to_string(),
@@ -237,7 +237,7 @@ fn save_and_load_roundtrip_via_file() {
 
     // Load
     let read_back = std::fs::read_to_string(&file_path).unwrap();
-    let restored: ResourcefullyConfig = serde_yaml::from_str(&read_back).unwrap();
+    let restored: PolyConfig = serde_yaml::from_str(&read_back).unwrap();
 
     assert_eq!(restored.summary.provider, "ollama");
     assert_eq!(restored.summary.model, "llama3.1:8b");
@@ -301,15 +301,15 @@ fn kg_profile_without_secrets_excludes_api_key() {
 
 #[test]
 fn load_default_returns_default_config() {
-    let cfg = ResourcefullyConfig::load_default();
+    let cfg = PolyConfig::load_default();
     assert_eq!(cfg.summary.provider, "openai");
     assert_eq!(cfg.preferences.language, "auto-translate");
 }
 
 #[test]
 fn load_from_file_missing_returns_default() {
-    let cfg = ResourcefullyConfig::load_from_path(&std::path::PathBuf::from(
-        "/nonexistent/path/resourcefully.yml",
+    let cfg = PolyConfig::load_from_path(&std::path::PathBuf::from(
+        "/nonexistent/path/poly.yml",
     ));
     assert!(cfg.is_ok(), "Missing file should return default, not error");
     let cfg = cfg.unwrap();
@@ -319,8 +319,8 @@ fn load_from_file_missing_returns_default() {
 // ─── Default implementations ───────────────────────────────────────────────
 
 #[test]
-fn default_resourcefully_config_has_sensible_values() {
-    let cfg = ResourcefullyConfig::default();
+fn default_poly_config_has_sensible_values() {
+    let cfg = PolyConfig::default();
     assert_eq!(cfg.summary.provider, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(cfg.summary.whisper_model, "large-v3-turbo");
@@ -332,8 +332,8 @@ fn default_resourcefully_config_has_sensible_values() {
 // ─── atomic save preserves existing file on failure ───────────────────────
 
 #[test]
-fn resourcefully_config_atomic_save_preserves_existing_file_on_failure() {
-    use app_lib::resourcefully_config::repository::ConfigRepository;
+fn poly_config_atomic_save_preserves_existing_file_on_failure() {
+    use app_lib::poly_config::repository::ConfigRepository;
     use std::fs::{self, Permissions};
     use std::os::unix::fs::PermissionsExt;
 
@@ -342,7 +342,7 @@ fn resourcefully_config_atomic_save_preserves_existing_file_on_failure() {
     let repo = ConfigRepository::with_path(file_path.clone());
 
     // Write an original config file.
-    let original_cfg = ResourcefullyConfig {
+    let original_cfg = PolyConfig {
         summary: SummaryConfig {
             provider: "openai".to_string(),
             model: "original-model".to_string(),
@@ -365,7 +365,7 @@ fn resourcefully_config_atomic_save_preserves_existing_file_on_failure() {
     fs::set_permissions(&dir_path, Permissions::from_mode(0o555)).unwrap();
 
     // Attempt an atomic save — must fail.
-    let new_cfg = ResourcefullyConfig {
+    let new_cfg = PolyConfig {
         summary: SummaryConfig {
             provider: "claude".to_string(),
             model: "new-model".to_string(),
@@ -401,8 +401,8 @@ fn resourcefully_config_atomic_save_preserves_existing_file_on_failure() {
 // ─── startup creates default YAML without config tables ─────────────────
 
 #[test]
-fn startup_creates_default_resourcefully_yaml_without_config_tables() {
-    use app_lib::resourcefully_config::repository::ConfigRepository;
+fn startup_creates_default_poly_yaml_without_config_tables() {
+    use app_lib::poly_config::repository::ConfigRepository;
     use std::fs;
 
     // Simulate a fresh config directory (no YAML, no legacy SQLite config tables)
@@ -462,4 +462,330 @@ fn startup_creates_default_resourcefully_yaml_without_config_tables() {
         "Reloaded config must match original"
     );
     assert_eq!(cfg2.transcript.provider, cfg.transcript.provider);
+}
+
+// ─── legacy migration integration tests ────────────────────────────────────
+
+/// When no Poly config exists but a valid legacy config does, the legacy
+/// config is loaded and atomically copied forward to the Poly path.
+/// The legacy file is never deleted.
+#[test]
+fn legacy_config_copied_forward_to_poly_on_first_run() {
+    use app_lib::poly_config::repository::ConfigRepository;
+    use std::fs;
+
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly.yml");
+    let legacy_path = dir.path().join("legacy.yml");
+
+    // Write a custom legacy config.
+    let legacy_yaml = r#"
+summary:
+  provider: ollama
+  model: llama3.1:8b
+  whisper_model: medium
+  ollama_endpoint: http://localhost:11434
+transcript:
+  provider: localWhisper
+  model: large-v3
+preferences:
+  language: de
+"#;
+    fs::write(&legacy_path, legacy_yaml).unwrap();
+
+    // Poly file does not exist yet.
+    assert!(!poly_path.exists());
+
+    let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
+    let cfg = repo.load_or_create_default().unwrap();
+
+    // Legacy values were loaded and migrated.
+    assert_eq!(cfg.summary.provider, "ollama");
+    assert_eq!(cfg.summary.model, "llama3.1:8b");
+    assert_eq!(cfg.summary.whisper_model, "medium");
+    assert_eq!(
+        cfg.summary.ollama_endpoint.as_deref(),
+        Some("http://localhost:11434")
+    );
+    assert_eq!(cfg.transcript.provider, "localWhisper");
+    assert_eq!(cfg.transcript.model, "large-v3");
+    assert_eq!(cfg.preferences.language, "de");
+
+    // Poly file was created atomically.
+    assert!(poly_path.exists());
+
+    // Legacy file is preserved (never deleted).
+    assert!(legacy_path.exists());
+    let legacy_after = fs::read_to_string(&legacy_path).unwrap();
+    assert_eq!(legacy_after, legacy_yaml, "legacy file must not be modified");
+}
+
+/// When no Poly config exists and the legacy file contains malformed YAML,
+/// `load_or_create_default` must return a typed error — it must NOT
+/// silently generate a default config.
+#[test]
+fn malformed_legacy_yaml_returns_error_no_silent_default() {
+    use app_lib::poly_config::repository::ConfigRepository;
+    use std::fs;
+
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly.yml");
+    let legacy_path = dir.path().join("legacy_broken.yml");
+
+    // Write malformed YAML.
+    fs::write(&legacy_path, "summary: [unclosed\n  provider: openai\n").unwrap();
+
+    let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
+    let result = repo.load_or_create_default();
+
+    // Must return an error.
+    assert!(
+        result.is_err(),
+        "malformed legacy YAML must produce an error, not a default config"
+    );
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("parse") || msg.contains("YAML") || msg.contains("yaml"),
+        "error must mention parse/yaml: got '{}'",
+        msg
+    );
+
+    // Poly config must NOT have been written.
+    assert!(
+        !poly_path.exists(),
+        "Poly config must not be written when legacy parse fails"
+    );
+
+    // Legacy file must still exist (not deleted).
+    assert!(
+        legacy_path.exists(),
+        "legacy file must not be deleted on parse failure"
+    );
+}
+
+/// When both Poly and legacy config files exist, the Poly file content
+/// takes precedence. The legacy file is never consulted.
+#[test]
+fn poly_config_preferred_when_both_files_exist() {
+    use app_lib::poly_config::repository::ConfigRepository;
+    use std::fs;
+
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly.yml");
+    let legacy_path = dir.path().join("legacy.yml");
+
+    // Write Poly config with one provider.
+    fs::write(
+        &poly_path,
+        r#"
+summary:
+  provider: openai
+  model: gpt-4o
+transcript:
+  provider: parakeet
+"#,
+    )
+    .unwrap();
+
+    // Write legacy config with a conflicting provider.
+    fs::write(
+        &legacy_path,
+        r#"
+summary:
+  provider: claude
+  model: claude-3-opus
+transcript:
+  provider: groq
+"#,
+    )
+    .unwrap();
+
+    let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
+    let cfg = repo.load_or_create_default().unwrap();
+
+    // Poly values win.
+    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.model, "gpt-4o");
+    assert_eq!(cfg.transcript.provider, "parakeet");
+
+    // Legacy file untouched.
+    assert!(legacy_path.exists());
+}
+
+/// When Poly config already exists, `load_or_create_default` must not
+/// overwrite it with legacy data or defaults. The existing Poly file
+/// is loaded as-is and returned unchanged.
+#[test]
+fn existing_poly_not_overwritten_by_legacy_migration() {
+    use app_lib::poly_config::repository::ConfigRepository;
+    use std::fs;
+
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly.yml");
+    let legacy_path = dir.path().join("legacy.yml");
+
+    // Write Poly config with specific values.
+    let poly_content = r#"
+summary:
+  provider: ollama
+  model: custom-model
+preferences:
+  language: ja
+"#;
+    fs::write(&poly_path, poly_content).unwrap();
+    let poly_mtime = fs::metadata(&poly_path).unwrap().modified().unwrap();
+
+    // Write legacy config with completely different values.
+    fs::write(
+        &legacy_path,
+        r#"
+summary:
+  provider: groq
+  model: some-other-model
+preferences:
+  language: es
+"#,
+    )
+    .unwrap();
+
+    let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
+    let cfg = repo.load_or_create_default().unwrap();
+
+    // Poly values unchanged — legacy was not consulted.
+    assert_eq!(cfg.summary.provider, "ollama");
+    assert_eq!(cfg.summary.model, "custom-model");
+    assert_eq!(cfg.preferences.language, "ja");
+
+    // Poly file not rewritten (mtime unchanged).
+    let poly_mtime_after = fs::metadata(&poly_path).unwrap().modified().unwrap();
+    assert_eq!(
+        poly_mtime, poly_mtime_after,
+        "existing Poly file must not be re-written"
+    );
+
+    // Legacy file untouched.
+    assert!(legacy_path.exists());
+}
+
+/// When Poly config exists and `load()` is used directly (bypassing
+/// migration), the Poly file is loaded and legacy is ignored.
+#[test]
+fn load_directly_always_reads_poly_path_not_legacy() {
+    use app_lib::poly_config::repository::ConfigRepository;
+    use std::fs;
+
+    let dir = tempfile::tempdir().unwrap();
+    let poly_path = dir.path().join("poly.yml");
+    let legacy_path = dir.path().join("legacy.yml");
+
+    fs::write(
+        &poly_path,
+        r#"
+summary:
+  provider: openai
+"#,
+    )
+    .unwrap();
+
+    fs::write(
+        &legacy_path,
+        r#"
+summary:
+  provider: claude
+"#,
+    )
+    .unwrap();
+
+    // Use with_paths so the repo has access to legacy path, but
+    // load() only reads from the Poly path.
+    let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
+    let cfg = repo.load().unwrap();
+
+    assert_eq!(cfg.summary.provider, "openai");
+}
+
+// ─── namespace verification: Poly paths use the correct prefixes ────────
+
+#[test]
+fn default_config_path_uses_poly_namespace() {
+    let path = app_lib::poly_config::paths::default_config_path();
+    assert!(
+        path.ends_with(".poly/poly.yml"),
+        "default config path must be ~/.poly/poly.yml, got: {:?}",
+        path
+    );
+    assert!(
+        !path.to_string_lossy().contains(".resourcefully"),
+        "default config path must NOT reference legacy .resourcefully namespace"
+    );
+}
+
+#[test]
+fn legacy_config_path_uses_resourcefully_namespace() {
+    let path = app_lib::poly_config::paths::legacy_config_path();
+    assert!(
+        path.ends_with(".resourcefully/resourcefully.yml"),
+        "legacy config path must be ~/.resourcefully/resourcefully.yml, got: {:?}",
+        path
+    );
+}
+
+#[test]
+fn default_config_path_differs_from_legacy_config_path() {
+    let poly = app_lib::poly_config::paths::default_config_path();
+    let legacy = app_lib::poly_config::paths::legacy_config_path();
+    assert_ne!(poly, legacy, "Poly and legacy config paths must differ");
+}
+
+#[test]
+fn poly_media_dir_uses_poly_namespace() {
+    let path = app_lib::app_data::paths::poly_media_dir();
+    assert!(
+        path.ends_with(".poly/media"),
+        "Poly media dir must be ~/.poly/media, got: {:?}",
+        path
+    );
+}
+
+#[test]
+fn legacy_media_dir_uses_resourcefully_namespace() {
+    let path = app_lib::app_data::paths::legacy_media_dir();
+    assert!(
+        path.ends_with(".resourcefully/media"),
+        "legacy media dir must be ~/.resourcefully/media, got: {:?}",
+        path
+    );
+}
+
+#[test]
+fn legacy_media_dir_is_fallback_not_primary() {
+    let poly = app_lib::app_data::paths::poly_media_dir();
+    let legacy = app_lib::app_data::paths::legacy_media_dir();
+    assert_ne!(poly, legacy, "Poly and legacy media dirs must differ");
+    assert!(
+        legacy.to_string_lossy().contains(".resourcefully"),
+        "legacy media dir must reference .resourcefully namespace"
+    );
+}
+
+#[test]
+fn legacy_config_path_appears_only_as_fallback_not_as_primary() {
+    let primary = app_lib::poly_config::paths::default_config_path();
+    let fallback = app_lib::poly_config::paths::legacy_config_path();
+
+    let primary_s = primary.to_string_lossy();
+    let fallback_s = fallback.to_string_lossy();
+    assert!(
+        primary_s.contains(".poly"),
+        "primary path must use .poly namespace"
+    );
+    assert!(
+        !primary_s.contains(".resourcefully"),
+        "primary path must NOT use .resourcefully namespace"
+    );
+    assert!(
+        fallback_s.contains(".resourcefully"),
+        "fallback path must use .resourcefully namespace"
+    );
 }
