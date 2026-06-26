@@ -435,6 +435,41 @@ pub struct SummaryIngestResult {
     pub error: Option<String>,
 }
 
+/// Check a track status for failed documents.
+///
+/// Returns `Some(combined_error_message)` when one or more documents have
+/// status `FAILED`.  Returns `None` when all documents have reached a
+/// non-FAILED final status (PROCESSED) or the document list is empty.
+fn collect_track_failures(
+    status: &crate::knowledge_graph::types::KnowledgeGraphTrackStatus,
+    track_id: &str,
+) -> Option<String> {
+    let failed_docs: Vec<&crate::knowledge_graph::types::TrackStatusDocument> = status
+        .documents
+        .iter()
+        .filter(|doc| doc.status.eq_ignore_ascii_case("FAILED"))
+        .collect();
+
+    if failed_docs.is_empty() {
+        return None;
+    }
+
+    let error_msgs: Vec<String> = failed_docs
+        .iter()
+        .filter_map(|doc| doc.error_msg.clone())
+        .collect();
+
+    Some(if error_msgs.is_empty() {
+        format!(
+            "{} document(s) in track {} failed processing (no error details)",
+            failed_docs.len(),
+            track_id
+        )
+    } else {
+        error_msgs.join("; ")
+    })
+}
+
 /// Auto-ingest the meeting summary into the configured Knowledge Graph.
 ///
 /// Called automatically after summary generation completes.
@@ -553,7 +588,7 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                 Err(e) => {
                     let error_msg = e;
                     let service = KnowledgeGraphIngestionService::new(pool.clone());
-                    let _ = service
+                    if let Err(track_err) = service
                         .track_summary_document(
                             &meeting_id,
                             &profile_id,
@@ -563,7 +598,13 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                             Some(&track_id),
                             None,
                         )
-                        .await;
+                        .await
+                    {
+                        return Err(format!(
+                            "Failed to insert summary to knowledge graph: {}. Additionally, tracking failed: {}",
+                            error_msg, track_err
+                        ));
+                    }
                     return Err(format!(
                         "Failed to insert summary to knowledge graph: {}",
                         error_msg
@@ -572,32 +613,17 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
             };
 
             // ── Check for any failed documents ──────────────────────
-            let failed_docs: Vec<&crate::knowledge_graph::types::TrackStatusDocument> =
-                track_status
-                    .documents
-                    .iter()
-                    .filter(|doc| doc.status.eq_ignore_ascii_case("FAILED"))
-                    .collect();
-
-            if !failed_docs.is_empty() {
-                let error_msgs: Vec<String> = failed_docs
-                    .iter()
-                    .filter_map(|doc| doc.error_msg.clone())
-                    .collect();
-                let combined_error = if error_msgs.is_empty() {
-                    format!(
-                        "{} document(s) in track {} failed processing (no error details)",
-                        failed_docs.len(),
-                        track_id
-                    )
-                } else {
-                    error_msgs.join("; ")
-                };
-
+            if let Some(combined_error) = collect_track_failures(&track_status, &track_id) {
+                let failed_docs: Vec<&crate::knowledge_graph::types::TrackStatusDocument> =
+                    track_status
+                        .documents
+                        .iter()
+                        .filter(|doc| doc.status.eq_ignore_ascii_case("FAILED"))
+                        .collect();
                 let first_doc_id = failed_docs.first().map(|doc| doc.id.clone());
 
                 let service = KnowledgeGraphIngestionService::new(pool.clone());
-                let _ = service
+                if let Err(track_err) = service
                     .track_summary_document(
                         &meeting_id,
                         &profile_id,
@@ -607,7 +633,18 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                         Some(&track_id),
                         first_doc_id.as_deref(),
                     )
-                    .await;
+                    .await
+                {
+                    log::error!(
+                        "Failed to track summary document failure for meeting {}: {}",
+                        meeting_id,
+                        track_err
+                    );
+                    return Err(format!(
+                        "Summary document ingestion failed: {}. Additionally, tracking failed: {}",
+                        combined_error, track_err
+                    ));
+                }
 
                 log::warn!(
                     "Summary document ingestion failed for meeting {}: {}",
@@ -624,7 +661,7 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
             let document_id = track_status.documents.first().map(|doc| doc.id.clone());
 
             let service = KnowledgeGraphIngestionService::new(pool.clone());
-            let _ = service
+            service
                 .track_summary_document(
                     &meeting_id,
                     &profile_id,
@@ -634,7 +671,13 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                     Some(&track_id),
                     document_id.as_deref(),
                 )
-                .await;
+                .await
+                .map_err(|e| {
+                    format!(
+                        "Summary ingested to KG but failed to track in local ledger: {}",
+                        e
+                    )
+                })?;
 
             info!(
                 "Summary ingested to knowledge graph for meeting {} (profile: {}) track_id={} document_id={:?}",
@@ -651,7 +694,7 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
         Err(e) => {
             let error_msg = e.to_string();
             let service = KnowledgeGraphIngestionService::new(pool.clone());
-            let _ = service
+            if let Err(track_err) = service
                 .track_summary_document(
                     &meeting_id,
                     &profile_id,
@@ -661,7 +704,13 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
                     None,
                     None,
                 )
-                .await;
+                .await
+            {
+                return Err(format!(
+                    "Failed to insert summary to knowledge graph: {}. Additionally, tracking failed: {}",
+                    error_msg, track_err
+                ));
+            }
 
             Err(format!(
                 "Failed to insert summary to knowledge graph: {}",
@@ -812,7 +861,7 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
         }
     }
 
-    let _ = service
+    if let Err(track_err) = service
         .track_summary_document(
             &meeting_id,
             &profile_id,
@@ -822,7 +871,18 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
             None,
             None,
         )
-        .await;
+        .await
+    {
+        log::error!(
+            "Failed to track summary document deletion for meeting {}: {}",
+            meeting_id,
+            track_err
+        );
+        last_error = Some(match last_error {
+            Some(prev) => format!("{}; Additionally, tracking failed: {}", prev, track_err),
+            None => format!("Tracking failed: {}", track_err),
+        });
+    }
 
     Ok(SummaryIngestResult {
         meeting_id,
@@ -1177,5 +1237,99 @@ mod summary_source_tests {
             "resourcefully/meetings/Planning _ Review_meeting-123/summary.md"
         );
         assert_eq!(sources[2], "meeting-summary-meeting-123");
+    }
+}
+#[cfg(test)]
+mod collect_track_failures_tests {
+    use super::*;
+    use crate::knowledge_graph::types::{
+        KnowledgeGraphTrackStatus, TrackStatusDocument,
+    };
+
+    fn make_doc(id: &str, status: &str, error_msg: Option<&str>) -> TrackStatusDocument {
+        TrackStatusDocument {
+            id: id.to_string(),
+            content_summary: String::new(),
+            content_length: 0,
+            status: status.to_string(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            track_id: None,
+            chunks_count: None,
+            error_msg: error_msg.map(|s| s.to_string()),
+            metadata: None,
+            file_path: String::new(),
+        }
+    }
+
+    fn track_status(docs: Vec<TrackStatusDocument>) -> KnowledgeGraphTrackStatus {
+        KnowledgeGraphTrackStatus {
+            track_id: "test-track".to_string(),
+            total_count: docs.len(),
+            documents: docs,
+            status_summary: Default::default(),
+        }
+    }
+
+    #[test]
+    fn returns_none_when_no_failed_docs() {
+        let status = track_status(vec![
+            make_doc("d1", "PROCESSED", None),
+            make_doc("d2", "PROCESSED", None),
+        ]);
+        assert!(collect_track_failures(&status, "track-1").is_none());
+    }
+
+    #[test]
+    fn returns_none_when_documents_empty() {
+        let status = track_status(vec![]);
+        assert!(collect_track_failures(&status, "track-1").is_none());
+    }
+
+    #[test]
+    fn returns_error_when_one_doc_failed() {
+        let status = track_status(vec![
+            make_doc("d1", "PROCESSED", None),
+            make_doc("d2", "FAILED", Some("timeout")),
+        ]);
+        let result = collect_track_failures(&status, "track-1");
+        assert_eq!(result, Some("timeout".to_string()));
+    }
+
+    #[test]
+    fn returns_joined_errors_when_multiple_failed() {
+        let status = track_status(vec![
+            make_doc("d1", "FAILED", Some("timeout")),
+            make_doc("d2", "FAILED", Some("parse error")),
+        ]);
+        let result = collect_track_failures(&status, "track-1");
+        assert_eq!(result, Some("timeout; parse error".to_string()));
+    }
+
+    #[test]
+    fn returns_placeholder_when_failed_without_error_msg() {
+        let status = track_status(vec![
+            make_doc("d1", "FAILED", None),
+            make_doc("d2", "FAILED", None),
+        ]);
+        let result = collect_track_failures(&status, "track-123");
+        assert_eq!(
+            result,
+            Some(
+                "2 document(s) in track track-123 failed processing (no error details)"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn ignores_processed_docs_when_some_failed() {
+        let status = track_status(vec![
+            make_doc("d1", "PROCESSED", None),
+            make_doc("d2", "FAILED", Some("timeout")),
+            make_doc("d3", "PENDING", None),
+        ]);
+        let result = collect_track_failures(&status, "track-1");
+        assert_eq!(result, Some("timeout".to_string()));
     }
 }
