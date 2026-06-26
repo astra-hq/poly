@@ -39,14 +39,55 @@ impl Default for RecordingPreferences {
     }
 }
 
-/// Get the default recordings folder
-/// All recordings are stored under ~/.resourcefully/media for consistency
-/// across platforms and to keep media data in a single, privacy-focused location.
+/// Get the default recordings folder.
+/// Primary path: `~/.poly/media`.
+/// Falls back to `~/.resourcefully/media` if it contains existing
+/// recordings and the Poly path is empty, copying forward into the
+/// Poly path. Legacy directory is never deleted.
 pub fn get_default_recordings_folder() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".resourcefully")
-        .join("media")
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let poly_media = home.join(".poly").join("media");
+    let legacy_media = home.join(".resourcefully").join("media");
+
+    // If Poly media dir already exists (possibly with content), use it.
+    if poly_media.exists() {
+        return poly_media;
+    }
+
+    // If legacy media dir exists, migrate it forward (copy, not move).
+    if legacy_media.exists() && legacy_media.is_dir() {
+        info!(
+            "Legacy recordings dir found at {:?}, migrating to {:?}",
+            legacy_media, poly_media
+        );
+        // Copy legacy media into Poly path
+        if let Err(e) = std::fs::create_dir_all(&poly_media) {
+            warn!("Failed to create Poly media dir: {}", e);
+            return legacy_media;
+        }
+        match std::fs::read_dir(&legacy_media) {
+            Ok(entries) => {
+                let mut copied = 0usize;
+                for entry in entries.flatten() {
+                    let src = entry.path();
+                    let dst = poly_media.join(entry.file_name());
+                    if !dst.exists() {
+                        if let Err(e) = std::fs::copy(&src, &dst) {
+                            warn!("Failed to copy legacy recording {:?}: {}", src, e);
+                        } else {
+                            copied += 1;
+                        }
+                    }
+                }
+                info!("Migrated {} legacy recordings to Poly media dir", copied);
+            }
+            Err(e) => warn!("Failed to read legacy media dir: {}", e),
+        }
+        return poly_media;
+    }
+
+    // Neither exists: create and use Poly path
+    poly_media
 }
 
 /// Ensure the recordings directory exists

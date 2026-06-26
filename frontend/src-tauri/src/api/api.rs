@@ -12,7 +12,7 @@ use crate::{
             transcript::TranscriptsRepository,
         },
     },
-    resourcefully_config::config::ResourcefullyConfig,
+    poly_config::config::PolyConfig,
     secrets::{
         keyring_first_store::KeyringFirstSecretStore,
         refs,
@@ -1530,7 +1530,7 @@ pub struct SecretStorageStatus {
 /// No SQLite queries are performed.
 pub async fn count_secrets(
     store: &dyn SecretStore,
-    cfg: &ResourcefullyConfig,
+    cfg: &PolyConfig,
 ) -> Result<SecretStorageStatus, SecretStoreError> {
     let summary = u32::from(
         store

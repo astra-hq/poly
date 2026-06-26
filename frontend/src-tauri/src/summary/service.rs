@@ -2,7 +2,7 @@ use crate::database::repositories::{
     meeting::MeetingsRepository, summary::SummaryProcessesRepository,
 };
 use crate::ollama::metadata::ModelMetadataCache;
-use crate::resourcefully_config::ConfigRepository;
+use crate::poly_config::ConfigRepository;
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::secrets::refs;
 use crate::secrets::store::SecretStore;
@@ -1061,7 +1061,7 @@ custom_openai:
 
         // ── Assert: SecretStore works without SQLite ────────────────
         let store =
-            KeyringFirstSecretStore::new("com.meetily.secrets.test.summary_svc", secrets_path);
+            KeyringFirstSecretStore::new("com.poly.secrets.test.summary_svc", secrets_path);
 
         store
             .set(&refs::summary_provider_key("openai"), "sk-test-key")

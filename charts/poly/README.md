@@ -1,4 +1,4 @@
-# resourcefully-kg Helm Chart
+# poly-kg Helm Chart
 
 Remote Knowledge Graph stack — **LightRAG** (retrieval-augmented generation API) + **Neo4j** (graph database) with **external S3-compatible blob storage** placeholders.
 
@@ -35,16 +35,16 @@ This chart is a deployment scaffold. It does **not** contain real credentials, p
 Render the templates locally to validate correctness without deploying:
 
 ```bash
-helm template resourcefully-kg charts/resourcefully-kg \
-  --values charts/resourcefully-kg/values.yaml \
-  > /tmp/resourcefully-kg-rendered.yaml
+helm template poly-kg charts/poly-kg \
+  --values charts/poly-kg/values.yaml \
+  > /tmp/poly-kg-rendered.yaml
 ```
 
 Verify the output contains LightRAG and Neo4j resources and no real secrets:
 
 ```bash
-grep -c "kind:" /tmp/resourcefully-kg-rendered.yaml
-grep "CHANGE_ME" /tmp/resourcefully-kg-rendered.yaml
+grep -c "kind:" /tmp/poly-kg-rendered.yaml
+grep "CHANGE_ME" /tmp/poly-kg-rendered.yaml
 ```
 
 ## S3 placeholder setup
@@ -65,25 +65,25 @@ s3:
 **Production recommendation:** Create a Kubernetes Secret and reference it via `s3.existingSecret`:
 
 ```bash
-kubectl create secret generic resourcefully-kg-s3-secrets \
+kubectl create secret generic poly-kg-s3-secrets \
   --from-literal=access-key-id=YOUR_KEY \
   --from-literal=secret-access-key=YOUR_SECRET
 ```
 
-Then set `s3.existingSecret: "resourcefully-kg-s3-secrets"` in your values.
+Then set `s3.existingSecret: "poly-kg-s3-secrets"` in your values.
 
 ## Install
 
 ```bash
 # With default placeholder values (not functional)
-helm install resourcefully-kg charts/resourcefully-kg
+helm install poly-kg charts/poly-kg
 
 # With custom values file
-helm install resourcefully-kg charts/resourcefully-kg \
+helm install poly-kg charts/poly-kg \
   --values my-custom-values.yaml
 
 # With inline overrides
-helm install resourcefully-kg charts/resourcefully-kg \
+helm install poly-kg charts/poly-kg \
   --set s3.endpoint=https://s3.amazonaws.com \
   --set s3.bucket=my-bucket \
   --set lightrag.apiKey.value=my-secure-key \
@@ -93,19 +93,19 @@ helm install resourcefully-kg charts/resourcefully-kg \
 ## Upgrade
 
 ```bash
-helm upgrade resourcefully-kg charts/resourcefully-kg \
+helm upgrade poly-kg charts/poly-kg \
   --values my-custom-values.yaml
 ```
 
 ## Uninstall
 
 ```bash
-helm uninstall resourcefully-kg
+helm uninstall poly-kg
 ```
 
 > **Note:** PersistentVolumeClaims created by the Neo4j StatefulSet are **not** deleted by `helm uninstall`. To remove them:
 > ```bash
-> kubectl delete pvc -l app.kubernetes.io/instance=resourcefully-kg
+> kubectl delete pvc -l app.kubernetes.io/instance=poly-kg
 > ```
 
 ## Configuration reference

@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "resourcefully-kg.fullname" . }}-lightrag-config
+  name: {{ include "poly-kg.fullname" . }}-lightrag-config
   labels:
-    {{- include "resourcefully-kg.labels" . | nindent 4 }}
+    {{- include "poly-kg.labels" . | nindent 4 }}
 data:
   # S3 blob storage configuration
   S3_ENDPOINT: {{ .Values.s3.endpoint | quote }}
@@ -11,7 +11,7 @@ data:
   S3_REGION: {{ .Values.s3.region | quote }}
   S3_USE_SSL: {{ .Values.s3.useSsl | quote }}
   # Neo4j connection
-  NEO4J_URL: {{ printf "bolt://%s-neo4j:%d" (include "resourcefully-kg.fullname" .) (int .Values.neo4j.service.boltPort) | quote }}
+  NEO4J_URL: {{ printf "bolt://%s-neo4j:%d" (include "poly-kg.fullname" .) (int .Values.neo4j.service.boltPort) | quote }}
   # Embedding model
   LIGHTRAG_EMBEDDING_MODEL: {{ .Values.lightrag.embedding.model | quote }}
   LIGHTRAG_EMBEDDING_MODEL_NAME: {{ .Values.lightrag.embedding.modelName | quote }}

@@ -1,3 +1,15 @@
+// ARCHIVED: This file is the pre-modularization monolithic lib.rs from older Meetily
+// releases. It is not compiled or used by the current Poly desktop application. The
+// supported entry point is `lib.rs`, which delegates to modular components under
+// `audio/`, `poly_config/`, `secrets/`, `summary/`, etc.
+//
+// This file is retained only for historical reference and migration context. Do not
+// treat it as current architecture, use it for new feature work, or reference it as
+// a supported code path. Any remaining old-name references are legacy artifacts
+// of the original project and do not represent current branding.
+//
+// See `lib.rs` for the current supported application entry point.
+
 use std::fs;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}};
 use std::time::Duration;

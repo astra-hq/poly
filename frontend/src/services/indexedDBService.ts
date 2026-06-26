@@ -31,7 +31,7 @@ export interface StoredTranscript {
 
 class IndexedDBService {
   private db: IDBDatabase | null = null;
-  private readonly DB_NAME = 'MeetilyRecoveryDB';
+  private readonly DB_NAME = 'PolyRecoveryDB';
   private readonly DB_VERSION = 1;
   private initPromise: Promise<void> | null = null;
 
@@ -89,7 +89,110 @@ class IndexedDBService {
       }
     });
 
+    // After initialization succeeds, attempt legacy migration
+    try {
+      await this.initPromise;
+      await this.migrateFromLegacyDB();
+    } catch {
+      // Migration failure is non-fatal
+    }
+
     return this.initPromise;
+  }
+
+  /**
+   * Copy data from the legacy MeetilyRecoveryDB into PolyRecoveryDB.
+   * The legacy database is NOT deleted.
+   */
+  private async migrateFromLegacyDB(): Promise<void> {
+    const LEGACY_DB_NAME = 'MeetilyRecoveryDB';
+    try {
+      // Open legacy DB (version 1)
+      const legacyDB = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open(LEGACY_DB_NAME, 1);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+        req.onupgradeneeded = () => {
+          // Block version change to prevent deletion
+          req.transaction?.abort();
+        };
+      });
+
+      // Read meetings from legacy
+      const meetings = await new Promise<any[]>((resolve, reject) => {
+        if (!legacyDB.objectStoreNames.contains('meetings')) {
+          resolve([]);
+          return;
+        }
+        const tx = legacyDB.transaction(['meetings'], 'readonly');
+        const store = tx.objectStore('meetings');
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      // Read transcripts from legacy
+      const transcripts = await new Promise<any[]>((resolve, reject) => {
+        if (!legacyDB.objectStoreNames.contains('transcripts')) {
+          resolve([]);
+          return;
+        }
+        const tx = legacyDB.transaction(['transcripts'], 'readonly');
+        const store = tx.objectStore('transcripts');
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+
+      legacyDB.close();
+
+      if (meetings.length === 0 && transcripts.length === 0) {
+        console.log('[PolyRecoveryDB] No legacy data to migrate');
+        return;
+      }
+
+      console.log(
+        `[PolyRecoveryDB] Migrating ${meetings.length} meetings and ${transcripts.length} transcripts from MeetilyRecoveryDB`
+      );
+
+      // Write meetings into PolyRecoveryDB (skip if already present)
+      if (meetings.length > 0 && this.db) {
+        const tx = this.db.transaction(['meetings'], 'readwrite');
+        const store = tx.objectStore('meetings');
+        for (const meeting of meetings) {
+          const existing = await new Promise<any>((resolve) => {
+            const r = store.get(meeting.meetingId);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => resolve(null);
+          });
+          if (!existing) {
+            store.put(meeting);
+          }
+        }
+        await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+
+      // Write transcripts into PolyRecoveryDB
+      if (transcripts.length > 0 && this.db) {
+        const tx = this.db.transaction(['transcripts'], 'readwrite');
+        const store = tx.objectStore('transcripts');
+        for (const transcript of transcripts) {
+          store.add(transcript);
+        }
+        await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        });
+      }
+
+      console.log('[PolyRecoveryDB] Legacy migration complete');
+    } catch (error) {
+      console.warn('[PolyRecoveryDB] Legacy migration skipped:', error);
+      // Legacy migration failure is non-fatal
+    }
   }
 
   // Meeting operations

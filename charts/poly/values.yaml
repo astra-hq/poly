@@ -1,4 +1,4 @@
-# Default values for resourcefully-kg.
+# Default values for poly-kg.
 # This is a YAML-formatted file.
 
 # -- External S3-compatible blob storage (replaces local rustfs in remote deployments)

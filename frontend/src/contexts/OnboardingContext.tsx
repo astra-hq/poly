@@ -176,21 +176,28 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const performAutoDetection = async () => {
     // Check Homebrew (macOS only)
     if (typeof navigator !== 'undefined' && navigator.platform?.toLowerCase().includes('mac')) {
-      const homebrewDbPath = '/usr/local/var/meetily/meeting_minutes.db';
-      try {
-        const homebrewCheck = await invoke<{ exists: boolean; size: number } | null>(
-          'check_homebrew_database',
-          { path: homebrewDbPath }
-        );
+      const homebrewPaths = [
+        '/opt/homebrew/var/poly/meeting_minutes.db',    // Apple Silicon (M1/M2/M3)
+        '/usr/local/var/poly/meeting_minutes.db',        // Intel Macs
+        '/opt/homebrew/var/meetily/meeting_minutes.db',  // Legacy Apple Silicon
+        '/usr/local/var/meetily/meeting_minutes.db',     // Legacy Intel
+      ];
+      for (const homebrewDbPath of homebrewPaths) {
+        try {
+          const homebrewCheck = await invoke<{ exists: boolean; size: number } | null>(
+            'check_homebrew_database',
+            { path: homebrewDbPath }
+          );
 
-        if (homebrewCheck?.exists) {
-          console.log('[OnboardingContext] Found Homebrew database, importing');
-          await invoke('import_and_initialize_database', { legacyDbPath: homebrewDbPath });
-          setDatabaseExists(true);
-          return;
+          if (homebrewCheck?.exists) {
+            console.log('[OnboardingContext] Found database at', homebrewDbPath, 'importing');
+            await invoke('import_and_initialize_database', { legacyDbPath: homebrewDbPath });
+            setDatabaseExists(true);
+            return;
+          }
+        } catch (e) {
+          console.log('[OnboardingContext] Check failed for', homebrewDbPath, ':', e);
         }
-      } catch (e) {
-        console.log('[OnboardingContext] Homebrew check failed, continuing:', e);
       }
     }
 

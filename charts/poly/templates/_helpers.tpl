@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "resourcefully-kg.name" -}}
+{{- define "poly-kg.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "resourcefully-kg.fullname" -}}
+{{- define "poly-kg.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -20,9 +20,9 @@ Create a default fully qualified app name.
 {{/*
 Common labels
 */}}
-{{- define "resourcefully-kg.labels" -}}
-helm.sh/chart: {{ include "resourcefully-kg.chart" . }}
-{{ include "resourcefully-kg.selectorLabels" . }}
+{{- define "poly-kg.labels" -}}
+helm.sh/chart: {{ include "poly-kg.chart" . }}
+{{ include "poly-kg.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -35,14 +35,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "resourcefully-kg.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "resourcefully-kg.name" . }}
+{{- define "poly-kg.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "poly-kg.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Chart name and version
 */}}
-{{- define "resourcefully-kg.chart" -}}
+{{- define "poly-kg.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}

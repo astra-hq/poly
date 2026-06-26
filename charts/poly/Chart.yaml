@@ -1,5 +1,5 @@
 apiVersion: v2
-name: resourcefully-kg
+name: poly-kg
 description: Remote Knowledge Graph stack — LightRAG + Neo4j with external S3 blob storage
 type: application
 version: 0.1.0
@@ -9,11 +9,11 @@ keywords:
   - neo4j
   - knowledge-graph
   - rag
-  - meetily
-home: https://github.com/AI-Joe/resourcefully
+  - poly
+home: https://github.com/astra-hq/poly
 sources:
-  - https://github.com/AI-Joe/resourcefully
+  - https://github.com/astra-hq/poly
   - https://github.com/HKUDS/LightRAG
 maintainers:
-  - name: resourcefully
+  - name: poly
     email: placeholder@example.com

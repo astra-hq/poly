@@ -103,8 +103,9 @@ pub async fn check_default_legacy_database(app: AppHandle) -> Result<Option<Stri
     }
 }
 
-/// Check if the Homebrew database exists and return its size
-/// This is specifically for detecting old Python backend installations
+/// Check if the Homebrew database exists and return its size.
+/// Checks both the legacy `meetily` path (old Python backend) and
+/// the new `poly` path.
 #[tauri::command]
 pub async fn check_homebrew_database(path: String) -> Result<Option<DatabaseCheckResult>, String> {
     let db_path = PathBuf::from(&path);
@@ -160,7 +161,7 @@ pub async fn import_and_initialize_database(
     // Update app state with the new manager
     app.manage(AppState {
         db_manager,
-        config_repo: crate::resourcefully_config::ConfigRepository::new(),
+        config_repo: crate::poly_config::ConfigRepository::new(),
     });
 
     info!("Legacy database imported and initialized successfully");
@@ -184,7 +185,7 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
             format!("Failed to initialize database: {}", e)
         })?;
 
-    let config_repo = crate::resourcefully_config::ConfigRepository::new();
+    let config_repo = crate::poly_config::ConfigRepository::new();
 
     let default_summary_model =
         crate::summary::summary_engine::commands::get_recommended_summary_model_for_current_system(

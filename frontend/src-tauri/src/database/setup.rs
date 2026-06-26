@@ -13,7 +13,7 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
         .map_err(|e| format!("Failed to initialize database manager: {}", e))?;
 
     // Ensure YAML config exists with defaults (creates on first run, loads existing otherwise)
-    let config_repo = crate::resourcefully_config::ConfigRepository::new();
+    let config_repo = crate::poly_config::ConfigRepository::new();
     config_repo
         .load_or_create_default()
         .map_err(|e| format!("Failed to initialize YAML config: {}", e))?;
@@ -74,8 +74,8 @@ pub async fn initialize_database_on_startup(app: &AppHandle) -> Result<(), Strin
 /// Returns `Ok(true)` when extraction was actually performed, `Ok(false)` when
 /// it was skipped (YAML already customized or no legacy data), or `Err` on failure.
 async fn run_legacy_extraction_if_needed(app: &tauri::AppHandle) -> Result<bool, String> {
-    use crate::resourcefully_config::config::ResourcefullyConfig;
-    use crate::resourcefully_config::legacy_extraction::LegacyConfigExtractor;
+    use crate::poly_config::config::PolyConfig;
+    use crate::poly_config::legacy_extraction::LegacyConfigExtractor;
     use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 
     let state = app.state::<AppState>();
@@ -86,7 +86,7 @@ async fn run_legacy_extraction_if_needed(app: &tauri::AppHandle) -> Result<bool,
         .load()
         .map_err(|e| format!("Failed to load config for legacy check: {}", e))?;
 
-    if config != ResourcefullyConfig::default() {
+    if config != PolyConfig::default() {
         info!("YAML config has custom values; skipping legacy extraction");
         return Ok(false);
     }

@@ -15,13 +15,13 @@ The Knowledge Graph stack includes:
   ✓ Ingress is enabled (host: {{ (index .Values.ingress.hosts 0).host }})
 {{- else }}
   ℹ  Ingress is disabled. Use port-forward to reach LightRAG:
-      kubectl port-forward svc/{{ include "resourcefully-kg.fullname" . }}-lightrag {{ .Values.lightrag.service.port }}:{{ .Values.lightrag.service.port }}
+      kubectl port-forward svc/{{ include "poly-kg.fullname" . }}-lightrag {{ .Values.lightrag.service.port }}:{{ .Values.lightrag.service.port }}
 {{- end }}
 
 ⚠  IMPORTANT — before production use:
   1. Replace all CHANGE_ME placeholders with real values.
   2. Create a proper Kubernetes Secret for credentials (do NOT commit plaintext secrets):
-       kubectl create secret generic {{ include "resourcefully-kg.fullname" . }}-secrets \
+       kubectl create secret generic {{ include "poly-kg.fullname" . }}-secrets \
          --from-literal=lightrag-api-key=YOUR_KEY \
          --from-literal=neo4j-auth=neo4j/YOUR_PASSWORD \
          --from-literal=s3-access-key-id=YOUR_KEY \
@@ -31,5 +31,5 @@ The Knowledge Graph stack includes:
   5. This chart does NOT include TLS/ingress automation — configure separately.
 
 For more details:
-  • Chart README: charts/resourcefully-kg/README.md
+  • Chart README: charts/poly-kg/README.md
   • Local compose: docker-compose.kg.yml

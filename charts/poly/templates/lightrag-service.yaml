@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "resourcefully-kg.fullname" . }}-lightrag
+  name: {{ include "poly-kg.fullname" . }}-lightrag
   labels:
-    {{- include "resourcefully-kg.labels" . | nindent 4 }}
+    {{- include "poly-kg.labels" . | nindent 4 }}
     app.kubernetes.io/component: lightrag
 spec:
   type: {{ .Values.lightrag.service.type }}
@@ -13,5 +13,5 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "resourcefully-kg.selectorLabels" . | nindent 4 }}
+    {{- include "poly-kg.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: lightrag

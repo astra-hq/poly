@@ -1,21 +1,21 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "resourcefully-kg.fullname" . }}-neo4j
+  name: {{ include "poly-kg.fullname" . }}-neo4j
   labels:
-    {{- include "resourcefully-kg.labels" . | nindent 4 }}
+    {{- include "poly-kg.labels" . | nindent 4 }}
     app.kubernetes.io/component: neo4j
 spec:
-  serviceName: {{ include "resourcefully-kg.fullname" . }}-neo4j
+  serviceName: {{ include "poly-kg.fullname" . }}-neo4j
   replicas: {{ .Values.neo4j.replicaCount }}
   selector:
     matchLabels:
-      {{- include "resourcefully-kg.selectorLabels" . | nindent 6 }}
+      {{- include "poly-kg.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: neo4j
   template:
     metadata:
       labels:
-        {{- include "resourcefully-kg.labels" . | nindent 8 }}
+        {{- include "poly-kg.labels" . | nindent 8 }}
         app.kubernetes.io/component: neo4j
     spec:
       containers:
@@ -33,7 +33,7 @@ spec:
             - name: NEO4J_AUTH
               valueFrom:
                 secretKeyRef:
-                  name: {{ if .Values.neo4j.auth.existingSecret }}{{ .Values.neo4j.auth.existingSecret }}{{ else }}{{ include "resourcefully-kg.fullname" . }}-secrets{{ end }}
+                  name: {{ if .Values.neo4j.auth.existingSecret }}{{ .Values.neo4j.auth.existingSecret }}{{ else }}{{ include "poly-kg.fullname" . }}-secrets{{ end }}
                   key: neo4j-auth
           {{- with .Values.neo4j.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -71,7 +71,7 @@ spec:
     - metadata:
         name: neo4j-data
         labels:
-          {{- include "resourcefully-kg.labels" . | nindent 10 }}
+          {{- include "poly-kg.labels" . | nindent 10 }}
       spec:
         accessModes: ["ReadWriteOnce"]
         {{- if .Values.neo4j.persistence.storageClass }}
@@ -83,7 +83,7 @@ spec:
     - metadata:
         name: neo4j-logs
         labels:
-          {{- include "resourcefully-kg.labels" . | nindent 10 }}
+          {{- include "poly-kg.labels" . | nindent 10 }}
       spec:
         accessModes: ["ReadWriteOnce"]
         {{- if .Values.neo4j.persistence.storageClass }}
@@ -95,7 +95,7 @@ spec:
     - metadata:
         name: neo4j-import
         labels:
-          {{- include "resourcefully-kg.labels" . | nindent 10 }}
+          {{- include "poly-kg.labels" . | nindent 10 }}
       spec:
         accessModes: ["ReadWriteOnce"]
         {{- if .Values.neo4j.persistence.storageClass }}
@@ -107,7 +107,7 @@ spec:
     - metadata:
         name: neo4j-plugins
         labels:
-          {{- include "resourcefully-kg.labels" . | nindent 10 }}
+          {{- include "poly-kg.labels" . | nindent 10 }}
       spec:
         accessModes: ["ReadWriteOnce"]
         {{- if .Values.neo4j.persistence.storageClass }}

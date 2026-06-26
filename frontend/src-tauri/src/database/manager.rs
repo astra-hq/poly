@@ -54,6 +54,11 @@ impl DatabaseManager {
             fs::create_dir_all(&app_data_dir).map_err(|e| sqlx::Error::Io(e))?;
         }
 
+        // Run legacy-to-Poly app data migration before DB init.
+        // Copies forward old databases, models, templates, etc.
+        // if Poly app data is empty. Never deletes legacy data.
+        crate::app_data::migrate_if_needed(&app_data_dir);
+
         // Define database paths
         let tauri_db_path = app_data_dir
             .join("meeting_minutes.sqlite")

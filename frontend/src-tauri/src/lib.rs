@@ -37,6 +37,7 @@ macro_rules! perf_trace {
 pub mod analytics;
 pub mod anthropic;
 pub mod api;
+pub mod app_data;
 pub mod audio;
 pub mod config;
 pub mod console_utils;
