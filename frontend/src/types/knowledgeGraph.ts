@@ -60,6 +60,8 @@ export interface KnowledgeGraphProfile {
   lightrag_url: string;
   api_key?: string;
   notes?: string;
+  llm_model?: string;
+  llm_provider_id?: string;
 }
 
 export const DEFAULT_KG_PROFILE: KnowledgeGraphProfile = {
@@ -68,6 +70,7 @@ export const DEFAULT_KG_PROFILE: KnowledgeGraphProfile = {
   kind: 'local',
   embedding: DEFAULT_EMBEDDING_CONFIG,
   lightrag_url: 'http://localhost:9621',
+  llm_model: 'qwen3:30b-a3b',
 };
 
 // ── Knowledge Graph Selection (config.rs) ────────────────────────────

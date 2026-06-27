@@ -242,8 +242,8 @@ export class KnowledgeGraphService {
    * Backend: `api_setup_local_knowledge_graph(llm_model: String)`
    * Returns a status message on success.
    */
-  async setupLocalKnowledgeGraph(llmModel: string): Promise<string> {
-    return invoke<string>('api_setup_local_knowledge_graph', { llmModel });
+  async setupLocalKnowledgeGraph(llmModel: string, llmProviderId?: string): Promise<string> {
+    return invoke<string>('api_setup_local_knowledge_graph', { llmModel, llmProviderId: llmProviderId ?? null });
   }
 
   /**
@@ -276,6 +276,15 @@ export class KnowledgeGraphService {
    */
   async startStack(): Promise<string> {
     return invoke<string>('api_setup_local_knowledge_graph');
+  }
+
+  /**
+   * Update the local `.env` file to match a profile's current LLM model.
+   * Backend: `api_update_knowledge_graph_env(profile_id: String)`
+   * No-op for non-local profiles or when `.env` does not exist yet.
+   */
+  async updateEnv(profileId: string): Promise<void> {
+    return invoke('api_update_knowledge_graph_env', { profileId });
   }
 }
 
