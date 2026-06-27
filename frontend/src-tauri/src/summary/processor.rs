@@ -1,4 +1,4 @@
-use crate::summary::llm_client::{generate_summary, LLMProvider};
+use crate::summary::llm_client::{generate_summary_legacy, LLMProvider};
 use crate::summary::templates::Template;
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -411,7 +411,7 @@ pub async fn generate_meeting_summary(
                 info!("Processing chunk {}/{}", i + 1, num_chunks);
                 let user_prompt_chunk = build_chunk_summary_user_prompt(chunk);
 
-                match generate_summary(
+                match generate_summary_legacy(
                     client,
                     provider,
                     model_name,
@@ -464,7 +464,7 @@ pub async fn generate_meeting_summary(
                 let combined_text = chunk_summaries.join("\n---\n");
                 let system_prompt_combine = "You are an expert at synthesizing meeting summaries.";
                 let user_prompt_combine = build_combine_summary_user_prompt(&combined_text);
-                generate_summary(
+                generate_summary_legacy(
                     client,
                     provider,
                     model_name,
@@ -514,7 +514,7 @@ pub async fn generate_meeting_summary(
             }
         }
 
-        let raw_markdown = generate_summary(
+        let raw_markdown = generate_summary_legacy(
             client,
             provider,
             model_name,
@@ -619,7 +619,7 @@ async fn run_markdown_transform(
         }
     }
 
-    let raw = generate_summary(
+    let raw = generate_summary_legacy(
         client,
         provider,
         model_name,
