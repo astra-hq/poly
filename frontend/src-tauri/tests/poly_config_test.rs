@@ -39,6 +39,7 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
                 },
                 lightrag_url: "https://kg.example.com:9621".to_string(),
                 notes: Some("Main production knowledge graph".to_string()),
+                llm_model: "qwen3:30b-a3b".to_string(),
             }],
             active_profile: KnowledgeGraphSelection::Profile("kg-1".to_string()),
         },
@@ -277,6 +278,7 @@ fn kg_profile_without_secrets_excludes_api_key() {
         notes: Some("Has an API key".to_string()),
         has_secret: false,
         api_key_masked_hint: None,
+        llm_model: "qwen3:30b-a3b".to_string(),
     };
 
     let without: KnowledgeGraphProfileWithoutSecrets = original.into();

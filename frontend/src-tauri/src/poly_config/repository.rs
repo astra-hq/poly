@@ -277,10 +277,9 @@ mod tests {
 
         let cfg = PolyConfig {
             summary: super::super::config::SummaryConfig {
-                provider: "ollama".into(),
+                provider_id: "ollama".into(),
                 model: "llama3.1:8b".into(),
                 whisper_model: "medium".into(),
-                ollama_endpoint: Some("http://localhost:11434".into()),
             },
             ..PolyConfig::default()
         };
@@ -304,7 +303,7 @@ mod tests {
         // Write an original config file first.
         let original_cfg = PolyConfig {
             summary: super::super::config::SummaryConfig {
-                provider: "openai".into(),
+                provider_id: "openai".into(),
                 model: "original-model".into(),
                 ..Default::default()
             },
@@ -322,7 +321,7 @@ mod tests {
         // Attempt an atomic save — it must fail.
         let new_cfg = PolyConfig {
             summary: super::super::config::SummaryConfig {
-                provider: "claude".into(),
+                provider_id: "claude".into(),
                 model: "new-model".into(),
                 ..Default::default()
             },
@@ -362,10 +361,9 @@ mod tests {
 
         let custom_cfg = PolyConfig {
             summary: super::super::config::SummaryConfig {
-                provider: "ollama".into(),
+                provider_id: "ollama".into(),
                 model: "llama3.1:8b".into(),
                 whisper_model: "medium".into(),
-                ollama_endpoint: Some("http://localhost:11434".into()),
             },
             ..PolyConfig::default()
         };
@@ -385,7 +383,7 @@ mod tests {
         let loaded = repo.load_or_create_default().unwrap();
 
         // Custom values were migrated.
-        assert_eq!(loaded.summary.provider, "ollama");
+        assert_eq!(loaded.summary.provider_id, "ollama");
         assert_eq!(loaded.summary.model, "llama3.1:8b");
 
         // Poly file was created.
@@ -408,7 +406,7 @@ mod tests {
         // Write Poly config with one set of values.
         let poly_cfg = PolyConfig {
             summary: super::super::config::SummaryConfig {
-                provider: "openai".into(),
+                provider_id: "openai".into(),
                 model: "gpt-4o".into(),
                 ..Default::default()
             },
@@ -423,7 +421,7 @@ mod tests {
         std::fs::create_dir_all(legacy_parent).unwrap();
         let legacy_cfg = PolyConfig {
             summary: super::super::config::SummaryConfig {
-                provider: "claude".into(),
+                provider_id: "claude".into(),
                 model: "claude-3".into(),
                 ..Default::default()
             },
@@ -440,7 +438,7 @@ mod tests {
         let loaded = repo.load_or_create_default().unwrap();
 
         // Poly path wins — its values are loaded.
-        assert_eq!(loaded.summary.provider, "openai");
+        assert_eq!(loaded.summary.provider_id, "openai");
         assert_eq!(loaded.summary.model, "gpt-4o");
 
         // Legacy file remains untouched.
