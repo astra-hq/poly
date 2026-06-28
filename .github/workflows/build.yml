@@ -479,14 +479,8 @@ jobs:
           releaseId: ${{ inputs.release-id }}
           args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
 
-      - name: Strip updater plugin config for unsigned build
-        if: ${{ !inputs.sign-binaries }}
-        shell: bash
-        run: |
-          echo "Removing updater plugin from tauri.conf.json for unsigned build..."
-          python3 -c "import json; c=json.load(open('frontend/src-tauri/tauri.conf.json')); c['plugins'].pop('updater',None); json.dump(c,open('frontend/src-tauri/tauri.conf.json','w'),indent=2)"
-          echo "✓ Updater plugin removed"
-
+      # Unsigned build — excludes updater plugin via --no-default-features
+      # to avoid requiring TAURI_SIGNING_PRIVATE_KEY
       - name: Build Tauri app (unsigned)
         if: ${{ !inputs.sign-binaries }}
         uses: tauri-apps/tauri-action@v0
@@ -497,7 +491,7 @@ jobs:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
-          args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
+          args: ${{ inputs.build-args }} --no-default-features ${{ steps.build-features.outputs.features }}
 
       - name: Upload artifacts (macOS)
         if: inputs.upload-artifacts && contains(inputs.platform, 'macos')
