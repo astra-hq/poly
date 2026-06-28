@@ -51,6 +51,8 @@ pub mod openai;
 pub mod openrouter;
 pub mod parakeet_engine;
 pub mod poly_config;
+pub mod process_path;
+pub mod providers;
 pub mod secrets;
 pub mod state;
 pub mod summary;
@@ -384,6 +386,10 @@ pub fn get_language_preference_internal() -> Option<String> {
 pub fn run() {
     log::set_max_level(log::LevelFilter::Info);
 
+    if let Err(error) = process_path::fix_path_env_once() {
+        log::warn!("Failed to repair PATH during startup: {}", error);
+    }
+
     let mut builder = tauri::Builder::default();
 
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -664,12 +670,13 @@ pub fn run() {
             api::test_backend_connection,
             api::debug_backend_connection,
             api::open_external_url,
-            // Custom OpenAI commands
-            api::api_save_custom_openai_config,
-            api::api_get_custom_openai_config,
-            api::api_test_custom_openai_connection,
             // Secret storage diagnostics
             api::api_get_secret_storage_status,
+            // Provider management
+            api::api_get_provider_models,
+            api::api_get_providers,
+            api::api_save_provider,
+            api::api_delete_provider,
             // Summary commands
             summary::commands::api_process_transcript,
             summary::commands::api_get_summary,
@@ -771,6 +778,7 @@ pub fn run() {
             knowledge_graph::settings_commands::api_setup_local_knowledge_graph,
             knowledge_graph::settings_commands::api_setup_kg_check_deps,
             knowledge_graph::settings_commands::api_setup_kg_pull_model,
+            knowledge_graph::settings_commands::api_update_knowledge_graph_env,
             // Knowledge graph meeting selection
             knowledge_graph::selection_commands::api_get_meeting_knowledge_graph_selection,
             knowledge_graph::selection_commands::api_set_meeting_knowledge_graph_selection,

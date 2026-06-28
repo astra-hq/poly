@@ -4,20 +4,20 @@ use serde::{Deserialize, Serialize};
 use crate::knowledge_graph::config::{
     EmbeddingConfig, KnowledgeGraphProfile, KnowledgeGraphSelection, ProfileKind,
 };
+use crate::providers::ProviderConfig;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Summary config (non-secret portion of settings)
+// Summary config (references a provider from the global providers list)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Non-secret summary configuration.
 ///
-/// Maps to the `settings` table's `provider`, `model`, `whisperModel`,
-/// and `ollamaEndpoint` columns.
+/// `provider_id` references an entry in the global `PolyConfig::providers` list.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SummaryConfig {
-    /// AI provider for summaries (openai, claude, ollama, groq, openrouter, custom-openai).
-    #[serde(default = "default_summary_provider")]
-    pub provider: String,
+    /// ID of the provider to use for summaries (must exist in `providers` list).
+    #[serde(default = "default_summary_provider_id")]
+    pub provider_id: String,
 
     /// Model name used by the summary provider.
     #[serde(default = "default_summary_model")]
@@ -26,13 +26,9 @@ pub struct SummaryConfig {
     /// Whisper model used for transcription (local or remote).
     #[serde(default = "default_whisper_model")]
     pub whisper_model: String,
-
-    /// Base URL for a local Ollama instance (only meaningful when provider is "ollama").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ollama_endpoint: Option<String>,
 }
 
-fn default_summary_provider() -> String {
+fn default_summary_provider_id() -> String {
     "openai".into()
 }
 
@@ -47,21 +43,18 @@ fn default_whisper_model() -> String {
 impl Default for SummaryConfig {
     fn default() -> Self {
         Self {
-            provider: default_summary_provider(),
+            provider_id: default_summary_provider_id(),
             model: default_summary_model(),
             whisper_model: default_whisper_model(),
-            ollama_endpoint: None,
         }
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Transcript config (non-secret portion of transcript_settings)
+// Transcript config
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Non-secret transcript configuration.
-///
-/// Maps to `transcript_settings.provider` and `transcript_settings.model`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TranscriptConfig {
     /// Transcription provider (localWhisper, parakeet, deepgram, elevenLabs,
@@ -92,57 +85,10 @@ impl Default for TranscriptConfig {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Custom OpenAI config (non-secret fields of CustomOpenAIConfig)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Non-secret fields of a custom OpenAI-compatible endpoint configuration.
-///
-/// The `api_key` field from the database's `CustomOpenAIConfig` is deliberately
-/// excluded — it belongs in the `SecretStore`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CustomOpenAIConfigFields {
-    /// Base URL of the OpenAI-compatible API endpoint.
-    #[serde(default)]
-    pub endpoint: String,
-
-    /// Model identifier (e.g., "gpt-4", "llama-3-70b").
-    #[serde(default)]
-    pub model: String,
-
-    /// Maximum tokens for completion.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<i32>,
-
-    /// Temperature parameter (0.0–2.0).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
-
-    /// Top-P sampling parameter (0.0–1.0).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub top_p: Option<f32>,
-}
-
-impl Default for CustomOpenAIConfigFields {
-    fn default() -> Self {
-        Self {
-            endpoint: String::new(),
-            model: String::new(),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Knowledge graph — secret-free profile wrapper
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A knowledge graph profile with **no** secrets suitable for YAML persistence.
-///
-/// This is a deliberate wrapper around [`KnowledgeGraphProfile`] that
-/// completely omits the `api_key` field.  All other behavioural and
-/// display fields are preserved 1:1.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KnowledgeGraphProfileWithoutSecrets {
     pub id: String,
@@ -154,6 +100,14 @@ pub struct KnowledgeGraphProfileWithoutSecrets {
     pub lightrag_url: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    #[serde(default = "default_llm_model")]
+    pub llm_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_provider_id: Option<String>,
+}
+
+fn default_llm_model() -> String {
+    "qwen3:30b-a3b".to_string()
 }
 
 impl From<KnowledgeGraphProfile> for KnowledgeGraphProfileWithoutSecrets {
@@ -165,6 +119,8 @@ impl From<KnowledgeGraphProfile> for KnowledgeGraphProfileWithoutSecrets {
             embedding: p.embedding,
             lightrag_url: p.lightrag_url,
             notes: p.notes,
+            llm_model: p.llm_model,
+            llm_provider_id: p.llm_provider_id,
         }
     }
 }
@@ -181,6 +137,8 @@ impl From<KnowledgeGraphProfileWithoutSecrets> for KnowledgeGraphProfile {
             notes: p.notes,
             has_secret: false,
             api_key_masked_hint: None,
+            llm_model: p.llm_model,
+            llm_provider_id: p.llm_provider_id,
         }
     }
 }
@@ -212,8 +170,6 @@ impl Default for KnowledgeGraphSettingsWithoutSecrets {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PreferencesConfig {
     /// Language preference for summaries/translation.
-    ///
-    /// Canonical values: `"auto-translate"`, `"en"`, `"fr"`, …
     #[serde(default = "default_language")]
     pub language: String,
 }
@@ -239,22 +195,22 @@ impl Default for PreferencesConfig {
 /// This is persisted as YAML at `~/.poly/poly.yml` and contains **every**
 /// non-secret configuration value.
 ///
-/// For users upgrading from the legacy Resourcefully name, the config
-/// repository automatically migrates `~/.resourcefully/resourcefully.yml`
-/// to the current path on first use without deleting the legacy file.
+/// `providers` is a global list of LLM provider entities. Summary and KG
+/// profiles reference providers by their `id`.
 ///
 /// Raw API keys and other secrets are **never** serialized to this file;
 /// they live in the separate `SecretStore`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PolyConfig {
+    /// Global list of LLM provider configurations.
+    #[serde(default)]
+    pub providers: Vec<ProviderConfig>,
+
     #[serde(default)]
     pub summary: SummaryConfig,
 
     #[serde(default)]
     pub transcript: TranscriptConfig,
-
-    #[serde(default, rename = "custom_openai")]
-    pub custom_openai: CustomOpenAIConfigFields,
 
     #[serde(default, rename = "knowledge_graph")]
     pub knowledge_graph: KnowledgeGraphSettingsWithoutSecrets,
@@ -265,10 +221,23 @@ pub struct PolyConfig {
 
 impl Default for PolyConfig {
     fn default() -> Self {
+        // Create sensible default providers
         Self {
-            summary: SummaryConfig::default(),
+            providers: vec![
+                ProviderConfig {
+                    id: "openai".to_string(),
+                    name: "OpenAI".to_string(),
+                    provider_type: crate::providers::ProviderType::OpenAI,
+                    base_url: "https://api.openai.com/v1".to_string(),
+                    default_model: "gpt-4o".to_string(),
+                },
+            ],
+            summary: SummaryConfig {
+                provider_id: "openai".to_string(),
+                model: "gpt-4o-2024-11-20".to_string(),
+                whisper_model: crate::config::DEFAULT_WHISPER_MODEL.to_string(),
+            },
             transcript: TranscriptConfig::default(),
-            custom_openai: CustomOpenAIConfigFields::default(),
             knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
             preferences: PreferencesConfig::default(),
         }
@@ -330,11 +299,15 @@ impl PolyConfig {
 
         Ok(())
     }
+
+    /// Find a provider by ID.
+    pub fn find_provider(&self, id: &str) -> Option<&ProviderConfig> {
+        self.providers.iter().find(|p| p.id == id)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Unit tests (basic.  Full integration tests are in
-// `tests/poly_config_test.rs`.)
+// Unit tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -344,7 +317,7 @@ mod tests {
     #[test]
     fn default_summary_matches_app_defaults() {
         let s = SummaryConfig::default();
-        assert_eq!(s.provider, "openai");
+        assert_eq!(s.provider_id, "openai");
         assert_eq!(s.model, "gpt-4o-2024-11-20");
         assert_eq!(s.whisper_model, crate::config::DEFAULT_WHISPER_MODEL);
     }
@@ -354,6 +327,21 @@ mod tests {
         let t = TranscriptConfig::default();
         assert_eq!(t.provider, "parakeet");
         assert_eq!(t.model, crate::config::DEFAULT_PARAKEET_MODEL);
+    }
+
+    #[test]
+    fn default_poly_config_has_default_providers() {
+        let cfg = PolyConfig::default();
+        assert_eq!(cfg.providers.len(), 1);
+        assert_eq!(cfg.providers[0].id, "openai");
+    }
+
+    #[test]
+    fn find_provider_by_id() {
+        let cfg = PolyConfig::default();
+        let p = cfg.find_provider("openai").unwrap();
+        assert_eq!(p.name, "OpenAI");
+        assert!(cfg.find_provider("nonexistent").is_none());
     }
 
     #[test]
@@ -368,6 +356,8 @@ mod tests {
             notes: Some("note".into()),
             has_secret: false,
             api_key_masked_hint: None,
+            llm_model: "qwen3:30b-a3b".into(),
+            llm_provider_id: None,
         };
 
         let without = KnowledgeGraphProfileWithoutSecrets::from(original);
@@ -377,18 +367,14 @@ mod tests {
         assert_eq!(back.name, "x");
         assert_eq!(back.kind, ProfileKind::Remote);
         assert_eq!(back.notes.as_deref(), Some("note"));
-        assert!(
-            back.api_key.is_none(),
-            "api_key must be None after roundtrip"
-        );
+        assert!(back.api_key.is_none(), "api_key must be None after roundtrip");
     }
 
     #[test]
     fn deserialize_minimal_yaml() {
-        let yaml = "summary:\n  provider: groq\n";
+        let yaml = "summary:\n  provider_id: groq\n";
         let cfg: PolyConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(cfg.summary.provider, "groq");
-        // All other fields should be defaults
+        assert_eq!(cfg.summary.provider_id, "groq");
         assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
         assert_eq!(cfg.transcript.provider, "parakeet");
         assert_eq!(cfg.preferences.language, "auto-translate");

@@ -3,6 +3,7 @@ use crate::database::repositories::{
 };
 use crate::ollama::metadata::ModelMetadataCache;
 use crate::poly_config::ConfigRepository;
+use crate::providers::{ProviderConfig, ProviderType};
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::secrets::refs;
 use crate::secrets::store::SecretStore;
@@ -320,21 +321,29 @@ impl SummaryService {
         // Register cancellation token for this meeting
         let cancellation_token = Self::register_cancellation_token(&meeting_id);
 
-        // Parse provider
-        let provider = match LLMProvider::from_str(&model_provider) {
-            Ok(p) => p,
-            Err(e) => {
-                Self::update_process_failed(&pool, &meeting_id, &e).await;
-                return;
-            }
-        };
-
         // ── Load non-secret config from YAML ───────────────────────────────
         let cfg = match ConfigRepository::new().load() {
             Ok(c) => c,
             Err(e) => {
                 let err_msg = format!("Failed to load config: {}", e);
                 Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
+                return;
+            }
+        };
+
+        // ── Resolve LLMProvider from the configured providers list ─────────
+        // First try: look up the provider in the global providers list
+        let provider = if let Some(pc) = cfg.find_provider(&model_provider) {
+            Ok(Self::provider_type_to_llm_provider(&pc.provider_type, &model_name))
+        } else {
+            // Fallback: parse the old hardcoded provider names (backward compat)
+            LLMProvider::from_str(&model_provider)
+        };
+
+        let provider = match provider {
+            Ok(p) => p,
+            Err(e) => {
+                Self::update_process_failed(&pool, &meeting_id, &e).await;
                 return;
             }
         };
@@ -349,82 +358,63 @@ impl SummaryService {
             }
         };
 
-        // ── Resolve API key ───────────────────────────────────────────────
-        // Ollama and BuiltInAI don't need API keys. CustomOpenAI uses its own
-        // secret ref. All other providers read from the standard provider key.
-        let api_key = if provider == LLMProvider::Ollama || provider == LLMProvider::BuiltInAI {
-            String::new()
-        } else if provider == LLMProvider::CustomOpenAI {
-            match store.get(&refs::custom_openai_key()).await {
-                Ok(Some(key)) if !key.is_empty() => key,
-                Ok(None) | Ok(Some(_)) => {
-                    // CustomOpenAI can work without an API key (open endpoints)
-                    String::new()
-                }
-                Err(e) => {
-                    let err_msg = format!("Failed to retrieve custom OpenAI API key: {}", e);
-                    Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
-                    return;
-                }
+        // ── Resolve provider config from the global providers list ─────────
+        let provider_config = match cfg.find_provider(&cfg.summary.provider_id) {
+            Some(p) => p.clone(),
+            None => {
+                let err_msg = format!("Provider '{}' not found in config. Please add it in Settings.", cfg.summary.provider_id);
+                Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
+                return;
             }
+        };
+
+        // ── Resolve API key using provider config ──────────────────────────
+        // Ollama and BuiltInAI don't need API keys; all others look up via provider_id.
+        let api_key = if provider_config.provider_type == crate::providers::ProviderType::Ollama
+            || provider == LLMProvider::BuiltInAI
+        {
+            String::new()
         } else {
             match store
-                .get(&refs::summary_provider_key(&model_provider))
+                .get(&refs::summary_provider_key(&cfg.summary.provider_id))
                 .await
             {
                 Ok(Some(key)) if !key.is_empty() => key,
                 Ok(None) | Ok(Some(_)) => {
-                    let err_msg = format!("API key not found for {}", &model_provider);
-                    Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
-                    return;
+                    // Custom/self-hosted providers may work without an API key
+                    String::new()
                 }
                 Err(e) => {
                     let err_msg =
-                        format!("Failed to retrieve API key for {}: {}", &model_provider, e);
+                        format!("Failed to retrieve API key for {}: {}", cfg.summary.provider_id, e);
                     Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
                     return;
                 }
             }
         };
 
-        // ── Ollama endpoint from YAML config ──────────────────────────────
-        let ollama_endpoint = if provider == LLMProvider::Ollama {
-            cfg.summary.ollama_endpoint.clone()
+        // ── Derive legacy parameters from provider config ──────────────────
+        // Bridge: convert the new provider config into the parameters
+        // expected by the existing processor/llm_client call chain.
+        let ollama_endpoint = if provider_config.provider_type == crate::providers::ProviderType::Ollama {
+            Some(provider_config.base_url.clone())
         } else {
             None
         };
+        let custom_openai_endpoint = Some(provider_config.base_url.clone());
+        let custom_openai_max_tokens: Option<u32> = None;
+        let custom_openai_temperature: Option<f32> = None;
+        let custom_openai_top_p: Option<f32> = None;
 
-        // ── CustomOpenAI config from YAML + SecretStore ────────────────────
-        let (
-            custom_openai_endpoint,
-            custom_openai_max_tokens,
-            custom_openai_temperature,
-            custom_openai_top_p,
-        ) = if provider == LLMProvider::CustomOpenAI {
-            let custom = &cfg.custom_openai;
-            if custom.endpoint.is_empty() {
-                let err_msg = "Custom OpenAI provider selected but no endpoint configured";
-                Self::update_process_failed(&pool, &meeting_id, err_msg).await;
-                return;
-            }
-            info!("✓ Using custom OpenAI endpoint: {}", custom.endpoint);
-            (
-                Some(custom.endpoint.clone()),
-                custom.max_tokens.map(|t| t as u32),
-                custom.temperature,
-                custom.top_p,
-            )
-        } else {
-            (None, None, None, None)
-        };
-
-        // For CustomOpenAI, the API key was already retrieved above via SecretStore
         let final_api_key = api_key;
 
+        // For Ollama, resolve the base_url for model context fetching
+        let ollama_base_url = ollama_endpoint.clone();
+
         // Dynamically fetch context size based on provider and model
-        let token_threshold = if provider == LLMProvider::Ollama {
+        let token_threshold = if provider_config.provider_type == crate::providers::ProviderType::Ollama {
             match METADATA_CACHE
-                .get_or_fetch(&model_name, ollama_endpoint.as_deref())
+                .get_or_fetch(&model_name, ollama_base_url.as_deref())
                 .await
             {
                 Ok(metadata) => {
@@ -650,6 +640,19 @@ impl SummaryService {
                 "Failed to update DB status to failed for {}: {}",
                 meeting_id, e
             );
+        }
+    }
+
+    /// Map a `ProviderType` (from the unified providers list) to the
+    /// legacy `LLMProvider` enum used by the processor.
+    fn provider_type_to_llm_provider(pt: &ProviderType, _model_name: &str) -> LLMProvider {
+        match pt {
+            ProviderType::OpenAI => LLMProvider::OpenAI,
+            ProviderType::Anthropic => LLMProvider::Claude,
+            ProviderType::Groq => LLMProvider::Groq,
+            ProviderType::Ollama => LLMProvider::Ollama,
+            ProviderType::OpenRouter => LLMProvider::OpenRouter,
+            ProviderType::Custom => LLMProvider::CustomOpenAI,
         }
     }
 }
@@ -1029,16 +1032,20 @@ mod tests {
         let secrets_path = dir.path().join("secrets.yml");
 
         let yaml = r#"
+providers:
+  - id: ollama
+    name: Ollama
+    type: ollama
+    base_url: "http://localhost:11434"
+    default_model: "llama3.1:8b"
+  - id: custom-openai
+    name: Custom OpenAI
+    type: custom
+    base_url: "https://custom.example.com/v1"
+    default_model: "custom-model"
 summary:
-  provider: ollama
+  provider_id: ollama
   model: llama3.1:8b
-  ollama_endpoint: "http://localhost:11434"
-custom_openai:
-  endpoint: "https://custom.example.com/v1"
-  model: "gpt-4"
-  max_tokens: 2048
-  temperature: 0.7
-  top_p: 0.9
 "#;
         std::fs::write(&config_path, yaml).unwrap();
 
@@ -1046,18 +1053,24 @@ custom_openai:
         let cfg = repo.load().unwrap();
 
         // ── Assert: summary config from YAML ────────────────────────
-        assert_eq!(cfg.summary.provider, "ollama");
+        assert_eq!(cfg.summary.provider_id, "ollama");
         assert_eq!(cfg.summary.model, "llama3.1:8b");
-        assert_eq!(
-            cfg.summary.ollama_endpoint.as_deref(),
-            Some("http://localhost:11434")
-        );
 
-        // ── Assert: custom OpenAI config from YAML ──────────────────
-        assert_eq!(cfg.custom_openai.endpoint, "https://custom.example.com/v1");
-        assert_eq!(cfg.custom_openai.max_tokens, Some(2048));
-        assert_eq!(cfg.custom_openai.temperature, Some(0.7));
-        assert_eq!(cfg.custom_openai.top_p, Some(0.9));
+        // ── Assert: providers list from YAML ─────────────────────────
+        let ollama_providers: Vec<&ProviderConfig> = cfg
+            .providers
+            .iter()
+            .filter(|p| p.provider_type == ProviderType::Ollama)
+            .collect();
+        assert_eq!(ollama_providers.len(), 1);
+        assert_eq!(ollama_providers[0].base_url, "http://localhost:11434");
+        let custom_providers: Vec<&ProviderConfig> = cfg
+            .providers
+            .iter()
+            .filter(|p| p.provider_type == ProviderType::Custom)
+            .collect();
+        assert_eq!(custom_providers.len(), 1);
+        assert_eq!(custom_providers[0].base_url, "https://custom.example.com/v1");
 
         // ── Assert: SecretStore works without SQLite ────────────────
         let store =

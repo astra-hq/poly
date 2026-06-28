@@ -8,8 +8,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import { TranscriptModelProps } from '@/components/TranscriptSettings';
 
+import type { ProviderConfig, ProviderModel } from '@/types/providers';
+
 export interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openrouter' | 'openai' | 'builtin-ai' | 'custom-openai';
+  provider: 'ollama' | 'groq' | 'claude' | 'openrouter' | 'openai' | 'builtin-ai';
   model: string;
   whisperModel: string;
   /**
@@ -18,22 +20,6 @@ export interface ModelConfig {
    */
   apiKey?: string | null;
   ollamaEndpoint?: string | null;
-  // Custom OpenAI fields (only populated when provider is 'custom-openai')
-  customOpenAIEndpoint?: string | null;
-  customOpenAIModel?: string | null;
-  customOpenAIApiKey?: string | null;
-  maxTokens?: number | null;
-  temperature?: number | null;
-  topP?: number | null;
-}
-
-export interface CustomOpenAIConfig {
-  endpoint: string;
-  apiKey: string | null;
-  model: string;
-  maxTokens: number | null;
-  temperature: number | null;
-  topP: number | null;
 }
 
 export interface RecordingPreferences {
@@ -71,46 +57,33 @@ export class ConfigService {
   }
 
   /**
-   * Get custom OpenAI configuration
-   * @returns Promise with CustomOpenAIConfig or null if not configured
+   * Get all configured providers from poly.yml.
    */
-  async getCustomOpenAIConfig(): Promise<CustomOpenAIConfig | null> {
-    return invoke<CustomOpenAIConfig | null>('api_get_custom_openai_config');
+  async getProviders(): Promise<ProviderConfig[]> {
+    return invoke<ProviderConfig[]>('api_get_providers');
   }
 
   /**
-   * Save custom OpenAI configuration
-   * @param config - CustomOpenAIConfig to save
-   * @returns Promise with result status
+   * Fetch available models for a provider.
    */
-  async saveCustomOpenAIConfig(config: CustomOpenAIConfig): Promise<{ status: string; message: string }> {
-    return invoke<{ status: string; message: string }>('api_save_custom_openai_config', {
-      endpoint: config.endpoint,
-      apiKey: config.apiKey,
-      model: config.model,
-      maxTokens: config.maxTokens,
-      temperature: config.temperature,
-      topP: config.topP,
+  async getProviderModels(providerId: string): Promise<ProviderModel[]> {
+    return invoke<ProviderModel[]>('api_get_provider_models', {
+      providerId,
     });
   }
 
   /**
-   * Test custom OpenAI connection
-   * @param endpoint - API endpoint URL
-   * @param apiKey - Optional API key
-   * @param model - Model name
-   * @returns Promise with test result
+   * Create or update a provider in poly.yml.
    */
-  async testCustomOpenAIConnection(
-    endpoint: string,
-    apiKey: string | null,
-    model: string
-  ): Promise<{ status: string; message: string; http_status?: number }> {
-    return invoke<{ status: string; message: string; http_status?: number }>('api_test_custom_openai_connection', {
-      endpoint,
-      apiKey,
-      model,
-    });
+  async saveProvider(provider: ProviderConfig, apiKey?: string): Promise<void> {
+    await invoke('api_save_provider', { provider, apiKey: apiKey ?? null });
+  }
+
+  /**
+   * Delete a provider from poly.yml by id.
+   */
+  async deleteProvider(providerId: string): Promise<void> {
+    await invoke('api_delete_provider', { providerId });
   }
 }
 

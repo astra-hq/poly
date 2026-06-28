@@ -274,6 +274,7 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
             embedding: EmbeddingConfig::default(),
             lightrag_url: "http://localhost:9621".to_string(),
             notes: None,
+            llm_model: "qwen3:30b-a3b".to_string(),
         },
         KnowledgeGraphProfileWithoutSecrets {
             id: "profile-2".to_string(),
@@ -282,6 +283,7 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
             embedding: EmbeddingConfig::default(),
             lightrag_url: "http://remote:9621".to_string(),
             notes: None,
+            llm_model: "qwen3:30b-a3b".to_string(),
         },
     ];
     cfg.knowledge_graph.active_profile = KnowledgeGraphSelection::None;

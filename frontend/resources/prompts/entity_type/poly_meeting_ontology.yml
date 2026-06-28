@@ -1,0 +1,214 @@
+### Poly Meeting Ontology Prompt Profile
+### 
+### This profile defines entity types and extraction examples tailored for
+### Poly meeting summaries (technical discussions, action items, decisions).
+### 
+### When ENTITY_EXTRACTION_USE_JSON=true, the entity_extraction_json_examples
+### section is used. When false, entity_extraction_examples is used.
+### 
+### Place this file at: PROMPT_DIR/entity_type/poly_meeting_ontology.yml
+### And set ENTITY_TYPE_PROMPT_FILE=poly_meeting_ontology.yml
+
+entity_types_guidance: |
+  Classify each entity using one of the following types. If no type fits, use `Other`.
+
+  - Product: Software products, platforms, applications, or services (e.g., Poly, Jira, VS Code, Slack)
+  - Feature: Product capabilities, functionalities, or user-facing features (e.g., screen recording, transcription, knowledge graph)
+  - AIModel: AI/ML models, model families, or model variants (e.g., Grounding DINO, Segment Anything, Qwen, Whisper, Parakeet)
+  - Library: Software libraries, SDKs, frameworks, or packages (e.g., OCDNet, Deformable DETR, RT-DETR, PointPillars, PyTorch, TensorFlow)
+  - Organization: Companies, research labs, open-source projects, or teams (e.g., NVIDIA, Meta, Google, Hugging Face)
+  - Integration: Technical integrations, APIs, protocols, or interoperability mechanisms (e.g., knowledge graph integration, webhook, REST API)
+  - Workflow: Processes, pipelines, or multi-step procedures (e.g., meeting ingestion pipeline, transcription workflow, CI/CD)
+  - ActionItem: Concrete tasks assigned to owners with due dates (e.g., "Speaker: Evaluate PointPillars integration by Friday")
+  - Decision: Explicit decisions made during the meeting (e.g., "Team decided to use Qwen3 for extraction")
+  - Risk: Identified risks, concerns, or blockers (e.g., "VRAM limitation on 16GB GPUs", "model licensing uncertainty")
+  - System: Infrastructure, hardware, or runtime environments (e.g., Docker, Ollama, Neo4j, GPU, RTX 4090)
+  - Concept: Abstract concepts, methodologies, or technical approaches (e.g., mixture-of-experts, RAG, quantization, MoE)
+  - Metric: Quantitative measurements, benchmarks, or performance indicators (e.g., "40 tok/s", "18 GB VRAM", "32k context")
+  - Person: Human individuals mentioned by name or role (e.g., "Speaker", "Team lead", "Jeremi")
+  - Meeting: Meeting identifiers, types, or recurring sessions (e.g., "standup", "sprint planning", "design review")
+
+# JSON-mode extraction examples (used when ENTITY_EXTRACTION_USE_JSON=true)
+# Must be a list of strings, each item is a complete example
+entity_extraction_json_examples:
+  - |
+    {
+      "entities": [
+        {
+          "name": "Poly",
+          "type": "Product",
+          "description": "Privacy-first AI meeting assistant desktop application"
+        },
+        {
+          "name": "Grounding DINO",
+          "type": "AIModel",
+          "description": "NVIDIA's open-set object detection model for zero-shot detection"
+        }
+      ],
+      "relationships": [
+        {
+          "source": "NVIDIA",
+          "target": "Grounding DINO",
+          "keywords": "provides",
+          "description": "NVIDIA provides Grounding DINO model"
+        }
+      ]
+    }
+  - |
+    {
+      "entities": [
+        {
+          "name": "screen recording analysis",
+          "type": "Feature",
+          "description": "Analyzing screen capture content alongside audio transcription"
+        },
+        {
+          "name": "always-on AI assistant",
+          "type": "Feature",
+          "description": "Persistent AI agent monitoring OS context for proactive assistance"
+        }
+      ],
+      "relationships": [
+        {
+          "source": "Poly",
+          "target": "screen recording analysis",
+          "keywords": "has feature",
+          "description": "Poly has screen recording analysis feature"
+        }
+      ]
+    }
+  - |
+    {
+      "entities": [
+        {
+          "name": "knowledge graph integration",
+          "type": "Integration",
+          "description": "Connecting meeting data to a LightRAG/Neo4j knowledge graph"
+        },
+        {
+          "name": "Jira",
+          "type": "Product",
+          "description": "Atlassian issue tracking and project management tool"
+        }
+      ],
+      "relationships": [
+        {
+          "source": "always-on AI assistant",
+          "target": "Jira",
+          "keywords": "integrates with",
+          "description": "AI assistant integrates with Jira for ticket creation"
+        }
+      ]
+    }
+  - |
+    {
+      "entities": [
+        {
+          "name": "Speaker: Evaluate integrating 3D object detection models (PointPillars) into the framework",
+          "type": "ActionItem",
+          "description": "Action item assigned to Speaker to evaluate PointPillars integration"
+        },
+        {
+          "name": "PointPillars",
+          "type": "AIModel",
+          "description": "3D object detection model for LiDAR point clouds"
+        }
+      ],
+      "relationships": [
+        {
+          "source": "Speaker",
+          "target": "PointPillars",
+          "keywords": "evaluates",
+          "description": "Speaker evaluates PointPillars integration"
+        }
+      ]
+    }
+  - |
+    {
+      "entities": [
+        {
+          "name": "Team decided to use qwen3:30b-a3b for entity extraction",
+          "type": "Decision",
+          "description": "Technical decision to switch extraction model to Qwen3 30B MoE"
+        },
+        {
+          "name": "qwen3:30b-a3b",
+          "type": "AIModel",
+          "description": "Qwen3 30B A3B MoE model for entity extraction"
+        }
+      ],
+      "relationships": [
+        {
+          "source": "Team",
+          "target": "qwen3:30b-a3b",
+          "keywords": "decided to use",
+          "description": "Team decided to use Qwen3 30B MoE for extraction"
+        }
+      ]
+    }
+  - |
+    {
+      "entities": [
+        {
+          "name": "VRAM limitation on 16GB GPUs requires Q3_K_M quantization",
+          "type": "Risk",
+          "description": "Hardware constraint risk for running 30B MoE models locally"
+        },
+        {
+          "name": "Ollama",
+          "type": "System",
+          "description": "Local LLM serving platform for running models like Qwen and bge-m3"
+        }
+      ],
+      "relationships": []
+    }
+  - |
+    {
+      "entities": [
+        {
+          "name": "mixture-of-experts",
+          "type": "Concept",
+          "description": "MoE architecture with sparse expert activation for efficiency"
+        },
+        {
+          "name": "40 tok/s on RTX 4090 at Q4_K_M",
+          "type": "Metric",
+          "description": "Inference throughput benchmark for Qwen3 30B MoE"
+        }
+      ],
+      "relationships": []
+    }
+
+# Text-mode extraction examples (used when ENTITY_EXTRACTION_USE_JSON=false)
+# Must be a list of strings, each item is a complete example
+entity_extraction_examples:
+  - |
+    entity{tuple_delimiter}Poly{tuple_delimiter}Product{tuple_delimiter}Privacy-first AI meeting assistant desktop application
+    entity{tuple_delimiter}Grounding DINO{tuple_delimiter}AIModel{tuple_delimiter}NVIDIA's open-set object detection model for zero-shot detection
+    entity{tuple_delimiter}NVIDIA{tuple_delimiter}Organization{tuple_delimiter}GPU and AI hardware/software company providing foundational models
+    relation{tuple_delimiter}NVIDIA{tuple_delimiter}Grounding DINO{tuple_delimiter}provides{tuple_delimiter}NVIDIA provides Grounding DINO model
+    {completion_delimiter}
+  - |
+    entity{tuple_delimiter}screen recording analysis{tuple_delimiter}Feature{tuple_delimiter}Analyzing screen capture content alongside audio transcription
+    entity{tuple_delimiter}always-on AI assistant{tuple_delimiter}Feature{tuple_delimiter}Persistent AI agent monitoring OS context for proactive assistance
+    relation{tuple_delimiter}Poly{tuple_delimiter}screen recording analysis{tuple_delimiter}has feature{tuple_delimiter}Poly has screen recording analysis feature
+    {completion_delimiter}
+  - |
+    entity{tuple_delimiter}knowledge graph integration{tuple_delimiter}Integration{tuple_delimiter}Connecting meeting data to a LightRAG/Neo4j knowledge graph
+    entity{tuple_delimiter}Jira{tuple_delimiter}Product{tuple_delimiter}Atlassian issue tracking and project management tool
+    relation{tuple_delimiter}always-on AI assistant{tuple_delimiter}Jira{tuple_delimiter}integrates with{tuple_delimiter}AI assistant integrates with Jira for ticket creation
+    {completion_delimiter}
+  - |
+    entity{tuple_delimiter}Speaker: Evaluate integrating 3D object detection models (PointPillars) into the framework{tuple_delimiter}ActionItem{tuple_delimiter}Action item assigned to Speaker to evaluate PointPillars integration
+    entity{tuple_delimiter}PointPillars{tuple_delimiter}AIModel{tuple_delimiter}3D object detection model for LiDAR point clouds
+    relation{tuple_delimiter}Speaker{tuple_delimiter}PointPillars{tuple_delimiter}evaluates{tuple_delimiter}Speaker evaluates PointPillars integration
+    {completion_delimiter}
+  - |
+    entity{tuple_delimiter}Team decided to use qwen3:30b-a3b for entity extraction{tuple_delimiter}Decision{tuple_delimiter}Technical decision to switch extraction model to Qwen3 30B MoE
+    entity{tuple_delimiter}qwen3:30b-a3b{tuple_delimiter}AIModel{tuple_delimiter}Qwen3 30B A3B MoE model for entity extraction
+    relation{tuple_delimiter}Team{tuple_delimiter}qwen3:30b-a3b{tuple_delimiter}decided to use{tuple_delimiter}Team decided to use Qwen3 30B MoE for extraction
+    {completion_delimiter}
+  - |
+    entity{tuple_delimiter}VRAM limitation on 16GB GPUs requires Q3_K_M quantization{tuple_delimiter}Risk{tuple_delimiter}Hardware constraint risk for running 30B MoE models locally
+    entity{tuple_delimiter}Ollama{tuple_delimiter}System{tuple_delimiter}Local LLM serving platform for running models like Qwen and bge-m3
+    {completion_delimiter}

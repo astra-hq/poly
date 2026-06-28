@@ -96,7 +96,8 @@
         ],
         "resources": {
             "templates/*.json": "templates/",
-            "../../docker-compose.kg.yml": "docker-compose.kg.yml"
+            "../../docker-compose.kg.yml": "docker-compose.kg.yml",
+            "../../frontend/resources/prompts": "prompts/"
         },
         "externalBin": [
             "binaries/llama-helper",

@@ -185,7 +185,7 @@ pub async fn complete_onboarding<R: Runtime>(
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
     // Onboarding always uses builtin-ai (local LLM)
-    config.summary.provider = "builtin-ai".to_string();
+    config.summary.provider_id = "builtin-ai".to_string();
     config.summary.model = model.clone();
     config.summary.whisper_model = "large-v3".to_string();
 

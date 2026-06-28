@@ -1,10 +1,10 @@
 use crate::ollama::metadata::ModelMetadataCache;
+use crate::process_path;
 use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::process::Command;
 use std::sync::Arc;
 use tauri::{command, AppHandle, Emitter, Runtime};
 use tokio::sync::RwLock;
@@ -208,7 +208,7 @@ async fn get_models_via_http_async(endpoint: Option<&str>) -> Result<Vec<OllamaM
 }
 
 fn get_models_via_cli() -> Result<Vec<OllamaModel>, String> {
-    let output = Command::new("ollama").arg("list").output().map_err(|e| {
+    let output = process_path::command("ollama").arg("list").output().map_err(|e| {
         OllamaError::NetworkError(format!("Ollama CLI not found or not in PATH: {}", e)).to_string()
     })?;
 

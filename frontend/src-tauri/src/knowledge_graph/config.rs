@@ -46,6 +46,14 @@ pub struct KnowledgeGraphProfile {
     pub has_secret: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_key_masked_hint: Option<String>,
+    #[serde(default = "default_llm_model")]
+    pub llm_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_provider_id: Option<String>,
+}
+
+fn default_llm_model() -> String {
+    "qwen3:30b-a3b".to_string()
 }
 
 /// Embedding provider and model configuration.
@@ -87,6 +95,8 @@ impl Default for KnowledgeGraphProfile {
             notes: None,
             has_secret: false,
             api_key_masked_hint: None,
+            llm_model: default_llm_model(),
+            llm_provider_id: None,
         }
     }
 }
@@ -157,6 +167,12 @@ pub fn validate(settings: &KnowledgeGraphSettings) -> Result<()> {
                 profile.id
             ));
         }
+        if profile.llm_model.trim().is_empty() {
+            return Err(anyhow!(
+                "LLM model cannot be empty for profile '{}'",
+                profile.id
+            ));
+        }
     }
 
     match &settings.active_profile {
@@ -178,7 +194,7 @@ pub fn validate(settings: &KnowledgeGraphSettings) -> Result<()> {
 /// meaningful configuration changes.
 ///
 /// Hashes the stable identity (`id`), behavioural fields (`kind`,
-/// `lightrag_url`, embedding config) but not cosmetic labels (`name`,
+/// `lightrag_url`, embedding config, `llm_model`) but not cosmetic labels (`name`,
 /// `notes`) or secrets (`api_key`).
 pub fn fingerprint(profile: &KnowledgeGraphProfile) -> String {
     let mut hasher = DefaultHasher::new();
@@ -188,6 +204,7 @@ pub fn fingerprint(profile: &KnowledgeGraphProfile) -> String {
     profile.embedding.model.hash(&mut hasher);
     profile.embedding.dimensions.hash(&mut hasher);
     profile.lightrag_url.hash(&mut hasher);
+    profile.llm_model.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
 
@@ -463,6 +480,8 @@ mod tests {
                 notes: Some("production profile".into()),
                 has_secret: false,
                 api_key_masked_hint: None,
+                llm_model: "qwen3:30b-a3b".into(),
+                llm_provider_id: None,
             }],
             active_profile: KnowledgeGraphSelection::Profile("prod-1".into()),
         };

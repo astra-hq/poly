@@ -28,7 +28,7 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 
 use super::config::{
-    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets,
+    KnowledgeGraphProfileWithoutSecrets,
     KnowledgeGraphSettingsWithoutSecrets, PolyConfig, PreferencesConfig, SummaryConfig,
     TranscriptConfig,
 };
@@ -89,13 +89,12 @@ impl LegacyConfigExtractor {
     async fn scan(pool: &SqlitePool) -> Result<PolyConfig> {
         let summary = Self::scan_summary(pool).await.unwrap_or_default();
         let transcript = Self::scan_transcript(pool).await.unwrap_or_default();
-        let custom_openai = Self::scan_custom_openai(pool).await.unwrap_or_default();
         let knowledge_graph = Self::scan_knowledge_graph(pool).await.unwrap_or_default();
 
         Ok(PolyConfig {
+            providers: vec![],
             summary,
             transcript,
-            custom_openai,
             knowledge_graph,
             preferences: PreferencesConfig::default(),
         })
@@ -123,11 +122,10 @@ impl LegacyConfigExtractor {
         };
 
         Ok(SummaryConfig {
-            provider: read_column_string(&row, "provider").unwrap_or_else(|| "openai".into()),
+            provider_id: read_column_string(&row, "provider").unwrap_or_else(|| "openai".into()),
             model: read_column_string(&row, "model").unwrap_or_else(|| "gpt-4o-2024-11-20".into()),
             whisper_model: read_column_string(&row, "whisperModel")
                 .unwrap_or_else(|| "large-v3".into()),
-            ollama_endpoint: read_column(&row, "ollamaEndpoint"),
         })
     }
 
@@ -154,49 +152,6 @@ impl LegacyConfigExtractor {
             provider: read_column_string(&row, "provider").unwrap_or_else(|| "parakeet".into()),
             model: read_column_string(&row, "model")
                 .unwrap_or_else(|| crate::config::DEFAULT_PARAKEET_MODEL.into()),
-        })
-    }
-
-    /// Scan `settings.customOpenAIConfig` JSON for non-secret fields.
-    async fn scan_custom_openai(pool: &SqlitePool) -> Result<CustomOpenAIConfigFields> {
-        let row = sqlx::query("SELECT customOpenAIConfig FROM settings LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .or_else(|e| {
-                if is_missing_table(&e) {
-                    Ok(None)
-                } else {
-                    Err(e)
-                }
-            })
-            .with_context(|| "failed to scan customOpenAIConfig column")?;
-
-        let row = match row {
-            Some(r) => r,
-            None => return Ok(CustomOpenAIConfigFields::default()),
-        };
-
-        let json: Option<String> = row.try_get("customOpenAIConfig").ok().flatten();
-        let config: crate::summary::CustomOpenAIConfig = match json {
-            Some(j) => {
-                serde_json::from_str(&j).unwrap_or_else(|_| crate::summary::CustomOpenAIConfig {
-                    endpoint: String::new(),
-                    api_key: None,
-                    model: String::new(),
-                    max_tokens: None,
-                    temperature: None,
-                    top_p: None,
-                })
-            }
-            None => return Ok(CustomOpenAIConfigFields::default()),
-        };
-
-        Ok(CustomOpenAIConfigFields {
-            endpoint: config.endpoint,
-            model: config.model,
-            max_tokens: config.max_tokens,
-            temperature: config.temperature,
-            top_p: config.top_p,
         })
     }
 
@@ -893,7 +848,9 @@ mod tests {
         assert!(result.is_ok(), "extraction should succeed on empty DB");
 
         let loaded = config_repo.load().unwrap();
-        assert_eq!(loaded, PolyConfig::default());
+        // Check that extraction populated the config without providers
+        // (providers come from default.yml template, not legacy extraction)
+        assert_eq!(loaded.summary.provider_id, "openai");
     }
 
     #[tokio::test]
@@ -909,6 +866,8 @@ mod tests {
         assert!(result.is_ok(), "extraction should succeed with no tables");
 
         let loaded = config_repo.load().unwrap();
-        assert_eq!(loaded, PolyConfig::default());
+        // Same check as extraction_on_empty_db_returns_ok — providers are not
+        // populated by legacy extraction.
+        assert_eq!(loaded.summary.provider_id, "openai");
     }
 }

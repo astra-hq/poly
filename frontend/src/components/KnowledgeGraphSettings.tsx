@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { knowledgeGraphService } from '@/services/knowledgeGraphService';
+import { configService } from '@/services/configService';
 import type {
   KnowledgeGraphProfile,
   KnowledgeGraphSettings,
@@ -46,7 +47,9 @@ import type {
   ProfileKind,
   KnowledgeGraphSelection,
 } from '@/types/knowledgeGraph';
-import { DEFAULT_EMBEDDING_CONFIG } from '@/types/knowledgeGraph';
+import { DEFAULT_EMBEDDING_CONFIG, DEFAULT_KG_PROFILE } from '@/types/knowledgeGraph';
+import type { ProviderConfig, ProviderModel } from '@/types/providers';
+import { PROVIDER_TYPE_LABELS } from '@/types/providers';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -98,6 +101,8 @@ interface ProfileFormState {
   embedding_provider: string;
   embedding_model: string;
   embedding_dimensions: string;
+  llm_model: string;
+  llm_provider_id: string;
 }
 
 function emptyFormState(): ProfileFormState {
@@ -111,6 +116,8 @@ function emptyFormState(): ProfileFormState {
     embedding_provider: DEFAULT_EMBEDDING_CONFIG.provider,
     embedding_model: DEFAULT_EMBEDDING_CONFIG.model,
     embedding_dimensions: DEFAULT_EMBEDDING_CONFIG.dimensions.toString(),
+    llm_model: DEFAULT_KG_PROFILE.llm_model ?? 'qwen3:30b-a3b',
+    llm_provider_id: '',
   };
 }
 
@@ -125,6 +132,8 @@ function profileToForm(profile: KnowledgeGraphProfile): ProfileFormState {
     embedding_provider: profile.embedding.provider,
     embedding_model: profile.embedding.model,
     embedding_dimensions: profile.embedding.dimensions.toString(),
+    llm_model: profile.llm_model ?? 'qwen3:30b-a3b',
+    llm_provider_id: profile.llm_provider_id ?? '',
   };
 }
 
@@ -141,6 +150,8 @@ function formToProfile(form: ProfileFormState): KnowledgeGraphProfile {
       model: form.embedding_model.trim(),
       dimensions: parseInt(form.embedding_dimensions, 10) || DEFAULT_EMBEDDING_CONFIG.dimensions,
     },
+    llm_model: form.llm_model.trim() || undefined,
+    llm_provider_id: form.llm_provider_id.trim() || undefined,
   };
 }
 
@@ -158,6 +169,11 @@ export function KnowledgeGraphSettings() {
   const [formState, setFormState] = useState<ProfileFormState>(emptyFormState());
   const [showApiKey, setShowApiKey] = useState(false);
   const [formErrors, setFormErrors] = useState<{ name?: string; url?: string }>({});
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+
+  // LLM model dropdown state for KG profile provider selection
+  const [kgAvailableModels, setKgAvailableModels] = useState<ProviderModel[]>([]);
+  const [kgLoadingModels, setKgLoadingModels] = useState(false);
 
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeGraphProfile | null>(null);
@@ -183,11 +199,18 @@ export function KnowledgeGraphSettings() {
   const [setupDeps, setSetupDeps] = useState<{
     docker: { installed: boolean; version: string | null };
     ollama: { installed: boolean; version: string | null };
+    platform: string;
   } | null>(null);
   const [setupLogs, setSetupLogs] = useState<{ message: string; level: string; stage: string }[]>([]);
   const [setupResult, setSetupResult] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [pullingModel, setPullingModel] = useState<string | null>(null);
+  const [selectedLlmModel, setSelectedLlmModel] = useState<string>('');
+  const [setupProviderId, setSetupProviderId] = useState<string>('');
+  const [setupProviderModels, setSetupProviderModels] = useState<ProviderModel[]>([]);
+  const [setupLoadingModels, setSetupLoadingModels] = useState(false);
+  const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [backgroundSetup, setBackgroundSetup] = useState(false);
   const logEndRef = useRef<HTMLDivElement>(null);
 
   // ── Load settings on mount ──────────────────────────────────────────
@@ -210,6 +233,55 @@ export function KnowledgeGraphSettings() {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    configService.getProviders().then(setProviders).catch(() => {});
+  }, []);
+
+  // Fetch models when LLM provider changes in the profile form
+  useEffect(() => {
+    const providerId = formState.llm_provider_id;
+    if (!providerId) {
+      setKgAvailableModels([]);
+      return;
+    }
+    setKgLoadingModels(true);
+    configService
+      .getProviderModels(providerId)
+      .then((models) => {
+        setKgAvailableModels(models);
+        // Auto-fill default model if none selected
+        const provider = providers.find((p) => p.id === providerId);
+        if (!formState.llm_model && provider?.default_model) {
+          setFormState((prev) => ({ ...prev, llm_model: provider.default_model! }));
+        }
+      })
+      .catch(() => setKgAvailableModels([]))
+      .finally(() => setKgLoadingModels(false));
+  }, [formState.llm_provider_id]);
+  // Omit formState.llm_model on purpose — we only watch provider changes
+
+  // Fetch models when setup wizard provider changes
+  useEffect(() => {
+    if (!setupProviderId) {
+      setSetupProviderModels([]);
+      setSelectedLlmModel('');
+      return;
+    }
+    setSetupLoadingModels(true);
+    configService
+      .getProviderModels(setupProviderId)
+      .then((models) => {
+        setSetupProviderModels(models);
+        const provider = providers.find((p) => p.id === setupProviderId);
+        if (!selectedLlmModel && provider?.default_model) {
+          setSelectedLlmModel(provider.default_model);
+        }
+      })
+      .catch(() => setSetupProviderModels([]))
+      .finally(() => setSetupLoadingModels(false));
+  }, [setupProviderId]);
+  // Omit selectedLlmModel from deps to avoid loop
 
   // ── Listen for setup-progress events from the backend ──────────────
   useEffect(() => {
@@ -312,6 +384,14 @@ export function KnowledgeGraphSettings() {
 
     const saved = await persistSettings(newSettings);
     if (saved) {
+      // For local profiles, update the .env file so LightRAG picks up model changes
+      if (profile.kind === 'local') {
+        try {
+          await knowledgeGraphService.updateEnv(profile.id);
+        } catch (envErr) {
+          console.warn('Failed to update .env for local profile:', envErr);
+        }
+      }
       setShowFormDialog(false);
       toast.success(
         editingProfile ? 'Profile updated' : 'Profile created',
@@ -412,10 +492,22 @@ export function KnowledgeGraphSettings() {
     setSetupResult(null);
     setSetupError(null);
     setPullingModel(null);
+    setSelectedLlmModel('qwen3:30b-a3b');
+    setSetupDialogOpen(true);
+    setBackgroundSetup(false);
   };
 
-  /** Close / reset the wizard entirely. */
+  /** Close the wizard dialog (but keep background operation running). */
   const handleCloseSetup = () => {
+    setSetupDialogOpen(false);
+    // If we're in an active phase, mark as background
+    if (setupPhase === 'phase2-pull-bge' || setupPhase === 'phase2-pull-llm' || setupPhase === 'phase3-stack') {
+      setBackgroundSetup(true);
+    }
+  };
+
+  /** Fully reset the wizard (cancel/complete). */
+  const handleResetSetup = () => {
     setSetupPhase('idle');
     setSetupPreference(null);
     setSetupDeps(null);
@@ -423,6 +515,8 @@ export function KnowledgeGraphSettings() {
     setSetupResult(null);
     setSetupError(null);
     setPullingModel(null);
+    setSetupDialogOpen(false);
+    setBackgroundSetup(false);
   };
 
   /** Phase 1: Run dependency checks for the chosen preference. */
@@ -467,8 +561,16 @@ export function KnowledgeGraphSettings() {
 
   /** Phase 2: Pull Ollama models (local only). */
   const handlePullModels = async () => {
-    const models = ['bge-m3:latest', 'qwen2.5:1.5b'];
-    for (const [i, model] of models.entries()) {
+    const setupProvider = providers.find((p) => p.id === setupProviderId);
+    const isOllama = setupProvider?.type === 'ollama';
+
+    // Always pull the embedding model (bge-m3) — it's always Ollama-based.
+    // Only pull the LLM extraction model if the chosen provider is Ollama.
+    const modelsToPull = isOllama
+      ? ['bge-m3:latest', selectedLlmModel]
+      : ['bge-m3:latest'];
+
+    for (const [i, model] of modelsToPull.entries()) {
       setSetupPhase(i === 0 ? 'phase2-pull-bge' : 'phase2-pull-llm');
       setPullingModel(model);
       setSetupLogs((prev) => [
@@ -504,7 +606,7 @@ export function KnowledgeGraphSettings() {
       { message: 'Starting Docker stack...', level: 'info', stage: 'compose-up' },
     ]);
     knowledgeGraphService
-      .startStack()
+      .setupLocalKnowledgeGraph(selectedLlmModel, setupProviderId)
       .then((result) => {
         setSetupResult(result);
         setSetupPhase('complete');
@@ -513,6 +615,7 @@ export function KnowledgeGraphSettings() {
           { message: result, level: 'success', stage: 'done' },
         ]);
         loadSettings();
+        setBackgroundSetup(false);
         toast.success('Knowledge graph is ready!', {
           description: 'Local LightRAG instance is running with an auto-created profile.',
         });
@@ -525,6 +628,7 @@ export function KnowledgeGraphSettings() {
           ...prev,
           { message: `Setup failed: ${msg}`, level: 'error', stage: 'error' },
         ]);
+        setBackgroundSetup(false);
         toast.error('Failed to set up knowledge graph', { description: msg });
       });
   };
@@ -694,7 +798,18 @@ export function KnowledgeGraphSettings() {
                   <span>{embeddingFingerprint(profile)}</span>
                 </div>
 
-                {/* Row 4: Notes (if present) */}
+                {/* Row 4: Notes / Background setup indicator */}
+                {profile.kind === 'local' && backgroundSetup && (
+                  <div className="mt-2">
+                    <button
+                      onClick={() => setSetupDialogOpen(true)}
+                      className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      Setup in progress — click to view
+                    </button>
+                  </div>
+                )}
                 {profile.notes && (
                   <div className="mt-2 text-xs text-gray-500 italic truncate" title={profile.notes}>
                     {profile.notes}
@@ -895,6 +1010,87 @@ export function KnowledgeGraphSettings() {
               />
             </div>
 
+            {/* LLM Provider */}
+            <div className="border-t pt-3 space-y-3">
+              <Label htmlFor="kg-llm-provider" className="text-sm font-medium">
+                LLM Provider
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Select which configured provider to use for entity extraction and knowledge
+                graph generation. You must select a provider to choose a model.
+              </p>
+              <Select
+                value={formState.llm_provider_id}
+                onValueChange={(value) => {
+                  setFormState((prev) => ({
+                    ...prev,
+                    llm_provider_id: value,
+                    // Clear model when provider changes
+                    llm_model: '',
+                  }));
+                }}
+              >
+                <SelectTrigger id="kg-llm-provider" className="w-full">
+                  <SelectValue placeholder="Select a provider..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {providers.map((provider) => (
+                    <SelectItem key={provider.id} value={provider.id}>
+                      {provider.name} ({PROVIDER_TYPE_LABELS[provider.type]})
+                    </SelectItem>
+                  ))}
+                  {providers.length === 0 && (
+                    <SelectItem value="__none__" disabled>
+                      No providers configured — add one in the Providers tab
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* LLM model */}
+            <div className="space-y-3">
+              <Label htmlFor="kg-llm-model" className="text-sm font-medium">LLM Model</Label>
+              <p className="text-xs text-muted-foreground">
+                Model used for entity extraction and knowledge graph generation.
+                Changing this requires restarting the LightRAG container.
+              </p>
+              <Select
+                value={formState.llm_model}
+                onValueChange={(value) =>
+                  setFormState((prev) => ({ ...prev, llm_model: value }))
+                }
+                disabled={!formState.llm_provider_id || kgLoadingModels}
+              >
+                <SelectTrigger id="kg-llm-model" className="w-full">
+                  <SelectValue
+                    placeholder={
+                      !formState.llm_provider_id
+                        ? 'Select a provider first'
+                        : kgLoadingModels
+                          ? 'Loading models...'
+                          : 'Select a model...'
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {kgLoadingModels ? (
+                    <SelectItem value="__loading__" disabled>Loading models...</SelectItem>
+                  ) : kgAvailableModels.length > 0 ? (
+                    kgAvailableModels.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                      </SelectItem>
+                    ))
+                  ) : formState.llm_provider_id ? (
+                    <SelectItem value="__none__" disabled>
+                      No models available
+                    </SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Embedding config (collapsible section) */}
             <div className="border-t pt-3 space-y-3">
               <div className="flex items-center gap-2">
@@ -1030,7 +1226,14 @@ export function KnowledgeGraphSettings() {
       </Dialog>
 
       {/* ── Setup Wizard Dialog ──────────────────────────────────────── */}
-      <Dialog open={setupPhase !== 'idle'} onOpenChange={(open) => !open && handleCloseSetup()}>
+      <Dialog open={setupDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          // Only allow closing if we're not in a critical phase, or if explicitly closing
+          handleCloseSetup();
+        } else {
+          setSetupDialogOpen(true);
+        }
+      }}>
         <DialogContent className="max-w-xl">
           {/* Step indicator */}
           {setupPhase !== 'idle' && (
@@ -1138,7 +1341,7 @@ export function KnowledgeGraphSettings() {
               </div>
 
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={handleCloseSetup}>
+                <Button variant="outline" onClick={handleResetSetup}>
                   Cancel
                 </Button>
                 <Button
@@ -1196,12 +1399,93 @@ export function KnowledgeGraphSettings() {
 
           {/* ── Phase 1→2/3 Transition ────────────────────────────────── */}
           {setupDeps && (setupPhase === 'phase1-checking' || setupPhase === 'phase1-preference') && (
-            <div className="mt-4">
+            <div className="mt-4 space-y-4">
+              {/* LLM Provider */}
+              <div className="space-y-2">
+                <Label htmlFor="setup-llm-provider" className="text-sm font-medium">
+                  LLM Provider
+                </Label>
+                <Select
+                  value={setupProviderId}
+                  onValueChange={(value) => {
+                    setSetupProviderId(value);
+                    setSelectedLlmModel('');
+                    setSetupProviderModels([]);
+                  }}
+                >
+                  <SelectTrigger id="setup-llm-provider" className="w-full">
+                    <SelectValue placeholder="Select a provider..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {providers.map((provider) => (
+                      <SelectItem key={provider.id} value={provider.id}>
+                        {provider.name} ({PROVIDER_TYPE_LABELS[provider.type]})
+                      </SelectItem>
+                    ))}
+                    {providers.length === 0 && (
+                      <SelectItem value="__none__" disabled>
+                        No providers configured — add one in the Providers tab
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Select the provider for entity extraction and knowledge graph generation.
+                  You must select a provider to choose a model.
+                </p>
+              </div>
+
+              {/* LLM Model */}
+              <div className="space-y-2">
+                <Label htmlFor="setup-llm-model" className="text-sm font-medium">
+                  Extraction Model
+                </Label>
+                <Select
+                  value={selectedLlmModel}
+                  onValueChange={setSelectedLlmModel}
+                  disabled={!setupProviderId || setupLoadingModels}
+                >
+                  <SelectTrigger id="setup-llm-model" className="w-full">
+                    <SelectValue
+                      placeholder={
+                        !setupProviderId
+                          ? 'Select a provider first'
+                          : setupLoadingModels
+                            ? 'Loading models...'
+                            : 'Select a model...'
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {setupLoadingModels ? (
+                      <SelectItem value="__loading__" disabled>Loading models...</SelectItem>
+                    ) : setupProviderModels.length > 0 ? (
+                      setupProviderModels.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.name}
+                        </SelectItem>
+                      ))
+                    ) : setupProviderId ? (
+                      <SelectItem value="__none__" disabled>
+                        No models available
+                      </SelectItem>
+                    ) : null}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Model used for entity extraction and knowledge graph generation.
+                  {setupPreference === 'local' && ' For Ollama providers, the model will be pulled via Ollama.'}
+                  Changing this requires restarting the LightRAG container.
+                </p>
+              </div>
+
               <Button
                 onClick={handleSetupStart}
                 disabled={
                   !setupDeps.docker.installed ||
-                  (setupPreference === 'local' && !setupDeps.ollama.installed)
+                  (setupPreference === 'local' && !setupDeps.ollama.installed) ||
+                  !setupProviderId ||
+                  !selectedLlmModel
                 }
                 className="w-full"
               >
@@ -1250,8 +1534,8 @@ export function KnowledgeGraphSettings() {
                 <div ref={logEndRef} />
               </div>
               <DialogFooter>
-                <Button variant="outline" disabled>
-                  Running...
+                <Button variant="outline" onClick={handleCloseSetup}>
+                  Run in Background
                 </Button>
               </DialogFooter>
             </>

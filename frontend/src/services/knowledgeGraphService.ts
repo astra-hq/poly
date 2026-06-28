@@ -239,21 +239,22 @@ export class KnowledgeGraphService {
 
   /**
    * Auto-provision a local knowledge graph stack via docker compose.
-   * Backend: `api_setup_local_knowledge_graph()`
+   * Backend: `api_setup_local_knowledge_graph(llm_model: String)`
    * Returns a status message on success.
    */
-  async setupLocalKnowledgeGraph(): Promise<string> {
-    return invoke<string>('api_setup_local_knowledge_graph');
+  async setupLocalKnowledgeGraph(llmModel: string, llmProviderId?: string): Promise<string> {
+    return invoke<string>('api_setup_local_knowledge_graph', { llmModel, llmProviderId: llmProviderId ?? null });
   }
 
   /**
    * Phase 1: Check system dependencies for local knowledge graph setup.
    * Backend: `api_setup_kg_check_deps()`
-   * Returns dependency info for Docker and Ollama.
+   * Returns dependency info for Docker, Ollama, and platform.
    */
   async checkDeps(): Promise<{
     docker: { installed: boolean; version: string | null };
     ollama: { installed: boolean; version: string | null };
+    platform: string;
   }> {
     return invoke('api_setup_kg_check_deps');
   }
@@ -275,6 +276,15 @@ export class KnowledgeGraphService {
    */
   async startStack(): Promise<string> {
     return invoke<string>('api_setup_local_knowledge_graph');
+  }
+
+  /**
+   * Update the local `.env` file to match a profile's current LLM model.
+   * Backend: `api_update_knowledge_graph_env(profile_id: String)`
+   * No-op for non-local profiles or when `.env` does not exist yet.
+   */
+  async updateEnv(profileId: string): Promise<void> {
+    return invoke('api_update_knowledge_graph_env', { profileId });
   }
 }
 

@@ -1,15 +1,6 @@
 name: poly-kg
 
 services:
-  rustfs:
-    image: rustfs/rustfs:latest
-    restart: unless-stopped
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - ./data/rustfs:/data
-
   neo4j:
     image: neo4j:5.26
     restart: unless-stopped
@@ -28,7 +19,6 @@ services:
     image: ghcr.io/hkuds/lightrag:latest
     depends_on:
       - neo4j
-      - rustfs
     ports:
       - "${HOST:-0.0.0.0}:${PORT:-9621}:9621"
     volumes:
