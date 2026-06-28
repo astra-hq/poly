@@ -1,0 +1,42 @@
+name: "Build Test"
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign-build:
+        description: 'Sign the build (requires secrets to be set)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build-test:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--target aarch64-apple-darwin"
+            target: "aarch64-apple-darwin"
+          - platform: "ubuntu-22.04"
+            args: "--bundles deb"
+            target: "x86_64-unknown-linux-gnu"
+          - platform: "ubuntu-24.04"
+            args: "--bundles appimage,rpm"
+            target: "x86_64-unknown-linux-gnu"
+          - platform: "windows-latest"
+            args: ""
+            target: "x86_64-pc-windows-msvc"
+
+    uses: ./.github/workflows/build.yml
+    with:
+      platform: ${{ matrix.platform }}
+      target: ${{ matrix.target }}
+      build-args: ${{ matrix.args }}
+      sign-binaries: ${{ github.event.inputs.sign-build == 'true' }}
+      asset-prefix: "poly-test"
+      upload-artifacts: true
+      is-debug-build: ${{ contains(matrix.args, '--debug') }}
+    secrets: inherit
