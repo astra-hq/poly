@@ -269,13 +269,18 @@ jobs:
           "SM_CLIENT_CERT_FILE=D:\Certificate_pkcs12.p12" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Setup DigiCert KeyLocker
-        if: contains(inputs.platform, 'windows') && inputs.sign-binaries && secrets.SM_HOST != ''
+        if: contains(inputs.platform, 'windows') && inputs.sign-binaries
         uses: digicert/ssm-code-signing@v1.1.1
 
       - name: Sync Certificate to Windows Certificate Store
-        if: contains(inputs.platform, 'windows') && inputs.sign-binaries && secrets.SM_HOST != ''
+        if: contains(inputs.platform, 'windows') && inputs.sign-binaries
         shell: pwsh
         run: |
+          if (-not "$env:SM_HOST") {
+            Write-Host "SM_HOST not set — skipping certificate sync"
+            exit 0
+          }
+
           Write-Host "=== Syncing certificate to Windows Certificate Store ==="
           $keypairOutput = smctl keypair ls 2>&1 | Out-String
           Write-Host $keypairOutput
@@ -347,8 +352,14 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: Verify certificate
-        if: contains(inputs.platform, 'macos') && inputs.sign-binaries && secrets.APPLE_CERTIFICATE != ''
+        if: contains(inputs.platform, 'macos') && inputs.sign-binaries
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE not set — skipping certificate verification"
+            exit 0
+          fi
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
