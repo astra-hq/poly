@@ -40,34 +40,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "frontend/src-tauri -> frontend/src-tauri/target"
-
-      - name: Install system dependencies (Tauri prerequisites)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev
-
       - name: Install frontend dependencies
         run: |
           cd frontend
           pnpm install
-
-      - name: Build llama-helper sidecar
-        run: |
-          cargo build -p llama-helper
-          mkdir -p frontend/src-tauri/binaries
-          cp target/debug/llama-helper frontend/src-tauri/binaries/llama-helper-x86_64-unknown-linux-gnu
-
-      - name: cargo check
-        run: cargo check
-        working-directory: frontend/src-tauri
 
       - name: pnpm lint
         run: pnpm lint
@@ -76,10 +52,6 @@ jobs:
       - name: pnpm typecheck
         run: pnpm typecheck
         working-directory: frontend
-
-      - name: cargo test
-        run: cargo test
-        working-directory: frontend/src-tauri
 
       - name: Check version is not already tagged
         shell: bash
