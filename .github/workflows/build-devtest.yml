@@ -151,12 +151,16 @@ jobs:
 
       # macOS signing setup (conditional)
       - name: Import Apple Developer Certificate
-        if: contains(matrix.platform, 'macos') && github.event.inputs.sign-build == 'true' && secrets.APPLE_CERTIFICATE != ''
+        if: contains(matrix.platform, 'macos') && github.event.inputs.sign-build == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE not set — skipping code signing setup"
+            exit 0
+          fi
           echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
@@ -167,22 +171,32 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: Verify Apple certificate
-        if: contains(matrix.platform, 'macos') && github.event.inputs.sign-build == 'true' && secrets.APPLE_CERTIFICATE != ''
+        if: contains(matrix.platform, 'macos') && github.event.inputs.sign-build == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE not set — skipping certificate verification"
+            exit 0
+          fi
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
           echo "Certificate imported: $CERT_ID"
 
       # Windows signing setup (conditional)
-      - name: Setup DigiCert KeyLocker
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && secrets.SM_HOST != ''
-        uses: digicert/ssm-code-signing@v1.1.1
-
       - name: Setup DigiCert Environment
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && secrets.SM_HOST != ''
+        id: setup-digicert-env
+        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true'
         shell: pwsh
         run: |
+          $smHost = "${{ secrets.SM_HOST }}"
+          if (-not $smHost) {
+            Write-Host "SM_HOST not set — skipping signing setup"
+            "digicert-configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+
           "SM_HOST=${{ secrets.SM_HOST }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SM_API_KEY=${{ secrets.SM_API_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -190,6 +204,11 @@ jobs:
 
           $certPath = "D:\Certificate_pkcs12.p12"
           $base64String = "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}"
+          if (-not $base64String) {
+            Write-Host "SM_CLIENT_CERT_FILE_B64 not set — skipping certificate setup"
+            "digicert-configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
           $certBytes = [System.Convert]::FromBase64String($base64String)
           [System.IO.File]::WriteAllBytes($certPath, $certBytes)
 
@@ -209,9 +228,14 @@ jobs:
           }
 
           "SM_CLIENT_CERT_FILE=D:\Certificate_pkcs12.p12" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "digicert-configured=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Setup DigiCert KeyLocker
+        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
+        uses: digicert/ssm-code-signing@v1.1.1
 
       - name: Verify DigiCert Setup
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && secrets.SM_HOST != ''
+        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
         shell: pwsh
         run: |
           smctl --version
@@ -219,7 +243,7 @@ jobs:
           smctl healthcheck
 
       - name: Sync Certificate to Windows Certificate Store
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && secrets.SM_HOST != ''
+        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
         shell: pwsh
         run: |
           Write-Host "=== Syncing certificate to Windows Certificate Store ==="
@@ -354,8 +378,14 @@ jobs:
           find target -name "*.dmg" -o -name "*.app" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" 2>/dev/null || echo "Finding artifacts..."
 
       - name: Verify code signing (macOS App)
-        if: contains(matrix.platform, 'macos') && github.event.inputs.sign-build == 'true' && secrets.APPLE_CERTIFICATE != ''
+        if: contains(matrix.platform, 'macos') && github.event.inputs.sign-build == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE not set — skipping code signing verification"
+            exit 0
+          fi
           APP_PATH=$(find target/aarch64-apple-darwin/release/bundle/macos -name "*.app" | head -1)
           if [ -n "$APP_PATH" ]; then
             echo "=== Verifying App Bundle: $APP_PATH ==="
@@ -364,7 +394,7 @@ jobs:
           fi
 
       - name: Verify code signing (Windows)
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && secrets.SM_HOST != ''
+        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
         shell: pwsh
         run: |
           $msiPath = Get-ChildItem -Path "target/x86_64-pc-windows-msvc/release/bundle/msi" -Filter "*.msi" | Select-Object -First 1 -ExpandProperty FullName

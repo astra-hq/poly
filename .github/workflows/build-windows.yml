@@ -68,9 +68,17 @@ jobs:
 
       # ----- DigiCert signing setup (conditional) -----
       - name: Setup DigiCert Environment
-        if: ${{ github.event.inputs.sign-build == 'true' && secrets.SM_HOST != '' }}
+        id: setup-digicert-env
+        if: ${{ github.event.inputs.sign-build == 'true' }}
         shell: pwsh
         run: |
+          $smHost = "${{ secrets.SM_HOST }}"
+          if (-not $smHost) {
+            Write-Host "SM_HOST not set — skipping signing setup"
+            "digicert-configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
+
           "SM_HOST=${{ secrets.SM_HOST }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SM_API_KEY=${{ secrets.SM_API_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -78,6 +86,11 @@ jobs:
 
           $certPath = "D:\Certificate_pkcs12.p12"
           $base64String = "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}"
+          if (-not $base64String) {
+            Write-Host "SM_CLIENT_CERT_FILE_B64 not set — skipping certificate setup"
+            "digicert-configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
+          }
           $certBytes = [System.Convert]::FromBase64String($base64String)
           [System.IO.File]::WriteAllBytes($certPath, $certBytes)
 
@@ -98,13 +111,14 @@ jobs:
           }
 
           "SM_CLIENT_CERT_FILE=D:\Certificate_pkcs12.p12" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "digicert-configured=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Setup DigiCert KeyLocker
-        if: ${{ github.event.inputs.sign-build == 'true' && secrets.SM_HOST != '' }}
+        if: ${{ github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true' }}
         uses: digicert/ssm-code-signing@v1.1.1
 
       - name: Sync Certificate to Windows Certificate Store
-        if: ${{ github.event.inputs.sign-build == 'true' && secrets.SM_HOST != '' }}
+        if: ${{ github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true' }}
         shell: pwsh
         run: |
           Write-Host "=== Syncing certificate to Windows Certificate Store ==="
