@@ -479,19 +479,20 @@ jobs:
           releaseId: ${{ inputs.release-id }}
           args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
 
-      # Unsigned build — excludes updater plugin via --no-default-features
-      # to avoid requiring TAURI_SIGNING_PRIVATE_KEY
+      # Unsigned build — passes signing key for updater but no code signing
       - name: Build Tauri app (unsigned)
         if: ${{ !inputs.sign-binaries }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: frontend
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
-          args: ${{ inputs.build-args }} --no-default-features ${{ steps.build-features.outputs.features }}
+          args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
 
       - name: Upload artifacts (macOS)
         if: inputs.upload-artifacts && contains(inputs.platform, 'macos')
