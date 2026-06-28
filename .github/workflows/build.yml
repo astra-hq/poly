@@ -479,7 +479,15 @@ jobs:
           releaseId: ${{ inputs.release-id }}
           args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
 
-      # Unsigned build — no signing env vars at all, prevents auto-detect
+      # Unsigned build — strip updater pubkey so Tauri doesn't require TAURI_SIGNING_PRIVATE_KEY
+      - name: Strip updater pubkey for unsigned build
+        if: ${{ !inputs.sign-binaries }}
+        shell: bash
+        run: |
+          echo "Removing updater pubkey from tauri.conf.json for unsigned build..."
+          sed -i '/"pubkey":/d' frontend/src-tauri/tauri.conf.json
+          echo "✓ Pubkey removed — Tauri will not require TAURI_SIGNING_PRIVATE_KEY"
+
       - name: Build Tauri app (unsigned)
         if: ${{ !inputs.sign-binaries }}
         uses: tauri-apps/tauri-action@v0
