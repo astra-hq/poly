@@ -1,0 +1,90 @@
+name: "CI Check"
+
+on:
+  pull_request:
+    branches: ["*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "frontend/src-tauri -> frontend/src-tauri/target"
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          pnpm install
+
+      - name: cargo check
+        run: cargo check
+        working-directory: frontend/src-tauri
+
+      - name: pnpm lint
+        run: pnpm lint
+        working-directory: frontend
+
+      - name: pnpm typecheck
+        run: pnpm typecheck
+        working-directory: frontend
+
+      - name: cargo test
+        run: cargo test
+        working-directory: frontend/src-tauri
+
+      - name: Check version is not already tagged
+        shell: bash
+        run: |
+          VERSION=$(grep -o '"version": "[^"]*"' frontend/src-tauri/tauri.conf.json | cut -d'"' -f4)
+          echo "Version in tauri.conf.json: $VERSION"
+
+          git fetch --tags
+
+          if git tag -l "v${VERSION}" | grep -q .; then
+            echo ""
+            echo "============================================"
+            echo "  ERROR: Tag v${VERSION} already exists!"
+            echo "  Bump the version in tauri.conf.json"
+            echo "  before merging this PR."
+            echo "============================================"
+            exit 1
+          fi
+
+          echo "Tag v${VERSION} does not exist — OK"

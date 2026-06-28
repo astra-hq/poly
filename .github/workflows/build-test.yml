@@ -8,6 +8,8 @@ on:
         required: false
         type: boolean
         default: false
+  pull_request:
+    branches: [main]
 
 jobs:
   build-test:
