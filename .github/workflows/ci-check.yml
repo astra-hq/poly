@@ -59,6 +59,12 @@ jobs:
           cd frontend
           pnpm install
 
+      - name: Build llama-helper sidecar
+        run: |
+          cargo build -p llama-helper
+          mkdir -p frontend/src-tauri/binaries
+          cp target/debug/llama-helper frontend/src-tauri/binaries/llama-helper-x86_64-unknown-linux-gnu
+
       - name: cargo check
         run: cargo check
         working-directory: frontend/src-tauri
