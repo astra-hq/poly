@@ -151,7 +151,7 @@ keyring = "3"
 serde_yaml = "0.9"
 
 # Common Tauri configuration
-tauri = { version = "2.6.2", features = [ "macos-private-api", "protocol-asset", "tray-icon"] }
+tauri = { version = "2.6.2", features = [ "macos-private-api", "protocol-asset", "tray-icon", "image-png"] }
 tauri-plugin-fs = "2.4.0"
 tauri-plugin-dialog = "2.3.0"
 tauri-plugin-store = "2.4.0"
