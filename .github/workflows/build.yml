@@ -365,6 +365,18 @@ jobs:
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
           echo "Certificate imported: $CERT_ID"
 
+      - name: Check macOS signing availability
+        id: check-macos-signing
+        if: contains(inputs.platform, 'macos') && inputs.sign-binaries
+        run: |
+          if [ -n "${{ secrets.APPLE_CERTIFICATE }}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "macOS code signing: available"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "macOS code signing: not available (APPLE_CERTIFICATE not set)"
+          fi
+
       - name: Configure build acceleration
         if: contains(inputs.platform, 'macos')
         run: |
@@ -457,9 +469,10 @@ jobs:
           path: frontend/src-tauri/binaries/ffmpeg-*
           key: ${{ runner.os }}-ffmpeg-${{ hashFiles('frontend/src-tauri/build.rs', 'frontend/src-tauri/build/ffmpeg.rs') }}
 
-      # Signed build — only when sign-binaries is true and secrets exist
+      # Signed build — only when sign-binaries is true and macOS cert is available
+      # On macOS, skips signed build if APPLE_CERTIFICATE secret is not set
       - name: Build Tauri app (signed)
-        if: inputs.sign-binaries
+        if: inputs.sign-binaries && (!contains(inputs.platform, 'macos') || steps.check-macos-signing.outputs.available == 'true')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -480,8 +493,9 @@ jobs:
           args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
 
       # Unsigned build — passes signing key for updater but no code signing
+      # Also used as fallback on macOS when APPLE_CERTIFICATE is not set
       - name: Build Tauri app (unsigned)
-        if: ${{ !inputs.sign-binaries }}
+        if: ${{ !inputs.sign-binaries || (contains(inputs.platform, 'macos') && steps.check-macos-signing.outputs.available != 'true') }}
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
