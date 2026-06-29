@@ -1,167 +1,273 @@
-# Self-Hosted GitHub Actions Runner for Poly
+# Self-Hosted GitHub Actions Runners for Poly
 
-This Docker image provides a GitHub Actions self-hosted runner for Linux builds of the Poly desktop app. It pre-installs all system dependencies needed for Tauri, Rust compilation, llama.cpp, and AppImage processing.
+This directory contains everything you need to set up self-hosted GitHub Actions runners on all three platforms: **Linux**, **macOS**, and **Windows**.
 
-## Prerequisites
+## Why Self-Hosted Runners?
 
-- **Docker** installed on the host machine (macOS, Linux, or Windows)
-- **GitHub organization admin access** to `astra-hq` to add runners
-- A **runner registration token** (one-time use, expires after ~1 hour)
+| Platform | GitHub-Hosted Limit | Self-Hosted Benefit |
+|---|---|---|
+| **Linux** | 2000 min/month (free) | Unlimited — Docker on Mac Mini |
+| **macOS** | Paid only (expensive) | Free — run directly on Mac Mini |
+| **Windows** | Paid only (free for public repos) | Unlimited — Windows VM on Mac Mini |
+
+## Files
+
+| File | Platform | Method |
+|---|---|---|
+| `Dockerfile` | 🐧 Linux | Docker container on Mac Mini |
+| `start.sh` | 🐧 Linux | Entrypoint for Docker container |
+| `macos-setup.sh` | 🍎 macOS | Direct install on Mac Mini |
+| `windows-setup.ps1` | 🪟 Windows | Direct install on Windows machine/VM |
+
+---
+
+# 🐧 Linux Runner (Docker)
+
+A Docker-based Linux runner that handles all `ubuntu-22.04` and `ubuntu-24.04` builds (Build Test, CI Check, Build Linux).
 
 ## Quick Start
 
-### 1. Build the Docker Image
-
 ```bash
-git clone https://github.com/astra-hq/poly /opt/poly
-cd /opt/poly
+# 1. Build the image
 docker build -t poly-runner .github/runner
-```
 
-### 2. Get a Runner Token
-
-Go to: **https://github.com/organizations/astra-hq/settings/actions/runners/new**
-
-- Select **"New runner"** → **"Linux"** → **"x64"**
-- Copy the one-time token shown on the page
-
-### 3. Start the Runner
-
-```bash
+# 2. Register the runner
 docker run -d --restart unless-stopped \
   --name poly-runner \
   -e GITHUB_URL=https://github.com/astra-hq \
-  -e GITHUB_TOKEN=YOUR_TOKEN_HERE \
+  -e GITHUB_TOKEN=YOUR_TOKEN \
   -e RUNNER_NAME=mac-mini-linux \
-  -e RUNNER_LABELS=self-hosted,linux,ubuntu-22.04,x86_64 \
+  -e RUNNER_LABELS=self-hosted,linux,ubuntu-22.04,ubuntu-latest,x86_64 \
   poly-runner
 ```
 
-### 4. Verify
-
-Check the runner status at **Settings → Actions → Runners** in the org. It should show as **"Idle"** within 30 seconds.
-
-## Configuration
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GITHUB_TOKEN` | **Yes** | — | One-time runner registration token from GitHub UI |
+| `GITHUB_TOKEN` | **Yes** | — | One-time runner registration token |
 | `GITHUB_URL` | No | `https://github.com/astra-hq` | GitHub instance URL |
 | `RUNNER_NAME` | No | `poly-runner-$(hostname)` | Display name in GitHub UI |
 | `RUNNER_LABELS` | No | `self-hosted,linux,ubuntu-22.04,x86_64` | Comma-separated labels |
 | `RUNNER_WORKDIR` | No | `/_work` | Working directory for builds |
 
-### Labels Explained
+## Pipeline Coverage
 
-Labels control which workflow jobs this runner picks up. GitHub matches jobs to runners when ALL the job's `runs-on` labels are a subset of the runner's labels.
-
-| Label | Purpose |
+| Pipeline | Label Match |
 |---|---|
-| `self-hosted` | Required for any self-hosted runner |
-| `linux` | Identifies as a Linux runner |
-| `ubuntu-22.04` | Matches `runs-on: ubuntu-22.04` in Build Test workflow |
-| `x86_64` | Architecture (the runner runs via emulation on ARM Mac) |
-
-To also handle `ubuntu-latest` or `ubuntu-24.04` jobs, add those labels:
-
-```bash
--e RUNNER_LABELS=self-hosted,linux,ubuntu-22.04,ubuntu-latest,ubuntu-24.04,x86_64
-```
-
-### Token Expiry
-
-Runner tokens expire ~1 hour after generation. If the token expires before you start the container, generate a new one and re-run.
+| **Build Test** (`ubuntu-22.04`) | ✅ Add `ubuntu-22.04` label |
+| **CI Check** (`ubuntu-latest`) | ✅ Add `ubuntu-latest` label |
+| **Build Linux** (`ubuntu-22.04` / `ubuntu-24.04`) | ✅ Add matching labels |
 
 ## Management
 
-### Stop the Runner
-
 ```bash
-docker stop poly-runner
-docker rm poly-runner
-```
+# Stop
+docker stop poly-runner && docker rm poly-runner
 
-### Restart the Runner
-
-```bash
-docker restart poly-runner
-```
-
-### Update the Runner Image
-
-```bash
-git pull origin main
-docker build -t poly-runner .github/runner
-docker stop poly-runner
-docker rm poly-runner
-docker run -d --restart unless-stopped \
-  --name poly-runner \
-  -e GITHUB_TOKEN=NEW_TOKEN \
-  ... (same flags as above)
-```
-
-### View Logs
-
-```bash
+# View logs
 docker logs -f poly-runner
+
+# Update (pull new deps)
+git pull && docker build -t poly-runner .github/runner
+docker stop poly-runner && docker rm poly-runner
+docker run -d --restart unless-stopped ...  # same flags as above
 ```
 
-## How It Works
+## Token Expiry
 
-1. The container starts and runs `start.sh`
-2. `start.sh` calls `config.sh` to register the runner with GitHub using the provided token
-3. The runner polls GitHub for available jobs
-4. When a matching job is found, the runner:
-   - Checks out the repository
-   - Runs the workflow steps inside the container
-   - Reports results back to GitHub
-5. On container stop (`SIGINT`/`SIGTERM`), the runner deregisters itself from GitHub
+Tokens expire ~1 hour. Get a fresh one from:
+**https://github.com/organizations/astra-hq/settings/actions/runners/new** → Linux → x64
 
-## What's Pre-Installed
+---
 
-| Category | Contents |
+# 🍎 macOS Runner (Direct Install)
+
+Runs directly on the Mac Mini's macOS (not in Docker). Handles macOS builds including code signing, `.app` bundling, and notarization.
+
+## Automated Setup
+
+Run this on your Mac Mini (NOT inside Docker):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/astra-hq/poly/main/.github/runner/macos-setup.sh | bash
+```
+
+This installs:
+- Xcode Command Line Tools
+- Homebrew
+- cmake, pkg-config, ffmpeg
+- Rust (stable) + `aarch64-apple-darwin` target
+- Node.js 20 + pnpm 8
+- GitHub Actions Runner v2.322.0
+
+## Manual Registration
+
+After the setup script completes:
+
+```bash
+cd /opt/actions-runner
+
+# Register
+./config.sh --url https://github.com/astra-hq --token YOUR_TOKEN \
+  --labels self-hosted,macos,arm64,macos-latest
+
+# Install as launchd service (auto-starts on boot)
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
+
+Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** → macOS → ARM64
+
+## Pipeline Coverage
+
+| Pipeline | Label Match |
 |---|---|
-| **OS** | Ubuntu 22.04 (Jammy) |
-| **Tauri deps** | webkit2gtk-4.1-dev, librsvg2-dev, patchelf, libasound2-dev, libopenblas-dev, libx11-dev, libxtst-dev, libxrandr-dev |
-| **C++ build tools** | build-essential, cmake, pkg-config, libclang-dev, llvm-dev, libssl-dev, libfontconfig-dev |
-| **Vulkan SDK** | LunarG 1.3.290 + mesa-vulkan-drivers (for `--features vulkan` builds) |
-| **Rust** | Stable toolchain via rustup, targets: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu` |
-| **Node.js** | v20 + pnpm 8 |
-| **AppImage** | fuse + libfuse2 |
-| **GitHub Runner** | v2.322.0 |
+| **Build macOS** (`macos-latest`) | ✅ Add `macos-latest` label |
+| **Auto Release** (macOS matrix) | ✅ Picks up macOS builds |
+| **Build DevTest** (macOS) | ✅ |
 
-## macOS Builds
+## Management
 
-This Docker image provides a **Linux** runner. It cannot run macOS builds (code signing, notarization, .app bundling).
+```bash
+# Check status
+sudo ./svc.sh status
 
-For macOS builds, you have two options:
-1. **Keep using GitHub-hosted macOS runners** — limited free minutes per month
-2. **Install the runner directly on macOS** (not in Docker):
-   ```bash
-   # On the Mac Mini itself, not in Docker:
-   mkdir /opt/actions-runner && cd /opt/actions-runner
-   curl -o actions-runner-osx-arm64-2.322.0.tar.gz -L \
-     https://github.com/actions/runner/releases/download/v2.322.0/actions-runner-osx-arm64-2.322.0.tar.gz
-   tar xzf actions-runner-osx-arm64-*.tar.gz
-   ./config.sh --url https://github.com/astra-hq --token YOUR_TOKEN \
-     --labels self-hosted,macos,arm64,macos-latest
-   sudo ./svc.sh install && sudo ./svc.sh start
-   ```
+# Stop
+sudo ./svc.sh stop
 
-## Troubleshooting
+# Start
+sudo ./svc.sh start
 
-### Runner doesn't pick up jobs
+# Uninstall
+sudo ./svc.sh uninstall
+```
 
-- Check labels: the runner must have ALL labels that the job's `runs-on` specifies
-- Check the runner status in GitHub UI — is it "Idle" or "Offline"?
-- Check container logs: `docker logs poly-runner`
+## Storage
 
-### Token expired
+macOS builds with Rust can consume 10-20GB+ per build in `target/`. Monitor disk usage:
 
-Generate a new token from the GitHub UI and restart the container with `-e GITHUB_TOKEN=NEW_TOKEN`. Docker will re-run `config.sh` because the existing `.runner` file causes it to call `config.sh --replace`.
+```bash
+du -sh /opt/actions-runner/_work
+```
 
-### Build fails with missing dependencies
+---
 
-Some CI steps download additional tools (e.g., FFmpeg is downloaded by the build script at compile time). These are handled by the workflow itself. If a system package is missing, add it to the `apt-get install` line in the Dockerfile and rebuild.
+# 🪟 Windows Runner (Direct Install)
+
+Runs on a Windows machine or VM. The Mac Mini can run Windows via:
+- **Parallels Desktop** (recommended — seamless ARM64 Windows VM)
+- **UTM** (free, open-source QEMU-based)
+- **VMware Fusion** (free for personal use)
+
+Once you have a Windows VM running:
+
+## Automated Setup
+
+In PowerShell **as Administrator**:
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.\github\runner\windows-setup.ps1 -Token "YOUR_TOKEN"
+```
+
+This installs:
+- Visual Studio 2022 Build Tools (C++ workload, ~5-10 min)
+- Rust (stable) + `x86_64-pc-windows-msvc` target
+- Node.js 20 + pnpm 8
+- Vulkan SDK 1.3.290 (for `--features vulkan` builds)
+- GitHub Actions Runner v2.322.0 as a Windows service
+
+## Manual Registration
+
+If you want to install just the dependencies and register manually:
+
+```powershell
+.\github\runner\windows-setup.ps1 -InstallDepsOnly
+# Then:
+cd C:\actions-runner
+.\config.cmd --url https://github.com/astra-hq --token YOUR_TOKEN `
+  --labels self-hosted,windows,x64,windows-latest
+.\svc.cmd install
+.\svc.cmd start
+```
+
+Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** → Windows → x64
+
+## Pipeline Coverage
+
+| Pipeline | Label Match |
+|---|---|
+| **Build Windows** (`windows-latest`) | ✅ Add `windows-latest` label |
+| **Auto Release** (Windows matrix) | ✅ Picks up Windows builds |
+| **Build DevTest** (Windows) | ✅ |
+| **Build** (Windows) | ✅ |
+
+## Management
+
+```powershell
+# Check status
+Get-Service -Name "GitHubActionsRunner*"
+
+# Stop
+Stop-Service -Name "GitHubActionsRunner*"
+
+# Start
+Start-Service -Name "GitHubActionsRunner*"
+
+# Uninstall
+cd C:\actions-runner
+.\svc.cmd uninstall
+```
+
+---
+
+# Labels Quick Reference
+
+Register with labels that match your workflows. A runner picks up a job when ALL the job's `runs-on` labels are present in the runner's labels.
+
+| Workflow | runs-on | Runner must have labels |
+|---|---|---|
+| build-test.yml | `ubuntu-22.04` | `ubuntu-22.04` |
+| ci-check.yml | `ubuntu-latest` | `ubuntu-latest` |
+| build-macos.yml | `macos-latest` | `macos-latest` |
+| build-windows.yml | `windows-latest` | `windows-latest` |
+| release.yml → macOS | `macos-latest` | `macos-latest` |
+| release.yml → Windows | `windows-latest` | `windows-latest` |
+| auto-release.yml → macOS | `macos-latest` | `macos-latest` |
+| auto-release.yml → Windows | `windows-latest` | `windows-latest` |
+
+## Recommended Labels Per Runner
+
+**Linux Docker runner:**
+```
+self-hosted,linux,ubuntu-22.04,ubuntu-latest,ubuntu-24.04,x86_64
+```
+
+**macOS runner (direct on Mac Mini):**
+```
+self-hosted,macos,arm64,macos-latest,macos-15
+```
+
+**Windows runner (on VM):**
+```
+self-hosted,windows,x64,windows-latest,windows-2022
+```
+
+---
+
+# Architecture Overview
+
+```
+Mac Mini (Apple Silicon)
+ ├── Docker Container ─── Linux Runner (ubuntu-22.04)
+ │     Handles: Build Test, CI Check, Build Linux
+ │
+ ├── macOS (direct) ─── macOS Runner (arm64)
+ │     Handles: Build macOS, Auto Release (macOS)
+ │
+ └── Windows VM ─── Windows Runner (x64)
+       Handles: Build Windows, Auto Release (Windows)
+```
+
+This setup covers **all pipelines** with zero GitHub-hosted runner minutes consumed.
