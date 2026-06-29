@@ -32,4 +32,5 @@ jobs:
       asset-prefix: "poly-test"
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
+      run-tests: true
     secrets: inherit
