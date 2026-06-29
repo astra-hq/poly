@@ -60,7 +60,8 @@ if (-not (Get-Command pnpm -ea SilentlyContinue)) {
 } else { Write-Step "pnpm already installed: $(pnpm --version)" }
 
 # Install Vulkan SDK
-if (-not (Test-Path env:VULKAN_SDK)) {
+$vulkanInstalled = (Test-Path env:VULKAN_SDK) -or (Test-Path "C:\VulkanSDK\*\Include\vulkan\vulkan.h")
+if (-not $vulkanInstalled) {
     Write-Step "Installing Vulkan SDK..."
     Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/1.3.290.0/windows/VulkanSDK-1.3.290.0-Installer.exe" -OutFile "$env:TEMP\VulkanSDK.exe"
     Start-Process -FilePath "$env:TEMP\VulkanSDK.exe" -ArgumentList "--silent", "--install" -Wait -NoNewWindow
