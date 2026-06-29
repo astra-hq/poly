@@ -19,9 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "ubuntu-22.04"
+          - platform: "ubuntu-latest"
             args: "--bundles deb"
             target: "x86_64-unknown-linux-gnu"
+            runner-labels: '["self-hosted", "linux", "ubuntu-latest"]'
 
     uses: ./.github/workflows/build.yml
     with:
@@ -33,4 +34,5 @@ jobs:
       upload-artifacts: true
       is-debug-build: ${{ contains(matrix.args, '--debug') }}
       run-tests: true
+      runner-labels: ${{ matrix.runner-labels || '' }}
     secrets: inherit

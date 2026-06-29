@@ -41,12 +41,12 @@ jobs:
             platform-name: Windows
             target: x86_64-pc-windows-msvc
             args: --target x86_64-pc-windows-msvc
-          - platform: ubuntu-22.04
-            platform-name: Linux (Ubuntu 22.04)
+          - platform: ubuntu-latest
+            platform-name: Linux (Ubuntu Latest)
             target: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu --bundles deb
-          - platform: ubuntu-24.04
-            platform-name: Linux (Ubuntu 24.04)
+          - platform: ubuntu-latest
+            platform-name: Linux (Ubuntu Latest - Full)
             target: x86_64-unknown-linux-gnu
             args: --target x86_64-unknown-linux-gnu --bundles appimage,rpm
 
