@@ -152,33 +152,13 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
     let loaded_cfg = config_repo.load().unwrap();
 
     // Summary config
-    assert_eq!(loaded_cfg.summary.provider, "ollama");
+    assert_eq!(loaded_cfg.summary.provider_id, "ollama");
     assert_eq!(loaded_cfg.summary.model, "llama3.2:latest");
     assert_eq!(loaded_cfg.summary.whisper_model, "large-v3-turbo");
-    assert_eq!(
-        loaded_cfg.summary.ollama_endpoint.as_deref(),
-        Some("http://localhost:11434")
-    );
 
     // Transcript config
     assert_eq!(loaded_cfg.transcript.provider, "parakeet");
     assert_eq!(loaded_cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
-
-    // Custom OpenAI config (non-secret fields)
-    assert_eq!(
-        loaded_cfg.custom_openai.endpoint,
-        "https://custom.api.com/v1"
-    );
-    assert_eq!(loaded_cfg.custom_openai.model, "custom-model-v2");
-    assert_eq!(loaded_cfg.custom_openai.max_tokens, Some(4096));
-    assert!(
-        loaded_cfg.custom_openai.temperature.is_some(),
-        "temperature should be present"
-    );
-    assert!(
-        loaded_cfg.custom_openai.top_p.is_some(),
-        "top_p should be present"
-    );
 
     // Knowledge graph (without secrets)
     assert_eq!(loaded_cfg.knowledge_graph.profiles.len(), 1);
@@ -391,7 +371,7 @@ async fn legacy_sqlite_config_extraction_is_non_destructive_on_secret_write_fail
         true => {
             let loaded = config_repo.load().unwrap();
             assert_eq!(
-                loaded.summary.provider, "openai",
+                loaded.summary.provider_id, "openai",
                 "YAML should contain default provider, not extracted data"
             );
             assert_eq!(
@@ -451,13 +431,9 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
 
     // ── Verify YAML has non-secret values ────────────────────────────
     let loaded_cfg = config_repo.load().unwrap();
-    assert_eq!(loaded_cfg.summary.provider, "ollama");
+    assert_eq!(loaded_cfg.summary.provider_id, "ollama");
     assert_eq!(loaded_cfg.summary.model, "llama3.2:latest");
     assert_eq!(loaded_cfg.summary.whisper_model, "large-v3-turbo");
-    assert_eq!(
-        loaded_cfg.summary.ollama_endpoint.as_deref(),
-        Some("http://localhost:11434")
-    );
     assert_eq!(loaded_cfg.transcript.provider, "parakeet");
     assert_eq!(loaded_cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
 
@@ -621,13 +597,9 @@ async fn poly_config_loads_extracted_data_after_extraction() {
     // Step 2: load config from the repo (Poly file now exists)
     let loaded = config_repo.load().unwrap();
 
-    assert_eq!(loaded.summary.provider, "ollama");
+    assert_eq!(loaded.summary.provider_id, "ollama");
     assert_eq!(loaded.summary.model, "llama3.2:latest");
     assert_eq!(loaded.summary.whisper_model, "large-v3-turbo");
-    assert_eq!(
-        loaded.summary.ollama_endpoint.as_deref(),
-        Some("http://localhost:11434")
-    );
     assert_eq!(loaded.transcript.provider, "parakeet");
     assert_eq!(loaded.transcript.model, "parakeet-tdt-0.6b-v3-int8");
 
@@ -649,10 +621,9 @@ async fn existing_poly_config_is_not_overwritten_by_load_or_create_default() {
     // Write a custom Poly config that simulates data from a previous session.
     let custom_cfg = PolyConfig {
         summary: SummaryConfig {
-            provider: "openai".to_string(),
+            provider_id: "openai".to_string(),
             model: "my-model".to_string(),
             whisper_model: "medium".to_string(),
-            ollama_endpoint: Some("http://custom:11434".to_string()),
         },
         ..PolyConfig::default()
     };
@@ -662,12 +633,8 @@ async fn existing_poly_config_is_not_overwritten_by_load_or_create_default() {
     // existing config unchanged — no legacy fallback, no overwrite.
     let loaded = config_repo.load_or_create_default().unwrap();
 
-    assert_eq!(loaded.summary.provider, "openai");
+    assert_eq!(loaded.summary.provider_id, "openai");
     assert_eq!(loaded.summary.model, "my-model");
     assert_eq!(loaded.summary.whisper_model, "medium");
-    assert_eq!(
-        loaded.summary.ollama_endpoint.as_deref(),
-        Some("http://custom:11434")
-    );
     assert_eq!(loaded, custom_cfg);
 }
