@@ -74,6 +74,14 @@ if (Get-Service "GitHubActionsRunner*" -ErrorAction SilentlyContinue) {
     Restart-Service "GitHubActionsRunner*" -Force
 }
 
+# Install 7-Zip (needed by humbletim/install-vulkan-sdk action)
+if (-not (Get-Command 7z -ea SilentlyContinue)) {
+    Write-Step "Installing 7-Zip..."
+    Invoke-WebRequest -Uri "https://www.7-zip.org/a/7z2409-x64.msi" -OutFile "$env:TEMP\7z.msi"
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "$env:TEMP\7z.msi", "/quiet", "/norestart" -Wait
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+} else { Write-Step "7-Zip already installed" }
+
 # Install Rust
 if (-not (Get-Command rustc -ea SilentlyContinue)) {
     Write-Step "Installing Rust..."
