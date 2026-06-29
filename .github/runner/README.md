@@ -34,11 +34,17 @@ docker build -t poly-runner .github/runner
 # 2. Register the runner
 docker run -d --restart unless-stopped \
   --name poly-runner \
+  -v poly-runner-data:/actions-runner \
   -e GITHUB_URL=https://github.com/astra-hq \
   -e GITHUB_TOKEN=YOUR_TOKEN \
   -e RUNNER_NAME=mac-mini-linux \
   -e RUNNER_LABELS=self-hosted,linux,ubuntu-26.04,ubuntu-latest,arm64 \
   poly-runner
+
+# On subsequent restarts, the token is NOT needed.
+# The volume persists the runner config.
+# Just restart: docker start poly-runner
+# Or recreate: docker run -d --restart unless-stopped --name poly-runner -v poly-runner-data:/actions-runner poly-runner
 ```
 
 ## Environment Variables
