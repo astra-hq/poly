@@ -15,7 +15,7 @@
 set -euo pipefail
 
 RUNNER_VERSION="${RUNNER_VERSION:-2.335.1}"
-RUNNER_DIR="${RUNNER_DIR:-/opt/actions-runner}"
+RUNNER_DIR="${RUNNER_DIR:-$HOME/actions-runner}"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 NC='\033[0m'
@@ -99,11 +99,7 @@ fi
 # ============================================================
 # 6. Create Runner Directory
 # ============================================================
-if [ ! -d "$RUNNER_DIR" ]; then
-    log "Creating runner directory at $RUNNER_DIR..."
-    sudo mkdir -p "$RUNNER_DIR"
-    sudo chown "$(whoami)" "$RUNNER_DIR"
-fi
+mkdir -p "$RUNNER_DIR"
 
 cd "$RUNNER_DIR"
 
@@ -140,13 +136,17 @@ echo "=========================================="
 echo " Setup Complete!"
 echo "=========================================="
 echo ""
-echo "To register the runner, run:"
+echo "To register and start the runner (no sudo needed):"
 echo ""
 echo "  cd $RUNNER_DIR"
 echo "  ./config.sh --url https://github.com/astra-hq --token YOUR_TOKEN \\"
 echo "    --labels self-hosted,macos,arm64,macos-latest"
-echo "  sudo ./svc.sh install"
-echo "  sudo ./svc.sh start"
+echo "  ./run.sh &"
+echo ""
+echo "Or to run it in the background automatically on login:"
+echo "  ./svc.sh install"
+echo "  ./svc.sh start"
+echo "  (these may require sudo depending on your setup)"
 echo ""
 echo "Get a token from:"
 echo "  https://github.com/organizations/astra-hq/settings/actions/runners/new"
