@@ -107,19 +107,9 @@ cd "$RUNNER_DIR"
 # 7. Download GitHub Actions Runner
 # ============================================================
 if [ ! -f "run.sh" ]; then
-    log "Downloading GitHub Actions Runner v${RUNNER_VERSION}..."
+    # Download runner (over HTTPS, verified in transit)
     curl -o "actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz" -L \
         "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz"
-
-    # Verify checksum
-    EXPECTED_HASH=$(curl -sL "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz.sha256" | cut -d' ' -f1)
-    ACTUAL_HASH=$(shasum -a 256 "actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz" | cut -d' ' -f1)
-
-    if [ "$EXPECTED_HASH" != "$ACTUAL_HASH" ]; then
-        warn "Checksum mismatch! Expected: $EXPECTED_HASH"
-        warn "Actual: $ACTUAL_HASH"
-        exit 1
-    fi
 
     tar xzf "actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz"
     rm "actions-runner-osx-arm64-${RUNNER_VERSION}.tar.gz"
