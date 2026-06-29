@@ -460,10 +460,8 @@ jobs:
 
           cargo build --release -p llama-helper $LLAMA_FEATURES
 
-          TARGET="${{ inputs.target }}"
-          if [[ -z "$TARGET" ]]; then
-            TARGET=$(rustc -vV | grep "host:" | awk '{print $2}')
-          fi
+          # Use host triple for binary name (not input target, which may differ on self-hosted runners)
+          TARGET=$(rustc -vV | grep "host:" | awk '{print $2}')
 
           mkdir -p frontend/src-tauri/binaries
           cp target/release/llama-helper frontend/src-tauri/binaries/llama-helper-${TARGET}
