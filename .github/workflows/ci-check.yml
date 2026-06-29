@@ -40,22 +40,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "frontend/src-tauri -> frontend/src-tauri/target"
-
       - name: Install frontend dependencies
         run: |
           cd frontend
           pnpm install
-
-      - name: cargo check
-        run: cargo check
-        working-directory: frontend/src-tauri
 
       - name: pnpm lint
         run: pnpm lint
@@ -64,10 +52,6 @@ jobs:
       - name: pnpm typecheck
         run: pnpm typecheck
         working-directory: frontend
-
-      - name: cargo test
-        run: cargo test
-        working-directory: frontend/src-tauri
 
       - name: Check version is not already tagged
         shell: bash

@@ -13,7 +13,7 @@ use crate::{
         },
     },
     poly_config::config::PolyConfig,
-    providers::{self, ProviderConfig},
+    providers,
     secrets::{
         keyring_first_store::KeyringFirstSecretStore,
         refs,
