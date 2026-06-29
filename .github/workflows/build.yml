@@ -479,7 +479,7 @@ jobs:
         if: inputs.run-tests
         shell: bash
         run: |
-          cargo test --workspace
+          cargo test --workspace -- --nocapture 2>&1
         working-directory: frontend/src-tauri
 
       # Signed build — only when sign-binaries is true and macOS cert is available
