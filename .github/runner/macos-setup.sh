@@ -63,12 +63,16 @@ brew install \
 # ============================================================
 # 4. Rust
 # ============================================================
-if ! command -v rustc &>/dev/null; then
-    log "Installing Rust..."
+if ! command -v rustup &>/dev/null; then
+    if command -v rustc &>/dev/null; then
+        log "Rust found via Homebrew, installing rustup alongside..."
+    else
+        log "Installing Rust..."
+    fi
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
     source "$HOME/.cargo/env"
 else
-    log "Rust already installed: $(rustc --version)"
+    log "Rustup already installed: $(rustc --version)"
 fi
 
 # Add Apple Silicon target
