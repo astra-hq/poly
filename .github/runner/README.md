@@ -23,7 +23,7 @@ This directory contains everything you need to set up self-hosted GitHub Actions
 
 # 🐧 Linux Runner (Docker)
 
-A Docker-based Linux runner that handles all `ubuntu-22.04` and `ubuntu-24.04` builds (Build Test, CI Check, Build Linux).
+A Docker-based Linux runner that handles all `ubuntu-26.04` and `ubuntu-24.04` builds (Build Test, CI Check, Build Linux).
 
 ## Quick Start
 
@@ -37,7 +37,7 @@ docker run -d --restart unless-stopped \
   -e GITHUB_URL=https://github.com/astra-hq \
   -e GITHUB_TOKEN=YOUR_TOKEN \
   -e RUNNER_NAME=mac-mini-linux \
-  -e RUNNER_LABELS=self-hosted,linux,ubuntu-22.04,ubuntu-latest,x86_64 \
+  -e RUNNER_LABELS=self-hosted,linux,ubuntu-26.04,ubuntu-latest,x86_64 \
   poly-runner
 ```
 
@@ -48,16 +48,16 @@ docker run -d --restart unless-stopped \
 | `GITHUB_TOKEN` | **Yes** | — | One-time runner registration token |
 | `GITHUB_URL` | No | `https://github.com/astra-hq` | GitHub instance URL |
 | `RUNNER_NAME` | No | `poly-runner-$(hostname)` | Display name in GitHub UI |
-| `RUNNER_LABELS` | No | `self-hosted,linux,ubuntu-22.04,x86_64` | Comma-separated labels |
+| `RUNNER_LABELS` | No | `self-hosted,linux,ubuntu-26.04,x86_64` | Comma-separated labels |
 | `RUNNER_WORKDIR` | No | `/_work` | Working directory for builds |
 
 ## Pipeline Coverage
 
 | Pipeline | Label Match |
 |---|---|
-| **Build Test** (`ubuntu-22.04`) | ✅ Add `ubuntu-22.04` label |
+| **Build Test** (`ubuntu-26.04`) | ✅ Add `ubuntu-26.04` label |
 | **CI Check** (`ubuntu-latest`) | ✅ Add `ubuntu-latest` label |
-| **Build Linux** (`ubuntu-22.04` / `ubuntu-24.04`) | ✅ Add matching labels |
+| **Build Linux** (`ubuntu-26.04` / `ubuntu-24.04`) | ✅ Add matching labels |
 
 ## Management
 
@@ -228,7 +228,7 @@ Register with labels that match your workflows. A runner picks up a job when ALL
 
 | Workflow | runs-on | Runner must have labels |
 |---|---|---|
-| build-test.yml | `ubuntu-22.04` | `ubuntu-22.04` |
+| build-test.yml | `ubuntu-26.04` | `ubuntu-26.04` |
 | ci-check.yml | `ubuntu-latest` | `ubuntu-latest` |
 | build-macos.yml | `macos-latest` | `macos-latest` |
 | build-windows.yml | `windows-latest` | `windows-latest` |
@@ -241,7 +241,7 @@ Register with labels that match your workflows. A runner picks up a job when ALL
 
 **Linux Docker runner:**
 ```
-self-hosted,linux,ubuntu-22.04,ubuntu-latest,ubuntu-24.04,x86_64
+self-hosted,linux,ubuntu-26.04,ubuntu-latest,ubuntu-24.04,x86_64
 ```
 
 **macOS runner (direct on Mac Mini):**
@@ -260,7 +260,7 @@ self-hosted,windows,x64,windows-latest,windows-2022
 
 ```
 Mac Mini (Apple Silicon)
- ├── Docker Container ─── Linux Runner (ubuntu-22.04)
+ ├── Docker Container ─── Linux Runner (ubuntu-26.04)
  │     Handles: Build Test, CI Check, Build Linux
  │
  ├── macOS (direct) ─── macOS Runner (arm64)

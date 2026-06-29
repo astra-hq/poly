@@ -1,5 +1,5 @@
 # Self-hosted GitHub Actions Runner for Poly (Tauri desktop app)
-# Base: Ubuntu 22.04 — matches the CI matrix platform
+# Base: Ubuntu 26.04
 #
 # Usage:
 #   docker build -t poly-runner .github/runner
@@ -7,10 +7,10 @@
 #     -e GITHUB_URL=https://github.com/astra-hq \
 #     -e GITHUB_TOKEN=<your-runner-token> \
 #     -e RUNNER_NAME=mac-mini-linux \
-#     -e RUNNER_LABELS=self-hosted,linux,ubuntu-22.04,x86_64 \
+#     -e RUNNER_LABELS=self-hosted,linux,ubuntu-26.04,x86_64 \
 #     poly-runner
 
-FROM ubuntu:22.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_VERSION=20
