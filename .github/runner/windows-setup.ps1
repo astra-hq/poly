@@ -65,7 +65,7 @@ Write-Step "Running as Administrator"
 # 2. winget (package manager)
 # ============================================================
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Warn "winget not found — installing App Installer..."
+    Write-Warn "winget not found -- installing App Installer..."
     # winget should be pre-installed on Windows 10 1809+
     Write-Error "winget is required. Please install from Microsoft Store: 'App Installer'"
     exit 1
@@ -166,7 +166,7 @@ if (-not (Test-Path env:VULKAN_SDK)) {
 # 8. Install Runner
 # ============================================================
 if ($InstallDepsOnly) {
-    Write-Step "Dependencies only — skipping runner setup"
+    Write-Step "Dependencies only -- skipping runner setup"
     exit 0
 }
 
@@ -202,7 +202,7 @@ if (-not (Test-Path ".runner")) {
         Write-Host "  .\svc.cmd start"
         Write-Host ""
         Write-Host "Get a token from: https://github.com/organizations/astra-hq/settings/actions/runners/new"
-        Write-Host "  → 'New runner' → 'Windows' → 'x64'"
+        Write-Host "  -> 'New runner' -> 'Windows' -> 'x64'"
         exit 0
     }
 

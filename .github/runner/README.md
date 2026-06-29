@@ -6,9 +6,9 @@ This directory contains everything you need to set up self-hosted GitHub Actions
 
 | Platform | GitHub-Hosted Limit | Self-Hosted Benefit |
 |---|---|---|
-| **Linux** | 2000 min/month (free) | Unlimited — Docker on Mac Mini |
-| **macOS** | Paid only (expensive) | Free — run directly on Mac Mini |
-| **Windows** | Paid only (free for public repos) | Unlimited — Windows VM on Mac Mini |
+| **Linux** | 2000 min/month (free) | Unlimited -- Docker on Mac Mini |
+| **macOS** | Paid only (expensive) | Free -- run directly on Mac Mini |
+| **Windows** | Paid only (free for public repos) | Unlimited -- Windows VM on Mac Mini |
 
 ## Files
 
@@ -45,7 +45,7 @@ docker run -d --restart unless-stopped \
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GITHUB_TOKEN` | **Yes** | — | One-time runner registration token |
+| `GITHUB_TOKEN` | **Yes** | -- | One-time runner registration token |
 | `GITHUB_URL` | No | `https://github.com/astra-hq` | GitHub instance URL |
 | `RUNNER_NAME` | No | `poly-runner-$(hostname)` | Display name in GitHub UI |
 | `RUNNER_LABELS` | No | `self-hosted,linux,ubuntu-26.04,arm64` | Comma-separated labels |
@@ -77,7 +77,7 @@ docker run -d --restart unless-stopped ...  # same flags as above
 ## Token Expiry
 
 Tokens expire ~1 hour. Get a fresh one from:
-**https://github.com/organizations/astra-hq/settings/actions/runners/new** → Linux → arm64
+**https://github.com/organizations/astra-hq/settings/actions/runners/new** -> Linux -> arm64
 
 ---
 
@@ -117,7 +117,7 @@ sudo ./svc.sh install
 sudo ./svc.sh start
 ```
 
-Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** → macOS → ARM64
+Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** -> macOS -> ARM64
 
 ## Pipeline Coverage
 
@@ -156,7 +156,7 @@ du -sh /opt/actions-runner/_work
 # 🪟 Windows Runner (Direct Install)
 
 Runs on a Windows machine or VM. The Mac Mini can run Windows via:
-- **Parallels Desktop** (recommended — seamless ARM64 Windows VM)
+- **Parallels Desktop** (recommended -- seamless ARM64 Windows VM)
 - **UTM** (free, open-source QEMU-based)
 - **VMware Fusion** (free for personal use)
 
@@ -192,7 +192,7 @@ cd C:\actions-runner
 .\svc.cmd start
 ```
 
-Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** → Windows → arm64
+Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** -> Windows -> arm64
 
 ## Pipeline Coverage
 
@@ -232,10 +232,10 @@ Register with labels that match your workflows. A runner picks up a job when ALL
 | ci-check.yml | `ubuntu-latest` | `ubuntu-latest` |
 | build-macos.yml | `macos-latest` | `macos-latest` |
 | build-windows.yml | `windows-latest` | `windows-latest` |
-| release.yml → macOS | `macos-latest` | `macos-latest` |
-| release.yml → Windows | `windows-latest` | `windows-latest` |
-| auto-release.yml → macOS | `macos-latest` | `macos-latest` |
-| auto-release.yml → Windows | `windows-latest` | `windows-latest` |
+| release.yml -> macOS | `macos-latest` | `macos-latest` |
+| release.yml -> Windows | `windows-latest` | `windows-latest` |
+| auto-release.yml -> macOS | `macos-latest` | `macos-latest` |
+| auto-release.yml -> Windows | `windows-latest` | `windows-latest` |
 
 ## Recommended Labels Per Runner
 

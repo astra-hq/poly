@@ -34,7 +34,7 @@ echo ""
 if ! xcode-select -p &>/dev/null; then
     log "Installing Xcode Command Line Tools..."
     xcode-select --install
-    echo "  → Press 'Install' when prompted, then re-run this script"
+    echo "  -> Press 'Install' when prompted, then re-run this script"
     exit 0
 else
     log "Xcode Command Line Tools already installed"
@@ -146,5 +146,5 @@ echo "  sudo ./svc.sh start"
 echo ""
 echo "Get a token from:"
 echo "  https://github.com/organizations/astra-hq/settings/actions/runners/new"
-echo "  → 'New runner' → 'macOS' → 'ARM64'"
+echo "  -> 'New runner' -> 'macOS' -> 'ARM64'"
 echo ""
