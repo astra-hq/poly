@@ -48,7 +48,7 @@ rustup target add x86_64-pc-windows-msvc | Out-Null
 # Install Node.js
 if (-not (Get-Command node -ea SilentlyContinue)) {
     Write-Step "Installing Node.js 20..."
-    Invoke-WebRequest -Uri "https://nodejs.org/dist/v20.20.0/node-v20.20.0-x64.msi" -OutFile "$env:TEMP\node.msi"
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v22.23.1/node-v22.23.1-x64.msi" -OutFile "$env:TEMP\node.msi"
     Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "$env:TEMP\node.msi", "/quiet", "/norestart" -Wait
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
 } else { Write-Step "Node.js already installed: $(node --version)" }

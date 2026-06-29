@@ -83,8 +83,8 @@ rustup target add aarch64-apple-darwin
 # ============================================================
 if ! command -v node &>/dev/null; then
     log "Installing Node.js..."
-    brew install node@20
-    brew link --overwrite node@20
+    brew install node@22
+    brew link --overwrite node@22
 else
     log "Node.js already installed: $(node --version)"
 fi
