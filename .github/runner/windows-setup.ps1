@@ -83,7 +83,7 @@ if (-not (Test-Path "run.cmd")) {
 
 # Configure or re-configure
 $shouldConfigure = $true
-if (Test-Path ".runner") {
+if (Test-Path "$RunnerDir\.runner") {
     if ([string]::IsNullOrEmpty($Token)) {
         Write-Step "Runner already configured. Provide a -Token to re-register."
         $shouldConfigure = $false
@@ -100,15 +100,19 @@ if ($shouldConfigure) {
         exit 0
     }
     Write-Step "Registering runner as $RunnerName..."
-    & ".\config.cmd" --url "https://github.com/astra-hq" --token $Token --name $RunnerName --labels $Labels --unattended --replace
+    & "$RunnerDir\config.cmd" --url "https://github.com/astra-hq" --token $Token --name $RunnerName --labels $Labels --unattended --replace
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Registration failed (token may be expired). Get a new token and re-run."
         exit 1
     }
-    Write-Step "Installing service..."
-    & ".\svc.cmd" install
-    Write-Step "Starting service..."
-    & ".\svc.cmd" start
+    Write-Step "Runner registered successfully!"
+    Write-Step "Starting runner..."
+    if (Test-Path "$RunnerDir\svc.cmd") {
+        & "$RunnerDir\svc.cmd" install
+        & "$RunnerDir\svc.cmd" start
+    } else {
+        Write-Step "(svc.cmd not found - run manually: cd $RunnerDir && .\run.cmd)"
+    }
 }
 
 Write-Host "========================================" -ForegroundColor Cyan
