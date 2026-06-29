@@ -92,8 +92,7 @@ RUN curl -o actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz -L \
     https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     && echo "4ef2f25285f0ae4477f1fe1e346db76d2f3ebf03824e2ddd1973a2819bf6c8cf  actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" | sha256sum -c \
     && tar xzf actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
-    && rm actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
-    && ./bin/installdependencies.sh
+    && rm actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
 
 # ============================================================
 # 6. Entrypoint
