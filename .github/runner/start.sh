@@ -13,7 +13,7 @@ set -e
 
 GITHUB_URL="${GITHUB_URL:-https://github.com/astra-hq}"
 RUNNER_NAME="${RUNNER_NAME:-poly-runner-$(hostname)}"
-RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,ubuntu-22.04,x86_64}"
+RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,ubuntu-latest,arm64}"
 RUNNER_WORKDIR="${RUNNER_WORKDIR:-/_work}"
 
 # Check for required token

@@ -183,7 +183,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 
 This installs:
 - Visual Studio 2022 Build Tools (C++ workload, ~5-10 min)
-- Rust (stable) + `arm64-pc-windows-msvc` target
+- Rust (stable) + `x86_64-pc-windows-msvc` target
 - Node.js 20 + pnpm 8
 - libvulkan-dev, mesa-vulkan-drivers (for `--features vulkan` builds)
 - GitHub Actions Runner v2.335.1 as a Windows service
@@ -197,12 +197,12 @@ If you want to install just the dependencies and register manually:
 # Then:
 cd C:\actions-runner
 .\config.cmd --url https://github.com/astra-hq --token YOUR_TOKEN `
-  --labels self-hosted,windows,arm64,windows-latest
+  --labels self-hosted,windows,x64,windows-latest
 .\svc.cmd install
 .\svc.cmd start
 ```
 
-Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** -> Windows -> arm64
+Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** -> Windows -> x64
 
 ## Pipeline Coverage
 
@@ -261,7 +261,7 @@ self-hosted,macos,arm64,macos-latest,macos-15
 
 **Windows runner (on VM):**
 ```
-self-hosted,windows,arm64,windows-latest,windows-2022
+self-hosted,windows,x64,windows-latest,windows-2022
 ```
 
 ---
@@ -276,7 +276,7 @@ Mac Mini (Apple Silicon)
  ├── macOS (direct) ─── macOS Runner (arm64)
  │     Handles: Build macOS, Auto Release (macOS)
  │
- └── Windows VM ─── Windows Runner (arm64)
+ └── Windows VM ─── Windows Runner (x64)
        Handles: Build Windows, Auto Release (Windows)
 ```
 

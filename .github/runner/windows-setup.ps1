@@ -37,12 +37,20 @@ if (-not $vsInstalled) {
 } else { Write-Step "VS Build Tools already installed" }
 
 # Install Git (provides Git Bash, needed for `shell: bash` in workflows)
-if (-not (Get-Command git -ea SilentlyContinue)) {
+$gitBashPath = "C:\Program Files\Git\bin\bash.exe"
+if (-not (Test-Path $gitBashPath)) {
     Write-Step "Installing Git for Windows..."
     Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe" -OutFile "$env:TEMP\git-install.exe"
     Start-Process -FilePath "$env:TEMP\git-install.exe" -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/COMPONENTS=git,gitlfs" -Wait -NoNewWindow
-    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-} else { Write-Step "Git already installed: $(git --version)" }
+    # Ensure Git is in PATH for all users
+    $gitPath = "C:\Program Files\Git\cmd"
+    $gitBin = "C:\Program Files\Git\bin"
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    if ($machinePath -notlike "*$gitPath*") {
+        [Environment]::SetEnvironmentVariable("Path", "$machinePath;$gitPath;$gitBin", "Machine")
+    }
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine")
+} else { Write-Step "Git Bash already installed" }
 
 # Install Rust
 if (-not (Get-Command rustc -ea SilentlyContinue)) {

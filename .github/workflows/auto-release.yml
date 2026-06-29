@@ -120,7 +120,7 @@ jobs:
   # STEP 3: Show release summary
   release-summary:
     needs: [prepare-release, build-all-platforms]
-    runs-on: ubuntu-latest
+    runs-on: ["self-hosted", "linux", "ubuntu-latest"]
     permissions:
       contents: write
     steps:
