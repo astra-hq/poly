@@ -42,15 +42,37 @@ if (-not (Test-Path $gitBashPath)) {
     Write-Step "Installing Git for Windows..."
     Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe" -OutFile "$env:TEMP\git-install.exe"
     Start-Process -FilePath "$env:TEMP\git-install.exe" -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/COMPONENTS=git,gitlfs" -Wait -NoNewWindow
-    # Ensure Git is in PATH for all users
-    $gitPath = "C:\Program Files\Git\cmd"
-    $gitBin = "C:\Program Files\Git\bin"
-    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-    if ($machinePath -notlike "*$gitPath*") {
-        [Environment]::SetEnvironmentVariable("Path", "$machinePath;$gitPath;$gitBin", "Machine")
-    }
-    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine")
 } else { Write-Step "Git Bash already installed" }
+
+# Always ensure Git directories are on machine PATH
+$gitPaths = @("C:\Program Files\Git\cmd", "C:\Program Files\Git\bin", "C:\Program Files\Git\usr\bin")
+$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+$changed = $false
+foreach ($p in $gitPaths) {
+    if (($machinePath -notlike "*$p*") -and (Test-Path $p)) {
+        $machinePath = "$machinePath;$p"
+        $changed = $true
+    }
+}
+if ($changed) {
+    [Environment]::SetEnvironmentVariable("Path", $machinePath, "Machine")
+    Write-Step "Added Git directories to system PATH"
+}
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine")
+
+# Verify Bash is accessible after PATH update
+if (Test-Path $gitBashPath) {
+    $bashVer = & "$gitBashPath" --version 2>&1
+    Write-Step "Git Bash verified: $bashVer"
+} else {
+    Write-Warn "Git Bash not found at $gitBashPath - shell: bash steps will fail!"
+}
+
+# Restart runner service to pick up new PATH
+if (Get-Service "GitHubActionsRunner*" -ErrorAction SilentlyContinue) {
+    Write-Step "Restarting runner service to pick up PATH changes..."
+    Restart-Service "GitHubActionsRunner*" -Force
+}
 
 # Install Rust
 if (-not (Get-Command rustc -ea SilentlyContinue)) {
