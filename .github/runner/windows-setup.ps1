@@ -47,7 +47,7 @@ rustup target add x86_64-pc-windows-msvc | Out-Null
 
 # Install Node.js
 if (-not (Get-Command node -ea SilentlyContinue)) {
-    Write-Step "Installing Node.js 20..."
+    Write-Step "Installing Node.js 22..."
     Invoke-WebRequest -Uri "https://nodejs.org/dist/v22.23.1/node-v22.23.1-x64.msi" -OutFile "$env:TEMP\node.msi"
     Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "$env:TEMP\node.msi", "/quiet", "/norestart" -Wait
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -91,7 +91,11 @@ if (-not (Test-Path ".runner")) {
         exit 0
     }
     Write-Step "Registering runner..."
-    & ".\config.cmd" --url "https://github.com/astra-hq" --token $Token --name $RunnerName --labels $Labels --unattended --replace
+    $result = & ".\config.cmd" --url "https://github.com/astra-hq" --token $Token --name $RunnerName --labels $Labels --unattended --replace
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn "Registration failed (token may be expired). Get a new token and re-run."
+        exit 1
+    }
     Write-Step "Installing service..."
     & ".\svc.cmd" install
     Write-Step "Starting service..."
