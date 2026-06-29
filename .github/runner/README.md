@@ -37,7 +37,7 @@ docker run -d --restart unless-stopped \
   -e GITHUB_URL=https://github.com/astra-hq \
   -e GITHUB_TOKEN=YOUR_TOKEN \
   -e RUNNER_NAME=mac-mini-linux \
-  -e RUNNER_LABELS=self-hosted,linux,ubuntu-26.04,ubuntu-latest,x86_64 \
+  -e RUNNER_LABELS=self-hosted,linux,ubuntu-26.04,ubuntu-latest,arm64 \
   poly-runner
 ```
 
@@ -48,7 +48,7 @@ docker run -d --restart unless-stopped \
 | `GITHUB_TOKEN` | **Yes** | — | One-time runner registration token |
 | `GITHUB_URL` | No | `https://github.com/astra-hq` | GitHub instance URL |
 | `RUNNER_NAME` | No | `poly-runner-$(hostname)` | Display name in GitHub UI |
-| `RUNNER_LABELS` | No | `self-hosted,linux,ubuntu-26.04,x86_64` | Comma-separated labels |
+| `RUNNER_LABELS` | No | `self-hosted,linux,ubuntu-26.04,arm64` | Comma-separated labels |
 | `RUNNER_WORKDIR` | No | `/_work` | Working directory for builds |
 
 ## Pipeline Coverage
@@ -77,7 +77,7 @@ docker run -d --restart unless-stopped ...  # same flags as above
 ## Token Expiry
 
 Tokens expire ~1 hour. Get a fresh one from:
-**https://github.com/organizations/astra-hq/settings/actions/runners/new** → Linux → x64
+**https://github.com/organizations/astra-hq/settings/actions/runners/new** → Linux → arm64
 
 ---
 
@@ -173,7 +173,7 @@ Set-ExecutionPolicy Bypass -Scope Process -Force
 
 This installs:
 - Visual Studio 2022 Build Tools (C++ workload, ~5-10 min)
-- Rust (stable) + `x86_64-pc-windows-msvc` target
+- Rust (stable) + `arm64-pc-windows-msvc` target
 - Node.js 20 + pnpm 8
 - libvulkan-dev, mesa-vulkan-drivers (for `--features vulkan` builds)
 - GitHub Actions Runner v2.335.1 as a Windows service
@@ -187,12 +187,12 @@ If you want to install just the dependencies and register manually:
 # Then:
 cd C:\actions-runner
 .\config.cmd --url https://github.com/astra-hq --token YOUR_TOKEN `
-  --labels self-hosted,windows,x64,windows-latest
+  --labels self-hosted,windows,arm64,windows-latest
 .\svc.cmd install
 .\svc.cmd start
 ```
 
-Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** → Windows → x64
+Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** → Windows → arm64
 
 ## Pipeline Coverage
 
@@ -241,7 +241,7 @@ Register with labels that match your workflows. A runner picks up a job when ALL
 
 **Linux Docker runner:**
 ```
-self-hosted,linux,ubuntu-26.04,ubuntu-latest,ubuntu-24.04,x86_64
+self-hosted,linux,ubuntu-26.04,ubuntu-latest,ubuntu-24.04,arm64
 ```
 
 **macOS runner (direct on Mac Mini):**
@@ -251,7 +251,7 @@ self-hosted,macos,arm64,macos-latest,macos-15
 
 **Windows runner (on VM):**
 ```
-self-hosted,windows,x64,windows-latest,windows-2022
+self-hosted,windows,arm64,windows-latest,windows-2022
 ```
 
 ---
@@ -266,7 +266,7 @@ Mac Mini (Apple Silicon)
  ├── macOS (direct) ─── macOS Runner (arm64)
  │     Handles: Build macOS, Auto Release (macOS)
  │
- └── Windows VM ─── Windows Runner (x64)
+ └── Windows VM ─── Windows Runner (arm64)
        Handles: Build Windows, Auto Release (Windows)
 ```
 

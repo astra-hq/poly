@@ -90,11 +90,11 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
 # ============================================================
 WORKDIR /actions-runner
 
-RUN curl -o actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz -L \
-    https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
-    && echo "4ef2f25285f0ae4477f1fe1e346db76d2f3ebf03824e2ddd1973a2819bf6c8cf  actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" | sha256sum -c \
-    && tar xzf actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
-    && rm actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
+RUN curl -o actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz -L \
+    https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz \
+    && echo "6d1e85bfd1a506a8b17c1f1b9b57dba458ffed90898799aaa9f599520b0d9207  actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz" | sha256sum -c \
+    && tar xzf actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz \
+    && rm actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz
 
 WORKDIR /
 
@@ -102,7 +102,9 @@ WORKDIR /
 # 6. Create non-root runner user (runner refuses to run as root)
 # ============================================================
 RUN useradd -m -u 1001 -s /bin/bash runner \
-    && chown -R runner:runner /actions-runner
+    && chown -R runner:runner /actions-runner \
+    && mkdir -p /_work \
+    && chown runner:runner /_work
 
 # Copy Rust setup for the runner user
 RUN cp -r /root/.cargo /home/runner/.cargo \
