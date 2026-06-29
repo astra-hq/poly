@@ -1,15 +1,15 @@
 use app_lib::api::api::{count_secrets, ModelConfig, TranscriptConfig};
 use app_lib::knowledge_graph::config::{EmbeddingConfig, KnowledgeGraphSelection, ProfileKind};
 use app_lib::poly_config::config::{
-    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets, PolyConfig,
-    SummaryConfig, TranscriptConfig as YamlTranscriptConfig,
+    KnowledgeGraphProfileWithoutSecrets, PolyConfig, SummaryConfig,
+    TranscriptConfig as YamlTranscriptConfig,
 };
 use app_lib::poly_config::ConfigRepository;
+use app_lib::providers::{ProviderConfig, ProviderType};
 use app_lib::secrets::file_store::FileSecretStore;
 use app_lib::secrets::refs;
 use app_lib::secrets::status::build_api_key_status;
 use app_lib::secrets::store::SecretStore;
-use app_lib::summary::CustomOpenAIConfig;
 
 fn temp_config_repo() -> (ConfigRepository, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -37,16 +37,15 @@ async fn model_config_roundtrip_via_yaml_and_secret_store() {
 
     let mut cfg = PolyConfig::default();
     cfg.summary = SummaryConfig {
-        provider: "openai".to_string(),
+        provider_id: "openai".to_string(),
         model: "gpt-4o".to_string(),
         whisper_model: "large-v3-turbo".to_string(),
-        ollama_endpoint: None,
     };
     repo.save_atomic(&cfg).unwrap();
 
     // Then: loading returns ModelConfig with ApiKeyStatus (not raw key)
     let loaded = repo.load().unwrap();
-    assert_eq!(loaded.summary.provider, "openai");
+    assert_eq!(loaded.summary.provider_id, "openai");
     assert_eq!(loaded.summary.model, "gpt-4o");
     assert_eq!(loaded.summary.whisper_model, "large-v3-turbo");
 
@@ -56,11 +55,11 @@ async fn model_config_roundtrip_via_yaml_and_secret_store() {
     assert!(api_key_status.masked_hint.is_some());
 
     let model_config = ModelConfig {
-        provider: loaded.summary.provider,
+        provider: loaded.summary.provider_id,
         model: loaded.summary.model,
         whisper_model: loaded.summary.whisper_model,
         api_key_status: Some(api_key_status),
-        ollama_endpoint: loaded.summary.ollama_endpoint,
+        ollama_endpoint: None,
     };
 
     assert_eq!(model_config.provider, "openai");
@@ -104,57 +103,37 @@ async fn transcript_config_roundtrip_via_yaml_and_secret_store() {
     assert!(transcript_config.api_key_status.is_some());
 }
 
-// ─── Custom OpenAI config roundtrip (YAML + SecretStore) ─────────────────────
+// ─── Custom provider config roundtrip (YAML + SecretStore) ───────────────────
 
 #[tokio::test]
-async fn custom_openai_config_roundtrip_via_yaml_and_secret_store() {
+async fn custom_provider_config_roundtrip_via_yaml_and_secret_store() {
     // Given: a clean YAML config repo and SecretStore
     let (repo, _repo_dir) = temp_config_repo();
     let (store, _store_dir) = temp_secret_store();
 
-    // When: saving custom OpenAI config
-    let secret_ref = refs::custom_openai_key();
+    // When: saving custom OpenAI-compatible provider config
+    let secret_ref = refs::summary_provider_key("custom-ai");
     store.set(&secret_ref, "sk-custom-key-abcde").await.unwrap();
 
     let mut cfg = PolyConfig::default();
-    cfg.custom_openai = CustomOpenAIConfigFields {
-        endpoint: "https://api.custom-ai.example.com/v1".to_string(),
-        model: "custom-model-v2".to_string(),
-        max_tokens: Some(4096),
-        temperature: Some(0.7),
-        top_p: Some(0.95),
-    };
+    cfg.providers.push(ProviderConfig {
+        id: "custom-ai".to_string(),
+        name: "Custom AI".to_string(),
+        provider_type: ProviderType::Custom,
+        base_url: "https://api.custom-ai.example.com/v1".to_string(),
+        default_model: "custom-model-v2".to_string(),
+    });
     repo.save_atomic(&cfg).unwrap();
 
-    // Then: loading returns CustomOpenAIConfig with api_key: None (never raw key)
+    // Then: loading returns provider config only; raw key stays in SecretStore
     let loaded = repo.load().unwrap();
-    assert_eq!(
-        loaded.custom_openai.endpoint,
-        "https://api.custom-ai.example.com/v1"
-    );
-    assert_eq!(loaded.custom_openai.model, "custom-model-v2");
-    assert_eq!(loaded.custom_openai.max_tokens, Some(4096));
+    let provider = loaded.find_provider("custom-ai").unwrap();
+    assert_eq!(provider.base_url, "https://api.custom-ai.example.com/v1");
+    assert_eq!(provider.default_model, "custom-model-v2");
+    assert_eq!(provider.provider_type, ProviderType::Custom);
 
     let secret_exists = store.exists(&secret_ref).await.unwrap();
     assert!(secret_exists, "SecretStore should have the API key");
-
-    let custom_openai_config = CustomOpenAIConfig {
-        endpoint: loaded.custom_openai.endpoint.clone(),
-        api_key: None,
-        model: loaded.custom_openai.model.clone(),
-        max_tokens: loaded.custom_openai.max_tokens,
-        temperature: loaded.custom_openai.temperature,
-        top_p: loaded.custom_openai.top_p,
-    };
-
-    assert!(
-        custom_openai_config.api_key.is_none(),
-        "api_key must be None"
-    );
-    assert_eq!(
-        custom_openai_config.endpoint,
-        "https://api.custom-ai.example.com/v1"
-    );
 }
 
 // ─── Fail-fast: API key save failure must not update YAML ────────────────────
@@ -167,7 +146,7 @@ async fn secret_write_failure_does_not_update_yaml() {
     repo.save_atomic(&original_cfg).unwrap();
 
     let original_loaded = repo.load().unwrap();
-    assert_eq!(original_loaded.summary.provider, "openai");
+    assert_eq!(original_loaded.summary.provider_id, "openai");
 
     // When: attempting to change provider but the YAML save itself fails
     // (simulated by using a path that isn't writable isn't easy in all envs;
@@ -175,15 +154,15 @@ async fn secret_write_failure_does_not_update_yaml() {
 
     // Then: config still returns original values
     let reloaded = repo.load().unwrap();
-    assert_eq!(reloaded.summary.provider, original_loaded.summary.provider);
+    assert_eq!(reloaded.summary.provider_id, original_loaded.summary.provider_id);
     assert_eq!(reloaded.summary.model, original_loaded.summary.model);
 }
 
-// ─── Empty custom OpenAI config returns None ─────────────────────────────────
+// ─── Default provider list remains configured ────────────────────────────────
 
 #[tokio::test]
-async fn empty_custom_openai_endpoint_returns_none() {
-    // Given: a config with empty custom_openai endpoint (default)
+async fn default_provider_list_contains_openai() {
+    // Given: a default config
     let (repo, _repo_dir) = temp_config_repo();
     let cfg = PolyConfig::default();
     repo.save_atomic(&cfg).unwrap();
@@ -191,9 +170,10 @@ async fn empty_custom_openai_endpoint_returns_none() {
     // When: loading
     let loaded = repo.load().unwrap();
 
-    // Then: endpoint is empty — should be treated as "not configured"
-    assert!(loaded.custom_openai.endpoint.is_empty());
-    assert!(loaded.custom_openai.model.is_empty());
+    // Then: the default OpenAI provider is available
+    let provider = loaded.find_provider("openai").unwrap();
+    assert_eq!(provider.provider_type, ProviderType::OpenAI);
+    assert_eq!(provider.base_url, "https://api.openai.com/v1");
 }
 
 // ─── Model config without API key returns has_secret: false ──────────────────
@@ -205,7 +185,7 @@ async fn model_config_without_api_key_returns_has_secret_false() {
     let (store, _store_dir) = temp_secret_store();
 
     let mut cfg = PolyConfig::default();
-    cfg.summary.provider = "claude".to_string();
+    cfg.summary.provider_id = "claude".to_string();
     repo.save_atomic(&cfg).unwrap();
 
     // When: building ApiKeyStatus for a provider with no stored key
@@ -229,10 +209,9 @@ fn config_defaults_work_without_any_sqlite_tables() {
     let cfg = repo.load().unwrap();
 
     // Then: defaults are returned (no SQLite tables needed)
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(cfg.transcript.provider, "parakeet");
-    assert!(cfg.custom_openai.endpoint.is_empty());
 }
 
 // ─── Secret diagnostics: counts KG profile secrets from YAML ────────────────
@@ -263,9 +242,8 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
         .unwrap();
 
     let mut cfg = PolyConfig::default();
-    cfg.summary.provider = "openai".to_string();
+    cfg.summary.provider_id = "openai".to_string();
     cfg.transcript.provider = "groq".to_string();
-    cfg.custom_openai.endpoint = "https://custom.example.com/v1".to_string();
     cfg.knowledge_graph.profiles = vec![
         KnowledgeGraphProfileWithoutSecrets {
             id: "profile-1".to_string(),
@@ -275,6 +253,7 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
             lightrag_url: "http://localhost:9621".to_string(),
             notes: None,
             llm_model: "qwen3:30b-a3b".to_string(),
+            llm_provider_id: Some("openai".to_string()),
         },
         KnowledgeGraphProfileWithoutSecrets {
             id: "profile-2".to_string(),
@@ -284,6 +263,7 @@ async fn secret_diagnostics_counts_kg_profile_secrets_from_yaml() {
             lightrag_url: "http://remote:9621".to_string(),
             notes: None,
             llm_model: "qwen3:30b-a3b".to_string(),
+            llm_provider_id: Some("openai".to_string()),
         },
     ];
     cfg.knowledge_graph.active_profile = KnowledgeGraphSelection::None;
@@ -340,7 +320,7 @@ fn config_repository_with_legacy_path_migrates_on_first_load() {
         &legacy_path,
         r#"
 summary:
-  provider: ollama
+  provider_id: ollama
   model: llama3.1:8b
 preferences:
   language: de
@@ -352,7 +332,7 @@ preferences:
     let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
     let cfg = repo.load_or_create_default().unwrap();
 
-    assert_eq!(cfg.summary.provider, "ollama");
+    assert_eq!(cfg.summary.provider_id, "ollama");
     assert_eq!(cfg.preferences.language, "de");
     assert!(poly_path.exists(), "Poly config must be created from legacy");
     assert!(legacy_path.exists(), "legacy must not be deleted");

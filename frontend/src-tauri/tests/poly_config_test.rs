@@ -1,31 +1,46 @@
 use app_lib::knowledge_graph::config::KnowledgeGraphSelection;
 use app_lib::poly_config::config::{
-    CustomOpenAIConfigFields, KnowledgeGraphProfileWithoutSecrets,
-    KnowledgeGraphSettingsWithoutSecrets, PolyConfig, PreferencesConfig, SummaryConfig,
-    TranscriptConfig,
+    KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets, PolyConfig,
+    PreferencesConfig, SummaryConfig, TranscriptConfig,
 };
+use app_lib::providers::{ProviderConfig, ProviderType};
 
 // ─── full schema roundtrip test ────────────────────────────────────────────
 
 #[test]
 fn poly_config_full_schema_roundtrip_without_raw_secrets() {
     let cfg = PolyConfig {
+        providers: vec![
+            ProviderConfig {
+                id: "openai".to_string(),
+                name: "OpenAI".to_string(),
+                provider_type: ProviderType::OpenAI,
+                base_url: "https://api.openai.com/v1".to_string(),
+                default_model: "gpt-4o".to_string(),
+            },
+            ProviderConfig {
+                id: "custom-ai".to_string(),
+                name: "Custom AI".to_string(),
+                provider_type: ProviderType::Custom,
+                base_url: "https://api.custom-ai.example.com/v1".to_string(),
+                default_model: "custom-model-v2".to_string(),
+            },
+            ProviderConfig {
+                id: "ollama-local".to_string(),
+                name: "Local Ollama".to_string(),
+                provider_type: ProviderType::Ollama,
+                base_url: "http://localhost:11434".to_string(),
+                default_model: "llama3.1:8b".to_string(),
+            },
+        ],
         summary: SummaryConfig {
-            provider: "openai".to_string(),
+            provider_id: "openai".to_string(),
             model: "gpt-4o-2024-11-20".to_string(),
             whisper_model: "large-v3-turbo".to_string(),
-            ollama_endpoint: Some("http://localhost:11434".to_string()),
         },
         transcript: TranscriptConfig {
             provider: "parakeet".to_string(),
             model: "parakeet-tdt-0.6b-v3-int8".to_string(),
-        },
-        custom_openai: CustomOpenAIConfigFields {
-            endpoint: "https://api.custom-ai.example.com/v1".to_string(),
-            model: "custom-model-v2".to_string(),
-            max_tokens: Some(4096),
-            temperature: Some(0.7),
-            top_p: Some(0.95),
         },
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets {
             profiles: vec![KnowledgeGraphProfileWithoutSecrets {
@@ -40,6 +55,7 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
                 lightrag_url: "https://kg.example.com:9621".to_string(),
                 notes: Some("Main production knowledge graph".to_string()),
                 llm_model: "qwen3:30b-a3b".to_string(),
+                llm_provider_id: Some("custom-ai".to_string()),
             }],
             active_profile: KnowledgeGraphSelection::Profile("kg-1".to_string()),
         },
@@ -58,9 +74,7 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
     assert!(yaml.contains("parakeet"));
     assert!(yaml.contains("custom-model-v2"));
     assert!(yaml.contains("https://api.custom-ai.example.com/v1"));
-    assert!(yaml.contains("max_tokens: 4096"));
-    assert!(yaml.contains("temperature: 0.7"));
-    assert!(yaml.contains("top_p: 0.95"));
+    assert!(yaml.contains("custom-ai"));
     assert!(yaml.contains("kg-1"));
     assert!(yaml.contains("Production KG"));
     assert!(yaml.contains("https://kg.example.com:9621"));
@@ -79,28 +93,18 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
 
     // Roundtrip: deserialize and compare
     let restored: PolyConfig = serde_yaml::from_str(&yaml).unwrap();
-    assert_eq!(restored.summary.provider, cfg.summary.provider);
+    assert_eq!(restored.providers, cfg.providers);
+    assert_eq!(restored.summary.provider_id, cfg.summary.provider_id);
     assert_eq!(restored.summary.model, cfg.summary.model);
     assert_eq!(restored.summary.whisper_model, cfg.summary.whisper_model);
-    assert_eq!(
-        restored.summary.ollama_endpoint,
-        cfg.summary.ollama_endpoint
-    );
     assert_eq!(restored.transcript.provider, cfg.transcript.provider);
     assert_eq!(restored.transcript.model, cfg.transcript.model);
-    assert_eq!(restored.custom_openai.endpoint, cfg.custom_openai.endpoint);
-    assert_eq!(restored.custom_openai.model, cfg.custom_openai.model);
-    assert_eq!(
-        restored.custom_openai.max_tokens,
-        cfg.custom_openai.max_tokens
-    );
-    assert_eq!(
-        restored.custom_openai.temperature,
-        cfg.custom_openai.temperature
-    );
-    assert_eq!(restored.custom_openai.top_p, cfg.custom_openai.top_p);
     assert_eq!(restored.knowledge_graph.profiles.len(), 1);
     assert_eq!(restored.knowledge_graph.profiles[0].id, "kg-1");
+    assert_eq!(
+        restored.knowledge_graph.profiles[0].llm_provider_id.as_deref(),
+        Some("custom-ai")
+    );
     assert_eq!(
         restored.knowledge_graph.active_profile,
         KnowledgeGraphSelection::Profile("kg-1".to_string())
@@ -115,7 +119,7 @@ fn partial_config_loading_with_defaults() {
     // Only set a few fields - everything else should use defaults
     let partial_yaml = r#"
 summary:
-  provider: claude
+  provider_id: claude
   model: claude-3-opus
 transcript:
   provider: groq
@@ -126,19 +130,14 @@ preferences:
     let cfg: PolyConfig = serde_yaml::from_str(partial_yaml).unwrap();
 
     // Set fields
-    assert_eq!(cfg.summary.provider, "claude");
+    assert_eq!(cfg.summary.provider_id, "claude");
     assert_eq!(cfg.summary.model, "claude-3-opus");
     assert_eq!(cfg.transcript.provider, "groq");
 
     // Defaulted fields
     assert_eq!(cfg.summary.whisper_model, "large-v3-turbo"); // default
-    assert_eq!(cfg.summary.ollama_endpoint, None); // default
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8"); // default
-    assert_eq!(cfg.custom_openai.endpoint, ""); // default
-    assert_eq!(cfg.custom_openai.model, ""); // default
-    assert_eq!(cfg.custom_openai.max_tokens, None); // default
-    assert_eq!(cfg.custom_openai.temperature, None); // default
-    assert_eq!(cfg.custom_openai.top_p, None); // default
+    assert!(cfg.providers.is_empty());
     assert!(cfg.knowledge_graph.profiles.is_empty()); // default
     assert_eq!(
         cfg.knowledge_graph.active_profile,
@@ -154,14 +153,12 @@ fn empty_yaml_produces_all_defaults() {
     let yaml = "{}";
     let cfg: PolyConfig = serde_yaml::from_str(yaml).unwrap();
 
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(cfg.summary.whisper_model, "large-v3-turbo");
-    assert_eq!(cfg.summary.ollama_endpoint, None);
     assert_eq!(cfg.transcript.provider, "parakeet");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
-    assert_eq!(cfg.custom_openai.endpoint, "");
-    assert_eq!(cfg.custom_openai.model, "");
+    assert!(cfg.providers.is_empty());
     assert!(cfg.knowledge_graph.profiles.is_empty());
     assert_eq!(
         cfg.knowledge_graph.active_profile,
@@ -206,22 +203,21 @@ fn save_and_load_roundtrip_via_file() {
     let file_path = dir.path().join("config.yml");
 
     let cfg = PolyConfig {
+        providers: vec![ProviderConfig {
+            id: "ollama".to_string(),
+            name: "Ollama".to_string(),
+            provider_type: ProviderType::Ollama,
+            base_url: "http://192.168.1.100:11434".to_string(),
+            default_model: "llama3.1:8b".to_string(),
+        }],
         summary: SummaryConfig {
-            provider: "ollama".to_string(),
+            provider_id: "ollama".to_string(),
             model: "llama3.1:8b".to_string(),
             whisper_model: "medium".to_string(),
-            ollama_endpoint: Some("http://192.168.1.100:11434".to_string()),
         },
         transcript: TranscriptConfig {
             provider: "localWhisper".to_string(),
             model: "large-v3".to_string(),
-        },
-        custom_openai: CustomOpenAIConfigFields {
-            endpoint: "http://localhost:8000/v1".to_string(),
-            model: "mixtral-8x7b".to_string(),
-            max_tokens: Some(2048),
-            temperature: Some(0.3),
-            top_p: None,
         },
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets {
             profiles: vec![],
@@ -240,20 +236,14 @@ fn save_and_load_roundtrip_via_file() {
     let read_back = std::fs::read_to_string(&file_path).unwrap();
     let restored: PolyConfig = serde_yaml::from_str(&read_back).unwrap();
 
-    assert_eq!(restored.summary.provider, "ollama");
+    assert_eq!(restored.providers.len(), 1);
+    assert_eq!(restored.providers[0].id, "ollama");
+    assert_eq!(restored.providers[0].base_url, "http://192.168.1.100:11434");
+    assert_eq!(restored.summary.provider_id, "ollama");
     assert_eq!(restored.summary.model, "llama3.1:8b");
     assert_eq!(restored.summary.whisper_model, "medium");
-    assert_eq!(
-        restored.summary.ollama_endpoint.as_deref(),
-        Some("http://192.168.1.100:11434")
-    );
     assert_eq!(restored.transcript.provider, "localWhisper");
     assert_eq!(restored.transcript.model, "large-v3");
-    assert_eq!(restored.custom_openai.endpoint, "http://localhost:8000/v1");
-    assert_eq!(restored.custom_openai.model, "mixtral-8x7b");
-    assert_eq!(restored.custom_openai.max_tokens, Some(2048));
-    assert_eq!(restored.custom_openai.temperature, Some(0.3));
-    assert_eq!(restored.custom_openai.top_p, None);
     assert!(restored.knowledge_graph.profiles.is_empty());
     assert_eq!(restored.preferences.language, "ja");
 }
@@ -279,6 +269,7 @@ fn kg_profile_without_secrets_excludes_api_key() {
         has_secret: false,
         api_key_masked_hint: None,
         llm_model: "qwen3:30b-a3b".to_string(),
+        llm_provider_id: Some("openai".to_string()),
     };
 
     let without: KnowledgeGraphProfileWithoutSecrets = original.into();
@@ -304,7 +295,7 @@ fn kg_profile_without_secrets_excludes_api_key() {
 #[test]
 fn load_default_returns_default_config() {
     let cfg = PolyConfig::load_default();
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.preferences.language, "auto-translate");
 }
 
@@ -315,7 +306,7 @@ fn load_from_file_missing_returns_default() {
     ));
     assert!(cfg.is_ok(), "Missing file should return default, not error");
     let cfg = cfg.unwrap();
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
 }
 
 // ─── Default implementations ───────────────────────────────────────────────
@@ -323,7 +314,7 @@ fn load_from_file_missing_returns_default() {
 #[test]
 fn default_poly_config_has_sensible_values() {
     let cfg = PolyConfig::default();
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(cfg.summary.whisper_model, "large-v3-turbo");
     assert_eq!(cfg.transcript.provider, "parakeet");
@@ -345,14 +336,13 @@ fn poly_config_atomic_save_preserves_existing_file_on_failure() {
 
     // Write an original config file.
     let original_cfg = PolyConfig {
+        providers: PolyConfig::default().providers,
         summary: SummaryConfig {
-            provider: "openai".to_string(),
+            provider_id: "openai".to_string(),
             model: "original-model".to_string(),
             whisper_model: "large-v3-turbo".to_string(),
-            ollama_endpoint: None,
         },
         transcript: TranscriptConfig::default(),
-        custom_openai: CustomOpenAIConfigFields::default(),
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
         preferences: PreferencesConfig::default(),
     };
@@ -368,14 +358,19 @@ fn poly_config_atomic_save_preserves_existing_file_on_failure() {
 
     // Attempt an atomic save — must fail.
     let new_cfg = PolyConfig {
+        providers: vec![ProviderConfig {
+            id: "claude".to_string(),
+            name: "Claude".to_string(),
+            provider_type: ProviderType::Anthropic,
+            base_url: "https://api.anthropic.com".to_string(),
+            default_model: "claude-3-opus".to_string(),
+        }],
         summary: SummaryConfig {
-            provider: "claude".to_string(),
+            provider_id: "claude".to_string(),
             model: "new-model".to_string(),
             whisper_model: "large-v3-turbo".to_string(),
-            ollama_endpoint: None,
         },
         transcript: TranscriptConfig::default(),
-        custom_openai: CustomOpenAIConfigFields::default(),
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
         preferences: PreferencesConfig::default(),
     };
@@ -428,7 +423,7 @@ fn startup_creates_default_poly_yaml_without_config_tables() {
     );
 
     // Returned config has correct defaults
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(cfg.summary.whisper_model, "large-v3-turbo");
     assert_eq!(cfg.transcript.provider, "parakeet");
@@ -460,7 +455,7 @@ fn startup_creates_default_poly_yaml_without_config_tables() {
         "Existing YAML must not be overwritten on subsequent loads"
     );
     assert_eq!(
-        cfg2.summary.provider, cfg.summary.provider,
+        cfg2.summary.provider_id, cfg.summary.provider_id,
         "Reloaded config must match original"
     );
     assert_eq!(cfg2.transcript.provider, cfg.transcript.provider);
@@ -483,10 +478,9 @@ fn legacy_config_copied_forward_to_poly_on_first_run() {
     // Write a custom legacy config.
     let legacy_yaml = r#"
 summary:
-  provider: ollama
+  provider_id: ollama
   model: llama3.1:8b
   whisper_model: medium
-  ollama_endpoint: http://localhost:11434
 transcript:
   provider: localWhisper
   model: large-v3
@@ -502,13 +496,9 @@ preferences:
     let cfg = repo.load_or_create_default().unwrap();
 
     // Legacy values were loaded and migrated.
-    assert_eq!(cfg.summary.provider, "ollama");
+    assert_eq!(cfg.summary.provider_id, "ollama");
     assert_eq!(cfg.summary.model, "llama3.1:8b");
     assert_eq!(cfg.summary.whisper_model, "medium");
-    assert_eq!(
-        cfg.summary.ollama_endpoint.as_deref(),
-        Some("http://localhost:11434")
-    );
     assert_eq!(cfg.transcript.provider, "localWhisper");
     assert_eq!(cfg.transcript.model, "large-v3");
     assert_eq!(cfg.preferences.language, "de");
@@ -582,7 +572,7 @@ fn poly_config_preferred_when_both_files_exist() {
         &poly_path,
         r#"
 summary:
-  provider: openai
+  provider_id: openai
   model: gpt-4o
 transcript:
   provider: parakeet
@@ -595,7 +585,7 @@ transcript:
         &legacy_path,
         r#"
 summary:
-  provider: claude
+  provider_id: claude
   model: claude-3-opus
 transcript:
   provider: groq
@@ -607,7 +597,7 @@ transcript:
     let cfg = repo.load_or_create_default().unwrap();
 
     // Poly values win.
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o");
     assert_eq!(cfg.transcript.provider, "parakeet");
 
@@ -630,7 +620,7 @@ fn existing_poly_not_overwritten_by_legacy_migration() {
     // Write Poly config with specific values.
     let poly_content = r#"
 summary:
-  provider: ollama
+  provider_id: ollama
   model: custom-model
 preferences:
   language: ja
@@ -643,7 +633,7 @@ preferences:
         &legacy_path,
         r#"
 summary:
-  provider: groq
+  provider_id: groq
   model: some-other-model
 preferences:
   language: es
@@ -655,7 +645,7 @@ preferences:
     let cfg = repo.load_or_create_default().unwrap();
 
     // Poly values unchanged — legacy was not consulted.
-    assert_eq!(cfg.summary.provider, "ollama");
+    assert_eq!(cfg.summary.provider_id, "ollama");
     assert_eq!(cfg.summary.model, "custom-model");
     assert_eq!(cfg.preferences.language, "ja");
 
@@ -685,7 +675,7 @@ fn load_directly_always_reads_poly_path_not_legacy() {
         &poly_path,
         r#"
 summary:
-  provider: openai
+  provider_id: openai
 "#,
     )
     .unwrap();
@@ -694,7 +684,7 @@ summary:
         &legacy_path,
         r#"
 summary:
-  provider: claude
+  provider_id: claude
 "#,
     )
     .unwrap();
@@ -704,7 +694,7 @@ summary:
     let repo = ConfigRepository::with_paths(poly_path.clone(), Some(legacy_path.clone()));
     let cfg = repo.load().unwrap();
 
-    assert_eq!(cfg.summary.provider, "openai");
+    assert_eq!(cfg.summary.provider_id, "openai");
 }
 
 // ─── namespace verification: Poly paths use the correct prefixes ────────
