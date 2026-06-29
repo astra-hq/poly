@@ -88,16 +88,20 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
 # ============================================================
 # 5. GitHub Actions Runner
 # ============================================================
+WORKDIR /actions-runner
+
 RUN curl -o actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz -L \
     https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     && echo "4ef2f25285f0ae4477f1fe1e346db76d2f3ebf03824e2ddd1973a2819bf6c8cf  actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" | sha256sum -c \
     && tar xzf actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     && rm actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
 
+WORKDIR /
+
 # ============================================================
 # 6. Entrypoint
 # ============================================================
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
+COPY --chmod=0755 start.sh /start.sh
 
 ENTRYPOINT ["/start.sh"]
+WORKDIR /actions-runner
