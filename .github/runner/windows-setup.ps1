@@ -39,7 +39,7 @@ if (-not $vsInstalled) {
 # Install Rust
 if (-not (Get-Command rustc -ea SilentlyContinue)) {
     Write-Step "Installing Rust..."
-    Invoke-WebRequest -Uri "https://static.rust-lang.org/rustup/rustup-init.exe" -OutFile "$env:TEMP\rustup-init.exe"
+    Invoke-WebRequest -Uri "https://win.rustup.rs" -OutFile "$env:TEMP\rustup-init.exe"
     & "$env:TEMP\rustup-init.exe" -y --default-toolchain stable --profile minimal
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
 } else { Write-Step "Rust already installed: $(rustc --version)" }
