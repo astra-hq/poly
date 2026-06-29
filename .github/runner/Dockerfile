@@ -56,6 +56,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     git \
+    gh \
+    sudo \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
@@ -109,7 +111,8 @@ WORKDIR /
 RUN useradd -m -u 1001 -s /bin/bash runner \
     && chown -R runner:runner /actions-runner \
     && mkdir -p /_work \
-    && chown runner:runner /_work
+    && chown runner:runner /_work \
+    && echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/runner
 
 # Copy Rust setup for the runner user
 RUN cp -r /root/.cargo /home/runner/.cargo \
