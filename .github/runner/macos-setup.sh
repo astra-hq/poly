@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-RUNNER_VERSION="${RUNNER_VERSION:-2.322.0}"
+RUNNER_VERSION="${RUNNER_VERSION:-2.335.1}"
 RUNNER_DIR="${RUNNER_DIR:-/opt/actions-runner}"
 RED='\033[0;31m'
 GREEN='\033[0;32m'

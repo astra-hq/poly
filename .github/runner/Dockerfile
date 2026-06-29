@@ -16,7 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV NODE_VERSION=20
 ENV PNPM_VERSION=8
 ENV RUST_VERSION=stable
-ENV RUNNER_VERSION=2.322.0
+ENV RUNNER_VERSION=2.335.1
 
 # Prevent tzdata from asking for timezone
 ENV TZ=UTC
@@ -90,7 +90,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
 # ============================================================
 RUN curl -o actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz -L \
     https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
-    && echo "3ee6c9ae111a6091a027348dfa0a32bbcb13f57a9f34fe8457c6689ad3d19515  actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" | sha256sum -c \
+    && echo "4ef2f25285f0ae4477f1fe1e346db76d2f3ebf03824e2ddd1973a2819bf6c8cf  actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz" | sha256sum -c \
     && tar xzf actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     && rm actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz \
     && ./bin/installdependencies.sh

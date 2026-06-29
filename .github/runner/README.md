@@ -99,7 +99,7 @@ This installs:
 - cmake, pkg-config, ffmpeg
 - Rust (stable) + `aarch64-apple-darwin` target
 - Node.js 20 + pnpm 8
-- GitHub Actions Runner v2.322.0
+- GitHub Actions Runner v2.335.1
 
 ## Manual Registration
 
@@ -176,7 +176,7 @@ This installs:
 - Rust (stable) + `x86_64-pc-windows-msvc` target
 - Node.js 20 + pnpm 8
 - libvulkan-dev, mesa-vulkan-drivers (for `--features vulkan` builds)
-- GitHub Actions Runner v2.322.0 as a Windows service
+- GitHub Actions Runner v2.335.1 as a Windows service
 
 ## Manual Registration
 

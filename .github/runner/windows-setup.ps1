@@ -22,7 +22,7 @@ param(
     [string]$RunnerDir = "C:\actions-runner",
 
     [Parameter(Mandatory = $false)]
-    [string]$RunnerVersion = "2.322.0",
+    [string]$RunnerVersion = "2.335.1",
 
     [Parameter(Mandatory = $false)]
     [switch]$InstallDepsOnly = $false
