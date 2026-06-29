@@ -47,6 +47,10 @@ RUN apt-get update && apt-get install -y \
     # AppImage processing
     fuse \
     libfuse2 \
+    # Python 3 (for CodeQL analysis)
+    python3 \
+    python3-pip \
+    python3-venv \
     # Utilities
     wget \
     curl \

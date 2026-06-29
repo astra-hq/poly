@@ -36,6 +36,14 @@ if (-not $vsInstalled) {
     if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) { Write-Warn "VS installer exited $($proc.ExitCode)" }
 } else { Write-Step "VS Build Tools already installed" }
 
+# Install Git (provides Git Bash, needed for `shell: bash` in workflows)
+if (-not (Get-Command git -ea SilentlyContinue)) {
+    Write-Step "Installing Git for Windows..."
+    Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe" -OutFile "$env:TEMP\git-install.exe"
+    Start-Process -FilePath "$env:TEMP\git-install.exe" -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/COMPONENTS=git,gitlfs" -Wait -NoNewWindow
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+} else { Write-Step "Git already installed: $(git --version)" }
+
 # Install Rust
 if (-not (Get-Command rustc -ea SilentlyContinue)) {
     Write-Step "Installing Rust..."
@@ -58,6 +66,14 @@ if (-not (Get-Command pnpm -ea SilentlyContinue)) {
     Write-Step "Installing pnpm..."
     npm install -g pnpm@8
 } else { Write-Step "pnpm already installed: $(pnpm --version)" }
+
+# Install Python (for CodeQL analysis)
+if (-not (Get-Command python -ea SilentlyContinue)) {
+    Write-Step "Installing Python 3..."
+    Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.5/python-3.12.5-amd64.exe" -OutFile "$env:TEMP\python.exe"
+    Start-Process -FilePath "$env:TEMP\python.exe" -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1" -Wait
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine")
+} else { Write-Step "Python already installed: $(python --version)" }
 
 # Install Vulkan SDK
 $vulkanInstalled = (Test-Path env:VULKAN_SDK) -or (Test-Path "C:\VulkanSDK\*\Include\vulkan\vulkan.h")

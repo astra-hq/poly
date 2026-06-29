@@ -58,6 +58,7 @@ brew install \
     cmake \
     pkg-config \
     ffmpeg \
+    python3 \
     wget
 
 # ============================================================
