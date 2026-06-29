@@ -74,6 +74,16 @@ docker stop poly-runner && docker rm poly-runner
 docker run -d --restart unless-stopped ...  # same flags as above
 ```
 
+## Docker Memory
+
+Rust compilation is memory-intensive. If the Build Test fails with `collect2: fatal error: ld terminated with signal 9 [Killed]`, the Docker VM needs more RAM.
+
+**Increase Docker memory:**
+- Docker Desktop: **Settings -> Resources -> Advanced -> Memory** -> set to at least **8 GB** (12 GB recommended)
+- OrbStack: `orb config set memory 12`
+
+After changing, restart Docker and the container.
+
 ## Token Expiry
 
 Tokens expire ~1 hour. Get a fresh one from:
