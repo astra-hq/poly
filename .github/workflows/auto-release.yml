@@ -14,7 +14,7 @@ jobs:
   prepare-release:
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    runs-on: ["self-hosted", "linux", "ubuntu-latest"]
     outputs:
       release-id: ${{ steps.create-release.outputs.result }}
       version: ${{ steps.get-version.outputs.version }}
