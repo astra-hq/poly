@@ -81,18 +81,26 @@ if (-not (Test-Path "run.cmd")) {
     Remove-Item "$env:TEMP\runner.zip"
 } else { Write-Step "Runner already downloaded" }
 
-# Configure
-if (-not (Test-Path ".runner")) {
+# Configure or re-configure
+$shouldConfigure = $true
+if (Test-Path ".runner") {
+    if ([string]::IsNullOrEmpty($Token)) {
+        Write-Step "Runner already configured. Provide a -Token to re-register."
+        $shouldConfigure = $false
+    } else {
+        Write-Step "Re-configuring runner with new token..."
+    }
+}
+
+if ($shouldConfigure) {
     if ([string]::IsNullOrEmpty($Token)) {
         Write-Warn "No token provided. Run manually:"
         Write-Host "  cd $RunnerDir"
         Write-Host "  .\config.cmd --url https://github.com/astra-hq --token YOUR_TOKEN --labels $Labels"
-        Write-Host "  .\svc.cmd install"
-        Write-Host "  .\svc.cmd start"
         exit 0
     }
-    Write-Step "Registering runner..."
-    $result = & ".\config.cmd" --url "https://github.com/astra-hq" --token $Token --name $RunnerName --labels $Labels --unattended --replace
+    Write-Step "Registering runner as $RunnerName..."
+    & ".\config.cmd" --url "https://github.com/astra-hq" --token $Token --name $RunnerName --labels $Labels --unattended --replace
     if ($LASTEXITCODE -ne 0) {
         Write-Warn "Registration failed (token may be expired). Get a new token and re-run."
         exit 1
@@ -101,7 +109,7 @@ if (-not (Test-Path ".runner")) {
     & ".\svc.cmd" install
     Write-Step "Starting service..."
     & ".\svc.cmd" start
-} else { Write-Step "Runner already configured" }
+}
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host " Setup Complete!" -ForegroundColor Cyan
