@@ -175,7 +175,7 @@ This installs:
 - Visual Studio 2022 Build Tools (C++ workload, ~5-10 min)
 - Rust (stable) + `x86_64-pc-windows-msvc` target
 - Node.js 20 + pnpm 8
-- Vulkan SDK 1.3.290 (for `--features vulkan` builds)
+- libvulkan-dev, mesa-vulkan-drivers (for `--features vulkan` builds)
 - GitHub Actions Runner v2.322.0 as a Windows service
 
 ## Manual Registration

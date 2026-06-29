@@ -55,13 +55,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================================
-# 2. Vulkan SDK (optional, for –features vulkan builds)
+# 2. Vulkan (for –features vulkan builds)
 # ============================================================
-RUN wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | tee /etc/apt/trusted.gpg.d/lunarg.asc \
-    && wget -qO /etc/apt/sources.list.d/lunarg-vulkan-1.3.290-jammy.list \
-       https://packages.lunarg.com/vulkan/1.3.290/lunarg-vulkan-1.3.290-jammy.list \
-    && apt-get update \
-    && apt-get install -y vulkan-sdk mesa-vulkan-drivers \
+RUN apt-get update && apt-get install -y \
+    libvulkan-dev \
+    libvulkan1 \
+    mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
 # ============================================================
