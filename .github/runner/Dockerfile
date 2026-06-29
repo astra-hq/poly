@@ -99,9 +99,22 @@ RUN curl -o actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz -L \
 WORKDIR /
 
 # ============================================================
-# 6. Entrypoint
+# 6. Create non-root runner user (runner refuses to run as root)
 # ============================================================
+RUN useradd -m -u 1001 -s /bin/bash runner \
+    && chown -R runner:runner /actions-runner
+
+# Copy Rust setup for the runner user
+RUN cp -r /root/.cargo /home/runner/.cargo \
+    && chown -R runner:runner /home/runner/.cargo
+
+ENV PATH="/home/runner/.cargo/bin:${PATH}"
+
 COPY --chmod=0755 start.sh /start.sh
 
+# ============================================================
+# 7. Entrypoint
+# ============================================================
+USER runner
 ENTRYPOINT ["/start.sh"]
 WORKDIR /actions-runner
