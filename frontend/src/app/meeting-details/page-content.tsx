@@ -1,8 +1,7 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Summary, SummaryResponse } from '@/types';
-import { useSidebar } from '@/components/Sidebar/SidebarProvider';
 import Analytics from '@/lib/analytics';
 import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
@@ -59,9 +58,6 @@ export default function PageContent({
   const [summaryResponse] = useState<SummaryResponse | null>(null);
   // Ref to store the modal open function from SummaryGeneratorButtonGroup
   const openModelSettingsRef = useRef<(() => void) | null>(null);
-
-  // Sidebar context
-  const { serverAddress } = useSidebar();
 
   // Get model config from ConfigContext
   const { modelConfig, setModelConfig } = useConfig();
