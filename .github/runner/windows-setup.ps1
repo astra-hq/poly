@@ -20,21 +20,32 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
 if (-not $isAdmin) { Write-Warn "Must run as Administrator"; exit 1 }
 Write-Step "Running as Administrator"
 
-# Install VS Build Tools if needed
+# Install VS Build Tools if needed (include ARM64 tools for ARM64 Windows runner)
 $vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vsInstalled = $false
+$vsArm64 = $false
 if (Test-Path $vsWhere) {
     $vsPath = & $vsWhere -products * -requires Microsoft.VisualStudio.Workload.VCTools -property installationPath 2>$null
     if ($vsPath) { $vsInstalled = $true }
+    $arm64Path = & $vsWhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath 2>$null
+    if ($arm64Path) { $vsArm64 = $true }
 }
 
-if (-not $vsInstalled) {
-    Write-Step "Installing Visual Studio Build Tools (C++ workload)..."
+if ($vsInstalled -and -not $vsArm64) {
+    Write-Step "VS Build Tools installed but missing ARM64 tools. Modifying..."
+    $vsInstaller = "$env:TEMP\vs_buildtools.exe"
+    if (-not (Test-Path $vsInstaller)) {
+        Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile $vsInstaller
+    }
+    $proc = Start-Process -FilePath $vsInstaller -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", "--installPath", "C:\Program Files\Microsoft Visual Studio\2022\BuildTools", "--add", "Microsoft.VisualStudio.Component.VC.Tools.ARM64" -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) { Write-Warn "VS ARM64 installer exited $($proc.ExitCode)" }
+} elseif (-not $vsInstalled) {
+    Write-Step "Installing Visual Studio Build Tools (C++ + ARM64 workload)..."
     $vsInstaller = "$env:TEMP\vs_buildtools.exe"
     Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_buildtools.exe" -OutFile $vsInstaller
-    $proc = Start-Process -FilePath $vsInstaller -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", "--installPath", "C:\Program Files\Microsoft Visual Studio\2022\BuildTools", "--add", "Microsoft.VisualStudio.Workload.VCTools", "--includeRecommended" -Wait -PassThru -NoNewWindow
+    $proc = Start-Process -FilePath $vsInstaller -ArgumentList "--quiet", "--wait", "--norestart", "--nocache", "--installPath", "C:\Program Files\Microsoft Visual Studio\2022\BuildTools", "--add", "Microsoft.VisualStudio.Workload.VCTools", "--add", "Microsoft.VisualStudio.Component.VC.Tools.ARM64", "--includeRecommended" -Wait -PassThru -NoNewWindow
     if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) { Write-Warn "VS installer exited $($proc.ExitCode)" }
-} else { Write-Step "VS Build Tools already installed" }
+} else { Write-Step "VS Build Tools (with ARM64) already installed" }
 
 # Install Git (provides Git Bash, needed for `shell: bash` in workflows)
 $gitBashPath = "C:\Program Files\Git\bin\bash.exe"
@@ -131,7 +142,7 @@ if (-not (Get-Command rustc -ea SilentlyContinue)) {
     & "$env:TEMP\rustup-init.exe" -y --default-toolchain stable --profile minimal
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
 } else { Write-Step "Rust already installed: $(rustc --version)" }
-rustup target add x86_64-pc-windows-msvc | Out-Null
+rustup target add aarch64-pc-windows-msvc | Out-Null
 
 # Install Node.js
 if (-not (Get-Command node -ea SilentlyContinue)) {
