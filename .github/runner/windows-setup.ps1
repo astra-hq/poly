@@ -47,6 +47,24 @@ if ($vsInstalled -and -not $vsArm64) {
     if ($proc.ExitCode -ne 0 -and $proc.ExitCode -ne 3010) { Write-Warn "VS installer exited $($proc.ExitCode)" }
 } else { Write-Step "VS Build Tools (with ARM64) already installed" }
 
+# Install LLVM/Clang (needed by bindgen via llama-cpp-2 for libclang.dll)
+$llvmPath = "C:\Program Files\LLVM\bin\clang.exe"
+if (-not (Test-Path $llvmPath)) {
+    Write-Step "Installing LLVM/Clang for bindgen..."
+    $llvmInstaller = "$env:TEMP\LLVM-19.1.7-win64.exe"
+    Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-woa64.exe" -OutFile $llvmInstaller
+    Start-Process -FilePath $llvmInstaller -ArgumentList "/S" -Wait -NoNewWindow
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+} else { Write-Step "LLVM/Clang already installed" }
+
+# Ensure LIBCLANG_PATH is set in machine environment
+$llvmBin = "C:\Program Files\LLVM\bin"
+$currentLibClangPath = [Environment]::GetEnvironmentVariable("LIBCLANG_PATH", "Machine")
+if (-not $currentLibClangPath -or $currentLibClangPath -ne $llvmBin) {
+    [Environment]::SetEnvironmentVariable("LIBCLANG_PATH", $llvmBin, "Machine")
+    Write-Step "LIBCLANG_PATH set to $llvmBin"
+}
+
 # Install Git (provides Git Bash, needed for `shell: bash` in workflows)
 $gitBashPath = "C:\Program Files\Git\bin\bash.exe"
 if (-not (Test-Path $gitBashPath)) {
