@@ -430,7 +430,7 @@ jobs:
         if: contains(inputs.platform, 'windows')
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          arch: arm64
 
       - name: Build llama-helper sidecar (Windows)
         if: contains(inputs.platform, 'windows')
@@ -445,7 +445,7 @@ jobs:
           }
 
           New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
-          Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe"
+          Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-aarch64-pc-windows-msvc.exe"
 
           Write-Host "Copied llama-helper to frontend/src-tauri/binaries/"
           Get-ChildItem "frontend/src-tauri/binaries/"

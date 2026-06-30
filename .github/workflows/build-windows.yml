@@ -169,7 +169,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: aarch64-pc-windows-msvc
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -242,6 +242,8 @@ jobs:
 
       - name: Set up MSVC developer command prompt
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
 
       - name: Build llama-helper sidecar
         shell: pwsh
@@ -253,7 +255,7 @@ jobs:
             exit $LASTEXITCODE
           }
           New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
-          Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-x86_64-pc-windows-msvc.exe"
+          Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-aarch64-pc-windows-msvc.exe"
           Write-Host "Copied llama-helper to frontend/src-tauri/binaries/"
 
       - name: Cache FFmpeg binary
@@ -271,13 +273,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: frontend
-          args: --target x86_64-pc-windows-msvc --features vulkan ${{ steps.build-profile.outputs.args }}
+          args: --target aarch64-pc-windows-msvc --features vulkan ${{ steps.build-profile.outputs.args }}
 
       - name: Verify build artifacts
         shell: bash
         run: |
           echo "## Build Artifacts"
-          find target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle -type f \( -name "*.msi" -o -name "*.exe" \) -exec ls -lh {} \;
+          find target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle -type f \( -name "*.msi" -o -name "*.exe" \) -exec ls -lh {} \;
 
       - name: Upload artifacts
         if: ${{ github.event.inputs.upload-artifacts == 'true' }}
@@ -285,10 +287,10 @@ jobs:
         with:
           name: poly-windows-x64-${{ steps.build-profile.outputs.profile }}-${{ steps.get-version.outputs.version }}
           path: |
-            target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi/*.msi
-            target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi/*.msi.sig
-            target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis/*.exe
-            target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis/*.exe.sig
+            target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi/*.msi
+            target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi/*.msi.sig
+            target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis/*.exe
+            target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis/*.exe.sig
           retention-days: 30
 
       - name: Generate build summary
@@ -300,23 +302,23 @@ jobs:
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| **Version** | ${{ steps.get-version.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Build Profile** | ${{ steps.build-profile.outputs.profile }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Target** | x86_64-pc-windows-msvc |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Target** | aarch64-pc-windows-msvc |" >> $GITHUB_STEP_SUMMARY
           echo "| **Signed** | ${{ (github.event.inputs.sign-build == 'true') && '✅ Yes' || '❌ No' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 📦 Build Artifacts" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| File Type | Count |" >> $GITHUB_STEP_SUMMARY
           echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| MSI Installers | $(find target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi -name "*.msi" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
-          echo "| MSI Signatures | $(find target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi -name "*.msi.sig" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
-          echo "| NSIS Installers | $(find target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis -name "*.exe" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
-          echo "| NSIS Signatures | $(find target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis -name "*.exe.sig" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| MSI Installers | $(find target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi -name "*.msi" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| MSI Signatures | $(find target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/msi -name "*.msi.sig" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| NSIS Installers | $(find target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis -name "*.exe" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
+          echo "| NSIS Signatures | $(find target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle/nsis -name "*.exe.sig" 2>/dev/null | wc -l) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "<details>" >> $GITHUB_STEP_SUMMARY
           echo "<summary>📋 File List</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          find target/x86_64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle -type f \( -name "*.msi" -o -name "*.exe" -o -name "*.sig" \) 2>/dev/null >> $GITHUB_STEP_SUMMARY
+          find target/aarch64-pc-windows-msvc/${{ steps.build-profile.outputs.profile }}/bundle -type f \( -name "*.msi" -o -name "*.exe" -o -name "*.sig" \) 2>/dev/null >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "</details>" >> $GITHUB_STEP_SUMMARY
