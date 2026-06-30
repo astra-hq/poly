@@ -5,18 +5,14 @@
         Poly
     </h1>
     <h2>Privacy-First AI Meeting Assistant</h2>
-
     <a href="https://github.com/astra-hq/poly/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/astra-hq/poly?color=brightgreen"></a>
     <a href="https://github.com/astra-hq/poly"><img src="https://img.shields.io/badge/License-MIT-blue" alt="License"></a>
     <a href="https://github.com/astra-hq/poly"><img src="https://img.shields.io/badge/Platform-macOS,_Windows,_Linux-white" alt="Platform"></a>
     <br>
-
     <h3>Open Source &middot; Privacy-First &middot; Local-First</h3>
-
     <p align="center">
     A privacy-first AI meeting assistant that captures, transcribes, and summarizes meetings entirely on your local machine. Built for data sovereignty — no cloud, no telemetry, no compromise on control.
     </p>
-
     <p align="center">
         <img src="docs/images/home.png" width="650" style="border-radius: 10px;" alt="Poly main interface showing transcription and meeting controls" />
     </p>
