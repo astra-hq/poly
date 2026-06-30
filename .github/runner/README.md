@@ -1,6 +1,6 @@
 # Self-Hosted GitHub Actions Runners for Poly
 
-This directory contains everything you need to set up self-hosted GitHub Actions runners on all three platforms: **Linux**, **macOS**, and **Windows**.
+This directory contains everything you need to set up self-hosted GitHub Actions runners on **Linux** and **macOS**.
 
 ## Why Self-Hosted Runners?
 
@@ -8,7 +8,6 @@ This directory contains everything you need to set up self-hosted GitHub Actions
 |---|---|---|
 | **Linux** | 2000 min/month (free) | Unlimited -- Docker on Mac Mini |
 | **macOS** | Paid only (expensive) | Free -- run directly on Mac Mini |
-| **Windows** | Paid only (free for public repos) | Unlimited -- Windows VM on Mac Mini |
 
 ## Files
 
@@ -17,7 +16,6 @@ This directory contains everything you need to set up self-hosted GitHub Actions
 | `Dockerfile` | 🐧 Linux | Docker container on Mac Mini |
 | `start.sh` | 🐧 Linux | Entrypoint for Docker container |
 | `macos-setup.sh` | 🍎 macOS | Direct install on Mac Mini |
-| `windows-setup.ps1` | 🪟 Windows | Direct install on Windows machine/VM |
 
 ---
 
@@ -169,75 +167,6 @@ du -sh /opt/actions-runner/_work
 
 ---
 
-# 🪟 Windows Runner (Direct Install)
-
-Runs on a Windows machine or VM. The Mac Mini can run Windows via:
-- **Parallels Desktop** (recommended -- seamless ARM64 Windows VM)
-- **UTM** (free, open-source QEMU-based)
-- **VMware Fusion** (free for personal use)
-
-Once you have a Windows VM running:
-
-## Automated Setup
-
-In PowerShell **as Administrator**:
-
-```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force
-.\github\runner\windows-setup.ps1 -Token "YOUR_TOKEN"
-```
-
-This installs:
-- Visual Studio 2022 Build Tools (C++ workload, ~5-10 min)
-- Rust (stable) + `aarch64-pc-windows-msvc` target (native ARM64)
-- Node.js 20 + pnpm 8
-- libvulkan-dev, mesa-vulkan-drivers (for `--features vulkan` builds)
-- GitHub Actions Runner v2.335.1 as a Windows service
-
-## Manual Registration
-
-If you want to install just the dependencies and register manually:
-
-```powershell
-.\github\runner\windows-setup.ps1 -InstallDepsOnly
-# Then:
-cd C:\actions-runner
-.\config.cmd --url https://github.com/astra-hq --token YOUR_TOKEN `
-  --labels self-hosted,windows,arm64,windows-latest
-.\svc.cmd install
-.\svc.cmd start
-```
-
-Get a token from: **https://github.com/organizations/astra-hq/settings/actions/runners/new** -> Windows -> ARM64
-
-## Pipeline Coverage
-
-| Pipeline | Label Match |
-|---|---|
-| **Build Windows** (`windows-latest`) | ✅ Add `windows-latest` label |
-| **Auto Release** (Windows matrix) | ✅ Picks up Windows builds |
-| **Build DevTest** (Windows) | ✅ |
-| **Build** (Windows) | ✅ |
-
-## Management
-
-```powershell
-# Check status
-Get-Service -Name "GitHubActionsRunner*"
-
-# Stop
-Stop-Service -Name "GitHubActionsRunner*"
-
-# Start
-Start-Service -Name "GitHubActionsRunner*"
-
-# Uninstall
-cd C:\actions-runner
-.\svc.cmd uninstall
-```
-
----
-
 # Labels Quick Reference
 
 Register with labels that match your workflows. A runner picks up a job when ALL the job's `runs-on` labels are present in the runner's labels.
@@ -247,11 +176,8 @@ Register with labels that match your workflows. A runner picks up a job when ALL
 | build-test.yml | `ubuntu-26.04` | `ubuntu-26.04` |
 | ci-check.yml | `ubuntu-latest` | `ubuntu-latest` |
 | build-macos.yml | `macos-latest` | `macos-latest` |
-| build-windows.yml | `windows-latest` | `windows-latest` |
 | release.yml -> macOS | `macos-latest` | `macos-latest` |
-| release.yml -> Windows | `windows-latest` | `windows-latest` |
 | auto-release.yml -> macOS | `macos-latest` | `macos-latest` |
-| auto-release.yml -> Windows | `windows-latest` | `windows-latest` |
 
 ## Recommended Labels Per Runner
 
@@ -265,11 +191,6 @@ self-hosted,linux,ubuntu-26.04,ubuntu-latest,ubuntu-24.04,arm64
 self-hosted,macos,arm64,macos-latest,macos-15
 ```
 
-**Windows runner (on VM):**
-```
-self-hosted,windows,arm64,windows-latest,windows-2022
-```
-
 ---
 
 # Architecture Overview
@@ -279,11 +200,8 @@ Mac Mini (Apple Silicon)
  ├── Docker Container ─── Linux Runner (ubuntu-26.04)
  │     Handles: Build Test, CI Check, Build Linux
  │
- ├── macOS (direct) ─── macOS Runner (arm64)
- │     Handles: Build macOS, Auto Release (macOS)
- │
- └── Windows VM ─── Windows Runner (ARM64)
-       Handles: Build Windows, Auto Release (Windows)
+ └── macOS (direct) ─── macOS Runner (arm64)
+       Handles: Build macOS, Auto Release (macOS)
 ```
 
 This setup covers **all pipelines** with zero GitHub-hosted runner minutes consumed.
