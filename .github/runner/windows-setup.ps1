@@ -45,7 +45,7 @@ if (-not (Test-Path $gitBashPath)) {
 } else { Write-Step "Git Bash already installed" }
 
 # Always ensure Git directories are on machine PATH
-$gitPaths = @("C:\Program Files\Git\cmd", "C:\Program Files\Git\bin", "C:\Program Files\Git\usr\bin")
+$gitPaths = @("C:\Program Files\Git\cmd", "C:\Program Files\Git\bin")
 $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $changed = $false
 foreach ($p in $gitPaths) {
@@ -75,12 +75,54 @@ if (Get-Service "GitHubActionsRunner*" -ErrorAction SilentlyContinue) {
 }
 
 # Install 7-Zip (needed by humbletim/install-vulkan-sdk action)
-if (-not (Get-Command 7z -ea SilentlyContinue)) {
+$7zFound = $false
+if (Get-Command where.exe -ea SilentlyContinue) {
+    $7zPath = & where.exe 7z.exe 2>$null
+    if ($LASTEXITCODE -eq 0 -and $7zPath) { $7zFound = $true }
+}
+if (-not $7zFound) {
     Write-Step "Installing 7-Zip..."
-    Invoke-WebRequest -Uri "https://www.7-zip.org/a/7z2409-x64.msi" -OutFile "$env:TEMP\7z.msi"
-    Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "$env:TEMP\7z.msi", "/quiet", "/norestart" -Wait
+
+    # Try winget first (comes with modern Windows)
+    $wingetInstalled = $null -ne (Get-Command winget -ea SilentlyContinue)
+    if ($wingetInstalled) {
+        Write-Step "  Using winget..."
+        winget install 7zip.7zip --silent --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            # winget installs to C:\Program Files\7-Zip but doesn't update PATH
+            $sevenZipPath = "C:\Program Files\7-Zip"
+            if (Test-Path "$sevenZipPath\7z.exe") {
+                $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+                if ($machinePath -notlike "*$sevenZipPath*") {
+                    [Environment]::SetEnvironmentVariable("Path", "$machinePath;$sevenZipPath", "Machine")
+                }
+            }
+        } else {
+            Write-Warn "  winget install failed (exit $LASTEXITCODE), falling back to MSI..."
+            $wingetInstalled = $false
+        }
+    }
+
+    # Fallback: MSI download
+    if (-not $wingetInstalled) {
+        Invoke-WebRequest -Uri "https://www.7-zip.org/a/7z2409-x64.msi" -OutFile "$env:TEMP\7z.msi"
+        Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "$env:TEMP\7z.msi", "/quiet", "/norestart" -Wait
+    }
+
+    # Refresh PATH so 7z is available for the rest of the script
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+    Write-Step "7-Zip installed successfully"
 } else { Write-Step "7-Zip already installed" }
+
+# Install PowerShell 7 (needed by shell: pwsh steps in workflows)
+if (-not (Get-Command pwsh -ea SilentlyContinue)) {
+    Write-Step "Installing PowerShell 7..."
+    $url = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/PowerShell-7.4.6-win-x64.msi"
+    Invoke-WebRequest -Uri $url -OutFile "$env:TEMP\pwsh.msi" -UseBasicParsing
+    Start-Process -FilePath "msiexec.exe" -ArgumentList "/i", "$env:TEMP\pwsh.msi", "/quiet", "/norestart" -Wait
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+    Write-Step "PowerShell 7 installed"
+} else { Write-Step "PowerShell 7 already installed: $(pwsh --version)" }
 
 # Install Rust
 if (-not (Get-Command rustc -ea SilentlyContinue)) {
