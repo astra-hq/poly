@@ -247,6 +247,8 @@ jobs:
 
       - name: Build llama-helper sidecar
         shell: pwsh
+        env:
+          LIBCLANG_PATH: "C:\Program Files\LLVM\bin"
         run: |
           Write-Host "Building llama-helper sidecar (CPU-only)..."
           cargo build --release -p llama-helper
