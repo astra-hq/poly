@@ -139,176 +139,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev
 
-      - name: Install Vulkan SDK (Windows)
-        if: contains(inputs.platform, 'windows') && !env.VULKAN_SDK
-        uses: humbletim/install-vulkan-sdk@v1.2
-        with:
-          version: 1.4.309.0
-          cache: true
-
-      - name: Verify and Configure Vulkan SDK (Windows)
-        if: contains(inputs.platform, 'windows')
-        shell: pwsh
-        run: |
-          Write-Host "=== Vulkan SDK Configuration ==="
-
-          $vulkanSdk = $env:VULKAN_SDK
-          Write-Host "VULKAN_SDK: $vulkanSdk"
-
-          if (-not $vulkanSdk -or -not (Test-Path $vulkanSdk)) {
-            Write-Error "VULKAN_SDK not set or path does not exist"
-            exit 1
-          }
-
-          $binDir = Join-Path $vulkanSdk "Bin"
-          $libDir = Join-Path $vulkanSdk "Lib"
-          $includeDir = Join-Path $vulkanSdk "Include"
-
-          Write-Host "Directory structure:"
-          Write-Host "  Bin: $(if (Test-Path $binDir) { 'EXISTS' } else { 'MISSING' })"
-          Write-Host "  Lib: $(if (Test-Path $libDir) { 'EXISTS' } else { 'MISSING' })"
-          Write-Host "  Include: $(if (Test-Path $includeDir) { 'EXISTS' } else { 'MISSING' })"
-
-          $glslc = Join-Path $binDir "glslc.exe"
-          $glslangValidator = Join-Path $binDir "glslangValidator.exe"
-
-          Write-Host "Shader compilers:"
-          Write-Host "  glslc: $(if (Test-Path $glslc) { 'FOUND' } else { 'MISSING' })"
-          Write-Host "  glslangValidator: $(if (Test-Path $glslangValidator) { 'FOUND' } else { 'MISSING' })"
-
-          $currentPath = $env:PATH
-          if (-not $currentPath.Contains($binDir)) {
-            Write-Host "Adding Vulkan SDK Bin to PATH..."
-            "PATH=$binDir;$currentPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          }
-
-          Write-Host "Setting CMake-related environment variables..."
-          "Vulkan_LIBRARY=$libDir\vulkan-1.lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "Vulkan_INCLUDE_DIR=$includeDir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "VK_SDK_PATH=$vulkanSdk" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          Write-Host "=== Vulkan SDK Configuration Complete ==="
-
-      - name: Copy Vulkan runtime for bundling (Windows)
-        if: contains(inputs.platform, 'windows')
-        shell: pwsh
-        run: |
-          $runtimeDir = "frontend/src-tauri/vulkan-runtime"
-          if (!(Test-Path $runtimeDir)) {
-            New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-          }
-
-          $vulkanSdk = $env:VULKAN_SDK
-          Write-Host "VULKAN_SDK env: $vulkanSdk"
-
-          $possiblePaths = @(
-            "$vulkanSdk\Bin\vulkan-1.dll",
-            "$vulkanSdk\runtime\x64\vulkan-1.dll",
-            "C:\VulkanSDK\1.4.309.0\Bin\vulkan-1.dll",
-            "C:\VulkanSDK\1.4.309.0\runtime\x64\vulkan-1.dll",
-            "$env:ProgramFiles\VulkanSDK\Bin\vulkan-1.dll",
-            "$env:SystemRoot\System32\vulkan-1.dll"
-          )
-
-          $vulkanDll = $null
-          foreach ($path in $possiblePaths) {
-            Write-Host "Checking: $path"
-            if (Test-Path $path) {
-              $vulkanDll = $path
-              Write-Host "Found vulkan-1.dll at: $path"
-              break
-            }
-          }
-
-          if ($vulkanDll) {
-            Copy-Item $vulkanDll -Destination $runtimeDir
-            Write-Host "Copied vulkan-1.dll to $runtimeDir"
-          } else {
-            Write-Host "Searching for vulkan-1.dll on system..."
-            $found = Get-ChildItem -Path "C:\" -Filter "vulkan-1.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) {
-              Write-Host "Found at: $($found.FullName)"
-              Copy-Item $found.FullName -Destination $runtimeDir
-            } else {
-              Write-Warning "vulkan-1.dll not found - Vulkan apps may not work without it"
-              Write-Host "System will use the user's installed Vulkan runtime"
-            }
-          }
-
-          Write-Host "Contents of vulkan-runtime directory:"
-          Get-ChildItem $runtimeDir -ErrorAction SilentlyContinue
-
-      # ----- Windows signing setup (only when sign-binaries is true) -----
-      # The sign-windows.ps1 script handles missing secrets gracefully
-      - name: Setup DigiCert Environment
-        if: contains(inputs.platform, 'windows') && inputs.sign-binaries
-        shell: pwsh
-        run: |
-          if (-not "${{ secrets.SM_HOST }}") {
-            Write-Host "DigiCert SM_HOST not set — skipping signing setup"
-            exit 0
-          }
-          "SM_HOST=${{ secrets.SM_HOST }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SM_API_KEY=${{ secrets.SM_API_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SM_CODE_SIGNING_CERT_SHA1_HASH=${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          $certPath = "D:\Certificate_pkcs12.p12"
-          $base64String = "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}"
-          if (-not $base64String) {
-            Write-Host "SM_CLIENT_CERT_FILE_B64 not set — skipping certificate setup"
-            exit 0
-          }
-          $certBytes = [System.Convert]::FromBase64String($base64String)
-          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-
-          if (Test-Path $certPath) {
-            $certFile = Get-Item $certPath
-            Write-Host "Certificate file created: $certPath"
-            Write-Host "  Size: $($certFile.Length) bytes"
-            try {
-              $testCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certPath, "${{ secrets.SM_CLIENT_CERT_PASSWORD }}")
-              Write-Host "  ✓ Certificate file is valid PKCS12 format"
-            } catch {
-              Write-Warning "⚠ Certificate validation failed: $($_.Exception.Message)"
-            }
-          }
-
-          "SM_CLIENT_CERT_FILE=D:\Certificate_pkcs12.p12" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Setup DigiCert KeyLocker
-        if: contains(inputs.platform, 'windows') && inputs.sign-binaries
-        uses: digicert/ssm-code-signing@v1.1.1
-
-      - name: Sync Certificate to Windows Certificate Store
-        if: contains(inputs.platform, 'windows') && inputs.sign-binaries
-        shell: pwsh
-        run: |
-          if (-not "$env:SM_HOST") {
-            Write-Host "SM_HOST not set — skipping certificate sync"
-            exit 0
-          }
-
-          Write-Host "=== Syncing certificate to Windows Certificate Store ==="
-          $keypairOutput = smctl keypair ls 2>&1 | Out-String
-          Write-Host $keypairOutput
-          $aliasMatch = [regex]::Match($keypairOutput, 'key_\d+')
-          if (-not $aliasMatch.Success) {
-            Write-Error "Could not find keypair alias in smctl output"
-            exit 1
-          }
-          $keypairAlias = $aliasMatch.Value
-          Write-Host "Found keypair alias: $keypairAlias"
-
-          $certsyncOutput = smctl windows certsync --keypair-alias $keypairAlias 2>&1
-          Write-Host $certsyncOutput
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Certificate sync FAILED"
-            exit 1
-          }
-
-          "DIGICERT_KEYPAIR_ALIAS=$keypairAlias" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "DIGICERT_KEYPAIR_ALIAS=$keypairAlias"
 
       - name: Prepare Vulkan SDK for Ubuntu 24.04
         if: contains(inputs.platform, 'ubuntu-24.04')
@@ -334,7 +164,7 @@ jobs:
           pnpm install
 
       - name: Rustup install target
-        if: ${{ inputs.target != '' && !contains(inputs.target, 'unknown-linux-gnu') && !contains(inputs.target, 'pc-windows-msvc') }}
+        if: ${{ inputs.target != '' && !contains(inputs.target, 'unknown-linux-gnu') }}
         run: rustup target add ${{ inputs.target }}
 
       # ----- macOS signing setup (only when sign-binaries is true) -----
@@ -410,11 +240,6 @@ jobs:
         run: |
           FEATURES=""
 
-          if [[ "${{ inputs.platform }}" == *"windows"* ]]; then
-            FEATURES="--features vulkan"
-            echo "Windows build with Vulkan GPU acceleration"
-          fi
-
           if [[ "${{ inputs.platform }}" == *"ubuntu"* ]]; then
             FEATURES="--features openblas"
             echo "Linux build with OpenBLAS CPU optimization"
@@ -426,34 +251,7 @@ jobs:
 
           echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
 
-      - name: Set up MSVC developer command prompt (Windows)
-        if: contains(inputs.platform, 'windows')
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: arm64
-
-      - name: Build llama-helper sidecar (Windows)
-        if: contains(inputs.platform, 'windows')
-        shell: pwsh
-        env:
-          LIBCLANG_PATH: "C:\\Program Files\\LLVM\\bin"
-        run: |
-          Write-Host "Building llama-helper sidecar (CPU-only)..."
-          cargo build --release -p llama-helper
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to build llama-helper"
-            exit $LASTEXITCODE
-          }
-
-          New-Item -ItemType Directory -Force -Path "frontend/src-tauri/binaries" | Out-Null
-          Copy-Item "target/release/llama-helper.exe" -Destination "frontend/src-tauri/binaries/llama-helper-aarch64-pc-windows-msvc.exe"
-
-          Write-Host "Copied llama-helper to frontend/src-tauri/binaries/"
-          Get-ChildItem "frontend/src-tauri/binaries/"
-
-      - name: Build llama-helper sidecar (macOS/Linux)
-        if: "!contains(inputs.platform, 'windows')"
+      - name: Build llama-helper sidecar
         shell: bash
         run: |
           echo "Building llama-helper sidecar..."
@@ -579,14 +377,4 @@ jobs:
             target/${{ steps.build-profile.outputs.profile }}/bundle/rpm/*.rpm
           retention-days: 30
 
-      - name: Upload artifacts (Windows)
-        if: inputs.upload-artifacts && contains(inputs.platform, 'windows')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.asset-prefix }}-${{ inputs.target }}
-          path: |
-            target/${{ steps.build-profile.outputs.profile }}/bundle/msi/*.msi
-            target/${{ steps.build-profile.outputs.profile }}/bundle/msi/*.msi.sig
-            target/${{ steps.build-profile.outputs.profile }}/bundle/nsis/*.exe
-            target/${{ steps.build-profile.outputs.profile }}/bundle/nsis/*.exe.sig
-          retention-days: 30
+
