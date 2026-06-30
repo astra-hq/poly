@@ -17,6 +17,7 @@ ENV NODE_VERSION=22
 ENV PNPM_VERSION=8
 ENV RUST_VERSION=stable
 ENV RUNNER_VERSION=2.335.1
+ENV CARGO_BUILD_JOBS=2
 
 # Prevent tzdata from asking for timezone
 ENV TZ=UTC
@@ -55,6 +56,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     curl \
     git \
+    gh \
+    sudo \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
@@ -108,7 +111,8 @@ WORKDIR /
 RUN useradd -m -u 1001 -s /bin/bash runner \
     && chown -R runner:runner /actions-runner \
     && mkdir -p /_work \
-    && chown runner:runner /_work
+    && chown runner:runner /_work \
+    && echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/runner
 
 # Copy Rust setup for the runner user
 RUN cp -r /root/.cargo /home/runner/.cargo \

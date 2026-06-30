@@ -34,7 +34,7 @@ env:
 jobs:
   build-macos:
     name: Build macOS (Apple Silicon)
-    runs-on: ["self-hosted", "macos", "macos-latest"]
+    runs-on: ["self-hosted", "macOS"]
     permissions:
       contents: write
 

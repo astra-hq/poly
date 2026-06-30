@@ -3,9 +3,9 @@
 # 
 # Environment variables:
 #   GITHUB_URL     - GitHub instance URL (default: https://github.com/astra-hq)
-#   GITHUB_TOKEN   - Runner registration token (required)
+#   GITHUB_TOKEN   - Runner registration token (only needed for first registration)
 #   RUNNER_NAME    - Name for this runner (default: poly-runner-$(hostname))
-#   RUNNER_LABELS  - Comma-separated labels (default: self-hosted,linux,ubuntu-22.04,x86_64)
+#   RUNNER_LABELS  - Comma-separated labels (default: self-hosted,linux,ubuntu-latest,arm64)
 #   RUNNER_GROUP   - Runner group name (optional)
 #   RUNNER_WORKDIR - Work directory (default: /_work)
 
@@ -13,23 +13,24 @@ set -e
 
 GITHUB_URL="${GITHUB_URL:-https://github.com/astra-hq}"
 RUNNER_NAME="${RUNNER_NAME:-poly-runner-$(hostname)}"
-RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,ubuntu-22.04,x86_64}"
+RUNNER_LABELS="${RUNNER_LABELS:-self-hosted,linux,ubuntu-latest,arm64}"
 RUNNER_WORKDIR="${RUNNER_WORKDIR:-/_work}"
-
-# Check for required token
-if [ -z "$GITHUB_TOKEN" ]; then
-    echo "ERROR: GITHUB_TOKEN environment variable is required"
-    echo ""
-    echo "Get a runner token from:"
-    echo "  https://github.com/organizations/astra-hq/settings/actions/runners/new"
-    echo ""
-    echo "Then run with:"
-    echo "  docker run -e GITHUB_TOKEN=your_token_here ..."
-    exit 1
-fi
 
 # Configure the runner if not already configured
 if [ ! -f .runner ]; then
+    if [ -z "$GITHUB_TOKEN" ]; then
+        echo "ERROR: Runner not configured and GITHUB_TOKEN is not set."
+        echo ""
+        echo "First-time setup requires a token. Get one from:"
+        echo "  https://github.com/organizations/astra-hq/settings/actions/runners/new"
+        echo ""
+        echo "Then run with:"
+        echo "  docker run -e GITHUB_TOKEN=your_token_here ..."
+        echo ""
+        echo "On subsequent restarts, the token is not needed."
+        exit 1
+    fi
+
     echo "=== Configuring GitHub Actions Runner ==="
     echo "URL:         $GITHUB_URL"
     echo "Name:        $RUNNER_NAME"
@@ -47,6 +48,8 @@ if [ ! -f .runner ]; then
         --replace
 
     echo "=== Runner configured ==="
+else
+    echo "=== Runner already configured, starting existing runner ==="
 fi
 
 # Trap SIGINT and SIGTERM for clean shutdown

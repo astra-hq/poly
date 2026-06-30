@@ -37,10 +37,6 @@ jobs:
             platform-name: macOS
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin
-          - platform: windows-latest
-            platform-name: Windows
-            target: x86_64-pc-windows-msvc
-            args: --target x86_64-pc-windows-msvc
           - platform: ubuntu-latest
             platform-name: Linux (Ubuntu Latest)
             target: x86_64-unknown-linux-gnu
@@ -137,13 +133,6 @@ jobs:
           sudo apt install vulkan-sdk -y
           sudo apt-get install -y mesa-vulkan-drivers
 
-      - name: Install Vulkan SDK (Windows)
-        if: contains(matrix.platform, 'windows')
-        uses: humbletim/install-vulkan-sdk@v1.2
-        with:
-          version: 1.4.309.0
-          cache: true
-
       - name: Install frontend dependencies
         run: |
           cd frontend
@@ -184,99 +173,12 @@ jobs:
           echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
           echo "Certificate imported: $CERT_ID"
 
-      # Windows signing setup (conditional)
-      - name: Setup DigiCert Environment
-        id: setup-digicert-env
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true'
-        shell: pwsh
-        run: |
-          $smHost = "${{ secrets.SM_HOST }}"
-          if (-not $smHost) {
-            Write-Host "SM_HOST not set — skipping signing setup"
-            "digicert-configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            exit 0
-          }
-
-          "SM_HOST=${{ secrets.SM_HOST }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SM_API_KEY=${{ secrets.SM_API_KEY }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SM_CLIENT_CERT_PASSWORD=${{ secrets.SM_CLIENT_CERT_PASSWORD }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "SM_CODE_SIGNING_CERT_SHA1_HASH=${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-          $certPath = "D:\Certificate_pkcs12.p12"
-          $base64String = "${{ secrets.SM_CLIENT_CERT_FILE_B64 }}"
-          if (-not $base64String) {
-            Write-Host "SM_CLIENT_CERT_FILE_B64 not set — skipping certificate setup"
-            "digicert-configured=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-            exit 0
-          }
-          $certBytes = [System.Convert]::FromBase64String($base64String)
-          [System.IO.File]::WriteAllBytes($certPath, $certBytes)
-
-          if (Test-Path $certPath) {
-            $certFile = Get-Item $certPath
-            Write-Host "Certificate file created: $certPath"
-            Write-Host "  Size: $($certFile.Length) bytes"
-            try {
-              $testCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($certPath, "${{ secrets.SM_CLIENT_CERT_PASSWORD }}")
-              Write-Host "  Certificate file is valid PKCS12 format"
-            } catch {
-              Write-Warning "Certificate validation failed: $($_.Exception.Message)"
-            }
-          } else {
-            Write-Error "Certificate file was not created at $certPath"
-            exit 1
-          }
-
-          "SM_CLIENT_CERT_FILE=D:\Certificate_pkcs12.p12" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "digicert-configured=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
-      - name: Setup DigiCert KeyLocker
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
-        uses: digicert/ssm-code-signing@v1.1.1
-
-      - name: Verify DigiCert Setup
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
-        shell: pwsh
-        run: |
-          smctl --version
-          smctl keypair ls
-          smctl healthcheck
-
-      - name: Sync Certificate to Windows Certificate Store
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
-        shell: pwsh
-        run: |
-          Write-Host "=== Syncing certificate to Windows Certificate Store ==="
-          $keypairOutput = smctl keypair ls 2>&1 | Out-String
-          Write-Host $keypairOutput
-          $aliasMatch = [regex]::Match($keypairOutput, 'key_\d+')
-          if (-not $aliasMatch.Success) {
-            Write-Error "Could not find keypair alias in smctl output"
-            exit 1
-          }
-          $keypairAlias = $aliasMatch.Value
-          Write-Host "Found keypair alias: $keypairAlias"
-
-          $certsyncOutput = smctl windows certsync --keypair-alias $keypairAlias 2>&1
-          Write-Host $certsyncOutput
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Certificate sync FAILED"
-            exit 1
-          }
-
-          "DIGICERT_KEYPAIR_ALIAS=$keypairAlias" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
       # Determine build features for acceleration
       - name: Determine build features
         id: build-features
         shell: bash
         run: |
           FEATURES=""
-
-          if [[ "${{ matrix.platform }}" == *"windows"* ]]; then
-            FEATURES="--features vulkan"
-            echo "Windows build with Vulkan GPU acceleration"
-          fi
 
           if [[ "${{ matrix.platform }}" == *"ubuntu"* ]]; then
             FEATURES="--features openblas"
@@ -297,24 +199,16 @@ jobs:
           if [[ "${{ matrix.platform }}" == *"macos"* ]]; then
             LLAMA_FEATURES="--features metal"
             echo "Using Metal GPU acceleration for macOS"
-          elif [[ "${{ matrix.platform }}" == *"windows"* ]]; then
-            LLAMA_FEATURES="--features vulkan"
-            echo "Using Vulkan GPU acceleration for Windows"
           else
             echo "Using CPU-only mode for Linux"
           fi
 
           cargo build --release -p llama-helper $LLAMA_FEATURES
 
-          EXT=""
-          if [[ "${{ matrix.platform }}" == *"windows"* ]]; then
-            EXT=".exe"
-          fi
-
           mkdir -p frontend/src-tauri/binaries
-          cp target/release/llama-helper${EXT} frontend/src-tauri/binaries/llama-helper-${{ matrix.target }}${EXT}
+          cp target/release/llama-helper frontend/src-tauri/binaries/llama-helper-${{ matrix.target }}
 
-          echo "Copied llama-helper to frontend/src-tauri/binaries/llama-helper-${{ matrix.target }}${EXT}"
+          echo "Copied llama-helper to frontend/src-tauri/binaries/llama-helper-${{ matrix.target }}"
           ls -la frontend/src-tauri/binaries/
 
       # Build step (with code signing - only if sign-build AND secrets exist)
@@ -393,16 +287,6 @@ jobs:
             codesign --verify --deep --strict "$APP_PATH" && echo "Code signature is valid"
           fi
 
-      - name: Verify code signing (Windows)
-        if: contains(matrix.platform, 'windows') && github.event.inputs.sign-build == 'true' && steps.setup-digicert-env.outputs.digicert-configured == 'true'
-        shell: pwsh
-        run: |
-          $msiPath = Get-ChildItem -Path "target/x86_64-pc-windows-msvc/release/bundle/msi" -Filter "*.msi" | Select-Object -First 1 -ExpandProperty FullName
-          if ($msiPath) {
-            Write-Host "Verifying MSI signature: $msiPath"
-            Get-AuthenticodeSignature -FilePath "$msiPath" | Format-List
-          }
-
       # Upload artifacts
       - name: Upload artifacts
         if: github.event.inputs.upload-artifacts == 'true'
@@ -414,10 +298,6 @@ jobs:
             target/aarch64-apple-darwin/release/bundle/macos/*.app
             target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
             target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
-            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.sig
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe.sig
             target/x86_64-unknown-linux-gnu/release/bundle/deb/*.deb
             target/x86_64-unknown-linux-gnu/release/bundle/appimage/*.AppImage
             target/x86_64-unknown-linux-gnu/release/bundle/rpm/*.rpm

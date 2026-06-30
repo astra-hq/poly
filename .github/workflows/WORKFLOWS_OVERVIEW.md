@@ -11,7 +11,7 @@ This document provides a quick overview of all available CI/CD workflows in this
 
 **Key Features:**
 - Signing OFF by default (no Apple/DigiCert secrets needed)
-- All platforms in parallel (macOS, Windows, Ubuntu 22.04, Ubuntu 24.04)
+- All platforms in parallel (macOS, Ubuntu 22.04, Ubuntu 24.04)
 - 14-day artifact retention
 - Optional signing via workflow dispatch input
 
@@ -36,22 +36,7 @@ This document provides a quick overview of all available CI/CD workflows in this
 
 ---
 
-### 3. **build-windows.yml** — Windows Standalone Build
-**Purpose:** Build and test specifically for Windows x64.
-
-**Key Features:**
-- Debug or release builds
-- DigiCert KeyLocker signing — conditional on secrets being available
-- Vulkan GPU acceleration
-- MSI + NSIS installers
-
-**Use When:**
-- Windows-specific development
-- Testing Vulkan GPU acceleration
-
----
-
-### 4. **build-linux.yml** — Linux Standalone Build
+### 3. **build-linux.yml** — Linux Standalone Build
 **Purpose:** Build and test for Linux distributions.
 
 **Key Features:**
@@ -99,7 +84,7 @@ This document provides a quick overview of all available CI/CD workflows in this
 - Creates a GitHub Release (draft)
 - Version tags from `tauri.conf.json`
 - Auto-incrementing: if tag exists, appends `.1`, `.2`, etc.
-- Uploads macOS + Windows release assets
+- Uploads macOS release assets
 - Auto-generates `latest.json` for Tauri updater
 - **Linux excluded** from production releases
 
@@ -137,7 +122,6 @@ This document provides a quick overview of all available CI/CD workflows in this
 |---|---|
 | "I'm developing a new feature..." | `build-devtest.yml` |
 | "I need to test macOS-specific code..." | `build-macos.yml` |
-| "I need to test Windows-specific code..." | `build-windows.yml` |
 | "I need to test Linux packages..." | `build-linux.yml` |
 | "I need all-platforms test..." | `build-test.yml` |
 | "I'm ready to release..." | `release.yml` |
@@ -148,14 +132,11 @@ This document provides a quick overview of all available CI/CD workflows in this
 |---|---|---|
 | `build-devtest.yml` | OFF | Set `sign-build` to `true` when running |
 | `build-macos.yml` | OFF | Set `sign-build` to `true` when running |
-| `build-windows.yml` | OFF | Set `sign-build` to `true` when running |
 | `build-linux.yml` | OFF | N/A (Linux doesn't support binary signing in this context) |
 | `build-test.yml` | OFF | Set `sign-build` to `true` when running |
 | `release.yml` | ON | Signing always required for production releases |
 
 **Note on macOS signing:** If `APPLE_CERTIFICATE`, `APPLE_ID`, and related secrets are not set in the repository, the signing steps are automatically skipped — the build still succeeds, just without code signing.
-
-**Note on Windows signing:** If `SM_HOST`, `SM_API_KEY`, and related DigiCert secrets are not set, the signing steps are automatically skipped — the build still succeeds, just without code signing.
 
 ## Required Secrets
 
@@ -172,13 +153,6 @@ This document provides a quick overview of all available CI/CD workflows in this
 - `APPLE_TEAM_ID` — Team ID
 - `KEYCHAIN_PASSWORD` — Temporary keychain password
 
-### Windows Signing via DigiCert (optional)
-- `SM_HOST` — DigiCert host URL
-- `SM_API_KEY` — API key
-- `SM_CLIENT_CERT_FILE_B64` — Client certificate (base64)
-- `SM_CLIENT_CERT_PASSWORD` — Client certificate password
-- `SM_CODE_SIGNING_CERT_SHA1_HASH` — Certificate SHA1 hash
-
 ## Artifact Naming Convention
 
 ```
@@ -187,7 +161,6 @@ poly-{workflow}-{platform}-{target}-{version}
 
 Examples:
 - `poly-devtest-macOS-aarch64-apple-darwin-0.4.0`
-- `poly-test-windows-x86_64-pc-windows-msvc-0.4.0`
 - `poly-macos-aarch64-release-0.4.0`
 
 ## Performance Tips
@@ -199,10 +172,6 @@ Examples:
 5. **Run all-platform builds** (`build-test.yml`) before merging to main
 
 ## Troubleshooting
-
-### Build fails with version error (Windows MSI)
-- Ensure version in `tauri.conf.json` doesn't contain non-numeric pre-release identifiers
-- Use `0.4.0` not `0.4.0-beta`
 
 ### Signing skipped
 - If signing secrets aren't configured, signing is automatically skipped
@@ -227,7 +196,6 @@ build.yml (reusable)
 
 Standalone (don't use build.yml):
     |-- build-macos.yml
-    |-- build-windows.yml
     |-- build-linux.yml
     |-- build-devtest.yml
     |-- pr-main-check.yml (validation only)
