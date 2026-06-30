@@ -284,8 +284,10 @@ jobs:
       - name: Run unit tests
         if: inputs.run-tests
         shell: bash
+        env:
+          CARGO_BUILD_JOBS: 2
         run: |
-          cargo test --workspace -- --nocapture 2>&1
+          cargo test --workspace -- --nocapture 2>&1; echo "EXIT_CODE=$?"
         working-directory: frontend/src-tauri
 
       # Signed build — only when sign-binaries is true and macOS cert is available
