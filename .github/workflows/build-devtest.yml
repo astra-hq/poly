@@ -289,6 +289,12 @@ jobs:
 
           echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
 
+      - name: Set up MSVC developer command prompt (Windows)
+        if: contains(matrix.platform, 'windows')
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Build llama-helper sidecar
         shell: bash
         run: |
