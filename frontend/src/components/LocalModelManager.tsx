@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import { Download, RefreshCw, BadgeAlert, Trash2 } from 'lucide-react';
+import { CustomHFModelCard } from '@/components/CustomHFModelCard';
 import { toast } from 'sonner';
 import { formatSummaryModelSizeLabelFromMb } from '@/lib/onboarding-summary-model';
 
@@ -29,17 +30,17 @@ interface DownloadProgressInfo {
   speedMbps: number;
 }
 
-interface BuiltInModelManagerProps {
+interface LocalModelManagerProps {
   selectedModel: string;
   onModelSelect: (model: string) => void;
   layout?: 'inline' | 'dialog';
 }
 
-export function BuiltInModelManager({
+export function LocalModelManager({
   selectedModel,
   onModelSelect,
   layout = 'inline',
-}: BuiltInModelManagerProps) {
+}: LocalModelManagerProps) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [hasFetched, setHasFetched] = useState<boolean>(false);
@@ -50,7 +51,7 @@ export function BuiltInModelManager({
   const fetchModels = async () => {
     try {
       setIsLoading(true);
-      const data = (await invoke('builtin_ai_list_models')) as ModelInfo[];
+      const data = (await invoke('local_ai_list_models')) as ModelInfo[];
       setModels(data);
 
       // Auto-select first available model if none selected
@@ -61,7 +62,7 @@ export function BuiltInModelManager({
         }
       }
     } catch (error) {
-      console.error('Failed to fetch built-in AI models:', error);
+      console.error('Failed to fetch local AI models:', error);
       toast.error('Failed to load models');
     } finally {
       setIsLoading(false);
@@ -78,7 +79,7 @@ export function BuiltInModelManager({
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
-      unlisten = await listen('builtin-ai-download-progress', (event: any) => {
+      unlisten = await listen('local-ai-download-progress', (event: any) => {
         const { model, progress, downloaded_mb, total_mb, speed_mbps, status } = event.payload;
 
         // Update percentage progress
@@ -182,9 +183,6 @@ export function BuiltInModelManager({
                 : m
             )
           );
-
-          // Don't show error toast here - DownloadProgressToast already handles it
-          // Don't call fetchModels() - it would overwrite error status with not_downloaded
         }
       });
     };
@@ -203,7 +201,7 @@ export function BuiltInModelManager({
       // Optimistically add to downloadingModels for immediate UI feedback
       setDownloadingModels((prev) => new Set([...prev, modelName]));
 
-      await invoke('builtin_ai_download_model', { modelName });
+      await invoke('local_ai_download_model', { modelName });
     } catch (error) {
       console.error('Failed to download model:', error);
 
@@ -231,7 +229,7 @@ export function BuiltInModelManager({
 
   const cancelDownload = async (modelName: string) => {
     try {
-      await invoke('builtin_ai_cancel_download', { modelName });
+      await invoke('local_ai_cancel_download', { modelName });
       toast.info(`Download of ${modelName} cancelled`);
       setDownloadingModels((prev) => {
         const newSet = new Set(prev);
@@ -245,7 +243,7 @@ export function BuiltInModelManager({
 
   const deleteModel = async (modelName: string) => {
     try {
-      await invoke('builtin_ai_delete_model', { modelName });
+      await invoke('local_ai_delete_model', { modelName });
       toast.success(`Model ${modelName} deleted`);
       fetchModels();
     } catch (error) {
@@ -269,7 +267,7 @@ export function BuiltInModelManager({
     return (
       <Alert>
         <AlertDescription>
-          No models found. Download a model to get started with Built-in AI.
+          No models found. Download a model to get started with local AI.
         </AlertDescription>
       </Alert>
     );
@@ -278,7 +276,7 @@ export function BuiltInModelManager({
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h4 className="text-sm font-bold">Built-in AI Models</h4>
+        <h4 className="text-sm font-bold">Local AI Models</h4>
       </div>
 
       <div
@@ -486,6 +484,8 @@ export function BuiltInModelManager({
             </div>
           );
         })}
+
+        <CustomHFModelCard onModelAdded={fetchModels} />
       </div>
     </div>
   );

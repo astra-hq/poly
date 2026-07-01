@@ -117,7 +117,7 @@ export function PreferenceSettings() {
           await invoke('open_database_folder');
           break;
         case 'models':
-          await invoke('open_models_folder');
+          await invoke('open_parakeet_models_folder');
           break;
         case 'recordings':
           await invoke('open_recordings_folder');

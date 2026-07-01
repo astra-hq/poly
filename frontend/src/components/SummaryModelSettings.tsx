@@ -26,7 +26,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>('');
   const [selectedModel, setSelectedModel] = useState<string>('');
-  const [whisperModel, setWhisperModel] = useState<string>('large-v3');
   const [availableModels, setAvailableModels] = useState<ProviderModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -45,7 +44,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       if (data && data.provider) {
         setSelectedProviderId(data.provider);
         setSelectedModel(data.model || '');
-        setWhisperModel(data.whisperModel || 'large-v3');
       }
     } catch (error) {
       console.error('Failed to fetch model config:', error);
@@ -70,7 +68,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
         const cfg = event.payload;
         setSelectedProviderId(cfg.provider || '');
         setSelectedModel(cfg.model || '');
-        setWhisperModel(cfg.whisperModel || 'large-v3');
       });
       return unlisten;
     };
@@ -130,7 +127,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       await invoke('api_save_model_config', {
         provider: selectedProviderId,
         model: selectedModel,
-        whisperModel,
         apiKey: null,
         ollamaEndpoint: null,
       });
@@ -140,7 +136,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
       await emit('model-config-updated', {
         provider: selectedProviderId,
         model: selectedModel,
-        whisperModel,
       });
 
       toast.success('Model settings saved successfully');
@@ -256,27 +251,6 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
                 : availableModels.length === 0 && selectedProviderId
                   ? 'Could not fetch models. You can type a model name in the Providers tab.'
                   : 'Select a model from the available list.'}
-            </p>
-          </div>
-
-          {/* Whisper Model */}
-          <div>
-            <Label htmlFor="summary-whisper">Whisper Model</Label>
-            <Select
-              value={whisperModel}
-              onValueChange={setWhisperModel}
-            >
-              <SelectTrigger id="summary-whisper" className="mt-1 w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {['tiny', 'base', 'small', 'medium', 'large-v3'].map((m) => (
-                  <SelectItem key={m} value={m}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground mt-1">
-              Whisper model used for transcription before summarization.
             </p>
           </div>
 

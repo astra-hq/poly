@@ -3,7 +3,7 @@ import { useSidebar } from './Sidebar/SidebarProvider';
 import { invoke } from '@tauri-apps/api/core';
 import { Button } from '@/components/ui/button';
 import { useOllamaDownload } from '@/contexts/OllamaDownloadContext';
-import { BuiltInModelManager } from '@/components/BuiltInModelManager';
+import { LocalModelManager } from '@/components/LocalModelManager';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -31,9 +31,8 @@ import { cn, isOllamaNotInstalledError } from '@/lib/utils';
 import { toast } from 'sonner';
 
 export interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter' | 'builtin-ai';
+  provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter' | 'local';
   model: string;
-  whisperModel: string;
   apiKey?: string | null;
   ollamaEndpoint?: string | null;
 }
@@ -154,7 +153,7 @@ export function ModelSettingsModal({
   // Use global download context instead of local state
   const { isDownloading, getProgress, downloadingModels } = useOllamaDownload();
 
-  // Built-in AI models state
+  // Local AI models state
   const [builtinAiModels, setBuiltinAiModels] = useState<any[]>([]);
 
   // Cache models by endpoint to avoid refetching when reverting endpoint changes
@@ -214,7 +213,7 @@ export function ModelSettingsModal({
     groq: groqModels.length > 0 ? groqModels : GROQ_FALLBACK_MODELS,
     openai: openaiModels.length > 0 ? openaiModels : OPENAI_FALLBACK_MODELS,
     openrouter: openRouterModels.map((m) => m.id),
-    'builtin-ai': builtinAiModels.map((m) => m.name),
+    'local': builtinAiModels.map((m) => m.name),
   };
 
   const requiresApiKey =
@@ -440,7 +439,7 @@ export function ModelSettingsModal({
     if (builtinAiModels.length > 0) return; // Already loaded
 
     try {
-      const data = (await invoke('builtin_ai_list_models')) as any[];
+      const data = (await invoke('local_ai_list_models')) as any[];
       setBuiltinAiModels(data);
 
       // Auto-select first available model if none selected
@@ -451,8 +450,8 @@ export function ModelSettingsModal({
         }
       }
     } catch (err) {
-      console.error('Error loading Built-in AI models:', err);
-      toast.error('Failed to load Built-in AI models');
+      console.error('Error loading local AI models:', err);
+      toast.error('Failed to load local AI models');
     }
   };
 
@@ -734,8 +733,8 @@ export function ModelSettingsModal({
                   loadOpenRouterModels();
                 }
 
-                // Load Built-in AI models when selected
-                if (provider === 'builtin-ai') {
+                // Load local AI models when selected
+                if (provider === 'local') {
                   loadBuiltinAiModels();
                 }
               }}
@@ -744,7 +743,7 @@ export function ModelSettingsModal({
                 <SelectValue placeholder="Select provider" />
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto">
-                <SelectItem value="builtin-ai">Built-in AI (Offline, No API needed)</SelectItem>
+                <SelectItem value="local">Local (Offline, No API needed)</SelectItem>
                 <SelectItem value="claude">Claude</SelectItem>
                 <SelectItem value="groq">Groq</SelectItem>
                 <SelectItem value="ollama">Ollama</SelectItem>
@@ -753,7 +752,7 @@ export function ModelSettingsModal({
               </SelectContent>
             </Select>
 
-            {modelConfig.provider !== 'builtin-ai' && (
+            {modelConfig.provider !== 'local' && (
               <Popover open={modelComboboxOpen} onOpenChange={setModelComboboxOpen} modal={true}>
                 <PopoverTrigger asChild>
                   <Button
@@ -1101,10 +1100,10 @@ export function ModelSettingsModal({
           </div>
         )}
 
-        {/* Built-in AI Models Section */}
-        {modelConfig.provider === 'builtin-ai' && (
+        {/* Local AI Models Section */}
+        {modelConfig.provider === 'local' && (
           <div className="mt-6">
-            <BuiltInModelManager
+            <LocalModelManager
               selectedModel={modelConfig.model}
               layout={layout}
               onModelSelect={(model) =>

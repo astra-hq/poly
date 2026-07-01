@@ -187,24 +187,18 @@ export function KnowledgeGraphSettings() {
   // Setup wizard state
   type SetupPhase =
     | 'idle'
-    | 'phase1-preference'
     | 'phase1-checking'
-    | 'phase2-pull-bge'
-    | 'phase2-pull-llm'
-    | 'phase3-stack'
+    | 'phase2-stack'
     | 'complete'
     | 'error';
   const [setupPhase, setSetupPhase] = useState<SetupPhase>('idle');
-  const [setupPreference, setSetupPreference] = useState<'local' | 'external' | null>(null);
   const [setupDeps, setSetupDeps] = useState<{
     docker: { installed: boolean; version: string | null };
-    ollama: { installed: boolean; version: string | null };
     platform: string;
   } | null>(null);
   const [setupLogs, setSetupLogs] = useState<{ message: string; level: string; stage: string }[]>([]);
   const [setupResult, setSetupResult] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
-  const [pullingModel, setPullingModel] = useState<string | null>(null);
   const [selectedLlmModel, setSelectedLlmModel] = useState<string>('');
   const [setupProviderId, setSetupProviderId] = useState<string>('');
   const [setupProviderModels, setSetupProviderModels] = useState<ProviderModel[]>([]);
@@ -483,25 +477,25 @@ export function KnowledgeGraphSettings() {
 
   // ── Setup wizard ────────────────────────────────────────────────
 
-  /** Open the setup wizard at Phase 1 (preference picker). */
+  /** Open the setup wizard at Phase 1 (checking). */
   const handleOpenSetup = () => {
-    setSetupPhase('phase1-preference');
-    setSetupPreference(null);
+    setSetupPhase('phase1-checking');
     setSetupDeps(null);
     setSetupLogs([]);
     setSetupResult(null);
     setSetupError(null);
-    setPullingModel(null);
-    setSelectedLlmModel('qwen3:30b-a3b');
+    setSelectedLlmModel('');
     setSetupDialogOpen(true);
     setBackgroundSetup(false);
+    // Trigger dependency check immediately
+    triggerDependencyCheck();
   };
 
   /** Close the wizard dialog (but keep background operation running). */
   const handleCloseSetup = () => {
     setSetupDialogOpen(false);
     // If we're in an active phase, mark as background
-    if (setupPhase === 'phase2-pull-bge' || setupPhase === 'phase2-pull-llm' || setupPhase === 'phase3-stack') {
+    if (setupPhase === 'phase2-stack') {
       setBackgroundSetup(true);
     }
   };
@@ -509,20 +503,16 @@ export function KnowledgeGraphSettings() {
   /** Fully reset the wizard (cancel/complete). */
   const handleResetSetup = () => {
     setSetupPhase('idle');
-    setSetupPreference(null);
     setSetupDeps(null);
     setSetupLogs([]);
     setSetupResult(null);
     setSetupError(null);
-    setPullingModel(null);
     setSetupDialogOpen(false);
     setBackgroundSetup(false);
   };
 
-  /** Phase 1: Run dependency checks for the chosen preference. */
-  const handleCheckDeps = async () => {
-    if (!setupPreference) return;
-    setSetupPhase('phase1-checking');
+  /** Phase 1: Run dependency check (Docker only). */
+  const triggerDependencyCheck = async () => {
     setSetupLogs((prev) => [
       ...prev,
       { message: 'Checking system dependencies...', level: 'info', stage: 'phase1' },
@@ -530,7 +520,6 @@ export function KnowledgeGraphSettings() {
     try {
       const deps = await knowledgeGraphService.checkDeps();
       setSetupDeps(deps);
-      setSetupPhase('phase1-preference');
       setSetupLogs((prev) => [
         ...prev,
         {
@@ -538,20 +527,10 @@ export function KnowledgeGraphSettings() {
           level: deps.docker.installed ? 'success' : 'error',
           stage: 'phase1',
         },
-        ...(setupPreference === 'local'
-          ? [
-              {
-                message: `Ollama: ${deps.ollama.installed ? `✓ ${deps.ollama.version}` : '✗ not found'}`,
-                level: deps.ollama.installed ? 'success' : 'error',
-                stage: 'phase1',
-              } as const,
-            ]
-          : []),
       ]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setSetupError(msg);
-      setSetupPhase('phase1-preference');
       setSetupLogs((prev) => [
         ...prev,
         { message: `Dependency check failed: ${msg}`, level: 'error', stage: 'phase1' },
@@ -559,48 +538,9 @@ export function KnowledgeGraphSettings() {
     }
   };
 
-  /** Phase 2: Pull Ollama models (local only). */
-  const handlePullModels = async () => {
-    const setupProvider = providers.find((p) => p.id === setupProviderId);
-    const isOllama = setupProvider?.type === 'ollama';
-
-    // Always pull the embedding model (bge-m3) — it's always Ollama-based.
-    // Only pull the LLM extraction model if the chosen provider is Ollama.
-    const modelsToPull = isOllama
-      ? ['bge-m3:latest', selectedLlmModel]
-      : ['bge-m3:latest'];
-
-    for (const [i, model] of modelsToPull.entries()) {
-      setSetupPhase(i === 0 ? 'phase2-pull-bge' : 'phase2-pull-llm');
-      setPullingModel(model);
-      setSetupLogs((prev) => [
-        ...prev,
-        { message: `Pulling ${model}...`, level: 'info', stage: 'pull-model' },
-      ]);
-      try {
-        await knowledgeGraphService.pullModel(model);
-        setSetupLogs((prev) => [
-          ...prev,
-          { message: `✓ ${model} pulled successfully`, level: 'success', stage: 'pull-model' },
-        ]);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setSetupPhase('error');
-        setSetupError(`Failed to pull ${model}: ${msg}`);
-        setSetupLogs((prev) => [
-          ...prev,
-          { message: `✗ Pull failed: ${msg}`, level: 'error', stage: 'pull-model' },
-        ]);
-        return;
-      }
-    }
-    setPullingModel(null);
-    startStackPhase();
-  };
-
-  /** Phase 3: Start the docker compose stack. */
+  /** Phase 2: Start the docker compose stack. */
   const startStackPhase = () => {
-    setSetupPhase('phase3-stack');
+    setSetupPhase('phase2-stack');
     setSetupLogs((prev) => [
       ...prev,
       { message: 'Starting Docker stack...', level: 'info', stage: 'compose-up' },
@@ -633,13 +573,9 @@ export function KnowledgeGraphSettings() {
       });
   };
 
-  /** Entry point: start the full wizard from Phase 1. */
+  /** Entry point: start the stack. */
   const handleSetupStart = async () => {
-    if (setupPreference === 'local') {
-      await handlePullModels();
-    } else {
-      startStackPhase();
-    }
+    startStackPhase();
   };
 
   // ── Render ─────────────────────────────────────────────────────────
@@ -1239,19 +1175,16 @@ export function KnowledgeGraphSettings() {
           {setupPhase !== 'idle' && (
             <div className="flex items-center gap-2 mb-4 -mt-1">
               {[
-                { key: 'phase1', label: 'Preference' },
-                { key: 'phase2', label: 'Models' },
-                { key: 'phase3', label: 'Stack' },
+                { key: 'phase1', label: 'Docker' },
+                { key: 'phase2', label: 'Stack' },
               ].map((step, i) => {
                 const sp: string = setupPhase;
                 const active =
-                  (step.key === 'phase1' && (sp === 'phase1-preference' || sp === 'phase1-checking')) ||
-                  (step.key === 'phase2' && (sp === 'phase2-pull-bge' || sp === 'phase2-pull-llm')) ||
-                  (step.key === 'phase3' && (sp === 'phase3-stack' || sp === 'complete' || sp === 'error'));
+                  (step.key === 'phase1' && sp === 'phase1-checking') ||
+                  (step.key === 'phase2' && (sp === 'phase2-stack' || sp === 'complete' || sp === 'error'));
                 const done =
-                  (step.key === 'phase1' && sp !== 'phase1-preference' && sp !== 'phase1-checking') ||
-                  (step.key === 'phase2' && (sp === 'phase3-stack' || sp === 'complete' || sp === 'error')) ||
-                  (step.key === 'phase3' && (sp === 'complete' || sp === 'error'));
+                  (step.key === 'phase1' && sp !== 'phase1-checking') ||
+                  (step.key === 'phase2' && (sp === 'complete' || sp === 'error'));
                 return (
                   <div key={step.key} className="flex items-center gap-2">
                     {i > 0 && <div className="w-8 h-px bg-gray-300" />}
@@ -1272,97 +1205,21 @@ export function KnowledgeGraphSettings() {
             </div>
           )}
 
-          {/* ── Phase 1: Preference Picker ───────────────────────────── */}
-          {(setupPhase === 'phase1-preference' || setupPhase === 'phase1-checking') && (
+          {/* ── Phase 1: Docker check + provider/model selection ───── */}
+          {setupPhase === 'phase1-checking' && (
             <>
               <DialogHeader>
                 <DialogTitle>Set Up Local Knowledge Graph</DialogTitle>
                 <DialogDescription>
-                  Choose how you want to run LightRAG.
+                  Poly will start LightRAG and Neo4j via Docker, connected to your
+                  local AI engine through the bridge.
                 </DialogDescription>
               </DialogHeader>
-
-              <div className="grid grid-cols-2 gap-4 my-4">
-                {/* Local option */}
-                <button
-                  type="button"
-                  onClick={() => setSetupPreference('local')}
-                  className={`relative rounded-xl border-2 p-5 text-left transition-all ${
-                    setupPreference === 'local'
-                      ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
-                      : 'border-gray-200 hover:border-gray-300 bg-white'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                      setupPreference === 'local' ? 'border-blue-500' : 'border-gray-300'
-                    }`}>
-                      {setupPreference === 'local' && <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
-                    </div>
-                    <span className="font-semibold text-sm">Local (Ollama)</span>
-                  </div>
-                  <p className="text-xs text-gray-500 leading-relaxed">
-                    Uses Ollama for embeddings and LLM inference. Requires Docker and Ollama
-                    to be installed.
-                  </p>
-                  <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
-                    <Server className="w-3 h-3" />
-                    Docker + Ollama
-                  </div>
-                </button>
-
-                {/* External option */}
-                <button
-                  type="button"
-                  onClick={() => setSetupPreference('external')}
-                  className={`relative rounded-xl border-2 p-5 text-left transition-all ${
-                    setupPreference === 'external'
-                      ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
-                      : 'border-gray-200 hover:border-gray-300 bg-white'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                      setupPreference === 'external' ? 'border-blue-500' : 'border-gray-300'
-                    }`}>
-                      {setupPreference === 'external' && <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />}
-                    </div>
-                    <span className="font-semibold text-sm">External Provider</span>
-                  </div>
-                  <p className="text-xs text-gray-500 leading-relaxed">
-                    Point to an existing LightRAG instance. Docker is needed to run the
-                    supporting Neo4j + S3 stack.
-                  </p>
-                  <div className="mt-3 flex items-center gap-2 text-xs text-gray-500">
-                    <Globe className="w-3 h-3" />
-                    Docker only
-                  </div>
-                </button>
-              </div>
-
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={handleResetSetup}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={handleCheckDeps}
-                  disabled={!setupPreference || setupPhase === 'phase1-checking'}
-                >
-                  {setupPhase === 'phase1-checking' ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin mr-2" />
-                      Checking...
-                    </>
-                  ) : (
-                    'Check Dependencies'
-                  )}
-                </Button>
-              </DialogFooter>
 
               {/* Dependency results */}
               {setupDeps && (
                 <div className="mt-4 p-4 bg-gray-50 rounded-lg space-y-2">
-                  <p className="text-xs font-medium text-gray-600 mb-2">Dependency Check Results:</p>
+                  <p className="text-xs font-medium text-gray-600 mb-2">Dependency Check:</p>
                   <div className="flex items-center gap-2 text-sm">
                     {setupDeps.docker.installed ? (
                       <CheckCircle2 className="w-4 h-4 text-green-600" />
@@ -1374,140 +1231,118 @@ export function KnowledgeGraphSettings() {
                       {setupDeps.docker.installed ? setupDeps.docker.version : 'not found'}
                     </span>
                   </div>
-                  {setupPreference === 'local' && (
-                    <div className="flex items-center gap-2 text-sm">
-                      {setupDeps.ollama.installed ? (
-                        <CheckCircle2 className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <XCircle className="w-4 h-4 text-red-500" />
-                      )}
-                      <span className="text-gray-700">Ollama</span>
-                      <span className="text-xs text-gray-500">
-                        {setupDeps.ollama.installed ? setupDeps.ollama.version : 'not found'}
-                      </span>
-                    </div>
-                  )}
-                  {(!setupDeps.docker.installed || (setupPreference === 'local' && !setupDeps.ollama.installed)) && (
+                  {!setupDeps.docker.installed && (
                     <p className="text-xs text-red-600 mt-2">
-                      Please install the missing dependencies and try again.
+                      Please install Docker Desktop and try again.
                     </p>
                   )}
                 </div>
               )}
+
+              <div className="mt-4 space-y-4">
+                {/* LLM Provider */}
+                <div className="space-y-2">
+                  <Label htmlFor="setup-llm-provider" className="text-sm font-medium">
+                    LLM Provider
+                  </Label>
+                  <Select
+                    value={setupProviderId}
+                    onValueChange={(value) => {
+                      setSetupProviderId(value);
+                      setSelectedLlmModel('');
+                      setSetupProviderModels([]);
+                    }}
+                  >
+                    <SelectTrigger id="setup-llm-provider" className="w-full">
+                      <SelectValue placeholder="Select a provider..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {providers.map((provider) => (
+                        <SelectItem key={provider.id} value={provider.id}>
+                          {provider.name} ({PROVIDER_TYPE_LABELS[provider.type]})
+                        </SelectItem>
+                      ))}
+                      {providers.length === 0 && (
+                        <SelectItem value="__none__" disabled>
+                          No providers configured — add one in the Providers tab
+                        </SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Select the provider for entity extraction and knowledge graph generation.
+                  </p>
+                </div>
+
+                {/* LLM Model */}
+                <div className="space-y-2">
+                  <Label htmlFor="setup-llm-model" className="text-sm font-medium">
+                    Extraction Model
+                  </Label>
+                  <Select
+                    value={selectedLlmModel}
+                    onValueChange={setSelectedLlmModel}
+                    disabled={!setupProviderId || setupLoadingModels}
+                  >
+                    <SelectTrigger id="setup-llm-model" className="w-full">
+                      <SelectValue
+                        placeholder={
+                          !setupProviderId
+                            ? 'Select a provider first'
+                            : setupLoadingModels
+                              ? 'Loading models...'
+                              : 'Select a model...'
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {setupLoadingModels ? (
+                        <SelectItem value="__loading__" disabled>Loading models...</SelectItem>
+                      ) : setupProviderModels.length > 0 ? (
+                        setupProviderModels.map((m) => (
+                          <SelectItem key={m.id} value={m.id}>
+                            {m.name}
+                          </SelectItem>
+                        ))
+                      ) : setupProviderId ? (
+                        <SelectItem value="__none__" disabled>
+                          No models available
+                        </SelectItem>
+                      ) : null}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Model used for entity extraction and knowledge graph generation.
+                    Changing this requires restarting the LightRAG container.
+                  </p>
+                </div>
+
+                <DialogFooter className="gap-2 sm:gap-0">
+                  <Button variant="outline" onClick={handleResetSetup}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleSetupStart}
+                    disabled={!setupDeps?.docker.installed || !setupProviderId || !selectedLlmModel}
+                    className="flex-1"
+                  >
+                    Start Stack
+                  </Button>
+                </DialogFooter>
+              </div>
             </>
           )}
 
-          {/* ── Phase 1→2/3 Transition ────────────────────────────────── */}
-          {setupDeps && (setupPhase === 'phase1-checking' || setupPhase === 'phase1-preference') && (
-            <div className="mt-4 space-y-4">
-              {/* LLM Provider */}
-              <div className="space-y-2">
-                <Label htmlFor="setup-llm-provider" className="text-sm font-medium">
-                  LLM Provider
-                </Label>
-                <Select
-                  value={setupProviderId}
-                  onValueChange={(value) => {
-                    setSetupProviderId(value);
-                    setSelectedLlmModel('');
-                    setSetupProviderModels([]);
-                  }}
-                >
-                  <SelectTrigger id="setup-llm-provider" className="w-full">
-                    <SelectValue placeholder="Select a provider..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {providers.map((provider) => (
-                      <SelectItem key={provider.id} value={provider.id}>
-                        {provider.name} ({PROVIDER_TYPE_LABELS[provider.type]})
-                      </SelectItem>
-                    ))}
-                    {providers.length === 0 && (
-                      <SelectItem value="__none__" disabled>
-                        No providers configured — add one in the Providers tab
-                      </SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Select the provider for entity extraction and knowledge graph generation.
-                  You must select a provider to choose a model.
-                </p>
-              </div>
-
-              {/* LLM Model */}
-              <div className="space-y-2">
-                <Label htmlFor="setup-llm-model" className="text-sm font-medium">
-                  Extraction Model
-                </Label>
-                <Select
-                  value={selectedLlmModel}
-                  onValueChange={setSelectedLlmModel}
-                  disabled={!setupProviderId || setupLoadingModels}
-                >
-                  <SelectTrigger id="setup-llm-model" className="w-full">
-                    <SelectValue
-                      placeholder={
-                        !setupProviderId
-                          ? 'Select a provider first'
-                          : setupLoadingModels
-                            ? 'Loading models...'
-                            : 'Select a model...'
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {setupLoadingModels ? (
-                      <SelectItem value="__loading__" disabled>Loading models...</SelectItem>
-                    ) : setupProviderModels.length > 0 ? (
-                      setupProviderModels.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.name}
-                        </SelectItem>
-                      ))
-                    ) : setupProviderId ? (
-                      <SelectItem value="__none__" disabled>
-                        No models available
-                      </SelectItem>
-                    ) : null}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Model used for entity extraction and knowledge graph generation.
-                  {setupPreference === 'local' && ' For Ollama providers, the model will be pulled via Ollama.'}
-                  Changing this requires restarting the LightRAG container.
-                </p>
-              </div>
-
-              <Button
-                onClick={handleSetupStart}
-                disabled={
-                  !setupDeps.docker.installed ||
-                  (setupPreference === 'local' && !setupDeps.ollama.installed) ||
-                  !setupProviderId ||
-                  !selectedLlmModel
-                }
-                className="w-full"
-              >
-                {setupPreference === 'local' ? 'Pull Models & Start Stack' : 'Start Stack'}
-              </Button>
-            </div>
-          )}
-
-          {/* ── Phase 2: Terminal Log (model pull / stack) ───────────── */}
-          {(setupPhase === 'phase2-pull-bge' || setupPhase === 'phase2-pull-llm' || setupPhase === 'phase3-stack') && (
+          {/* ── Phase 2: Terminal Log (stack) ──────────────────────── */}
+          {setupPhase === 'phase2-stack' && (
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  {setupPhase.startsWith('phase2')
-                    ? `Pulling models (${pullingModel ?? ''})...`
-                    : 'Setting up Knowledge Graph...'}
+                  Setting up Knowledge Graph...
                 </DialogTitle>
                 <DialogDescription>
-                  {setupPhase.startsWith('phase2')
-                    ? 'Downloading Ollama models for embeddings and entity extraction.'
-                    : 'Starting Docker containers and configuring LightRAG.'}
+                  Starting Docker containers and configuring LightRAG.
                 </DialogDescription>
               </DialogHeader>
               <div className="bg-[#0d1117] text-green-400 font-mono text-xs rounded-lg p-4 h-64 overflow-y-auto whitespace-pre-wrap">
