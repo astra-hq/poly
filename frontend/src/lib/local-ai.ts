@@ -109,7 +109,7 @@ export class LocalAIAPI {
   }
 
   static async verifyHfRepo(repo_id: string): Promise<HfRepoVerification> {
-    return await invoke('verify_hf_repo', { repo_id });
+    return await invoke('verify_hf_repo', { repoId: repo_id });
   }
 
   static async addCustomModel(
@@ -120,11 +120,11 @@ export class LocalAIAPI {
     size_bytes: number
   ): Promise<void> {
     await invoke('add_custom_model', {
-      repo_id,
+      repoId: repo_id,
       filename,
       template,
-      context_size,
-      size_bytes,
+      contextSize: context_size,
+      sizeBytes: size_bytes,
     });
   }
 }
