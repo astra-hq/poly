@@ -6,7 +6,7 @@ import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import Analytics from '@/lib/analytics';
 import { isOllamaNotInstalledError } from '@/lib/utils';
-import { BuiltInModelInfo } from '@/lib/builtin-ai';
+import { LocalModelInfo } from '@/lib/local-ai';
 import {
   detectAndCacheSummaryLanguage,
   readMeetingSummaryLanguage,
@@ -560,13 +560,13 @@ export function useSummaryGeneration({
       }
     }
 
-    // Check if built-in AI provider has models available
-    if (modelConfig.provider === 'builtin-ai') {
+    // Check if local AI provider has models available
+    if (modelConfig.provider === 'local') {
       try {
         const selectedModel = modelConfig.model;
 
         if (!selectedModel) {
-          toast.error('No built-in AI model selected', {
+          toast.error('No local AI model selected', {
             description: 'Please select a model in settings',
             duration: 5000,
           });
@@ -577,14 +577,14 @@ export function useSummaryGeneration({
         }
 
         // Check model readiness with filesystem refresh
-        const isReady = await invokeTauri<boolean>('builtin_ai_is_model_ready', {
+        const isReady = await invokeTauri<boolean>('local_ai_is_model_ready', {
           modelName: selectedModel,
           refresh: true,
         });
 
         if (!isReady) {
           // Get detailed model status
-          const modelInfo = await invokeTauri<BuiltInModelInfo | null>('builtin_ai_get_model_info', {
+          const modelInfo = await invokeTauri<LocalModelInfo | null>('local_ai_get_model_info', {
             modelName: selectedModel,
           });
 
@@ -600,7 +600,7 @@ export function useSummaryGeneration({
             }
 
             if (status.type === 'not_downloaded') {
-              toast.error('Built-in AI model not downloaded', {
+              toast.error('Local AI model not downloaded', {
                 description: `${selectedModel} needs to be downloaded. Please download it in model settings.`,
                 duration: 7000,
               });
@@ -614,7 +614,7 @@ export function useSummaryGeneration({
               const errorDesc = status.type === 'error'
                 ? status.Error || 'The model file has an error'
                 : 'The model file is corrupted';
-              toast.error('Built-in AI model not available', {
+              toast.error('Local AI model not available', {
                 description: `${errorDesc}. Please check model settings.`,
                 duration: 7000,
               });
@@ -626,7 +626,7 @@ export function useSummaryGeneration({
           }
 
           // Fallback if we couldn't get model info
-          toast.error('Built-in AI model not ready', {
+          toast.error('Local AI model not ready', {
             description: 'Please ensure the model is downloaded in settings',
             duration: 5000,
           });
@@ -638,8 +638,8 @@ export function useSummaryGeneration({
 
         // Model is ready, continue to backend call
       } catch (error) {
-        console.error('Error validating built-in AI model:', error);
-        toast.error('Failed to validate built-in AI model', {
+        console.error('Error validating local AI model:', error);
+        toast.error('Failed to validate local AI model', {
           description: error instanceof Error ? error.message : String(error),
           duration: 5000,
         });

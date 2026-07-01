@@ -13,7 +13,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'ollama',
     model: '', // Empty until loaded from DB
-    whisperModel: 'large-v3'
   });
   const [isLoading, setIsLoading] = useState(true);
   const [, setError] = useState<string>('');
@@ -29,12 +28,11 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
           console.log('✅ Loaded model config from database:', {
             provider: data.provider,
             model: data.model,
-            whisperModel: data.whisperModel,
             hasApiKey: !!data.apiKey,
             ollamaEndpoint: data.ollamaEndpoint || 'default'
           });
           // Fetch API key if not included and provider requires it
-          if (data.provider !== 'ollama' && !data.apiKey) {
+          if (data.provider !== 'ollama' && data.provider !== 'local' && !data.apiKey) {
             try {
               const apiKeyData = await invokeTauri('api_get_api_key', {
                 provider: data.provider
@@ -87,7 +85,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
       const payload = {
         provider: configToSave.provider,
         model: configToSave.model,
-        whisperModel: configToSave.whisperModel,
         apiKey: configToSave.apiKey ?? null,
         ollamaEndpoint: configToSave.ollamaEndpoint ?? null
       };
@@ -109,7 +106,6 @@ export function useModelConfiguration({ serverAddress }: UseModelConfigurationPr
       await invokeTauri('api_save_model_config', {
         provider: payload.provider,
         model: payload.model,
-        whisperModel: payload.whisperModel,
         apiKey: payload.apiKey,
         ollamaEndpoint: payload.ollamaEndpoint,
       });
