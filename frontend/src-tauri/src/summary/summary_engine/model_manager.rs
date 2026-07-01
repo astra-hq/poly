@@ -14,7 +14,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-use super::models::{get_available_models, get_model_by_name};
+use super::models::{get_all_models, get_model_by_name_any};
 
 // ============================================================================
 // Model Status Types
@@ -125,37 +125,16 @@ pub struct ModelManager {
 }
 
 impl ModelManager {
-    /// Create a new model manager with default models directory
-    pub fn new() -> Result<Self> {
-        Self::new_with_models_dir(None)
-    }
-
-    /// Create a new model manager with custom models directory
-    pub fn new_with_models_dir(models_dir: Option<PathBuf>) -> Result<Self> {
-        let models_dir = if let Some(dir) = models_dir {
-            dir
-        } else {
-            // Fallback: Use current directory in development
-            let current_dir = std::env::current_dir()
-                .map_err(|e| anyhow!("Failed to get current directory: {}", e))?;
-
-            if cfg!(debug_assertions) {
-                // Development mode
-                current_dir.join("models").join("summary")
-            } else {
-                // Production mode fallback (caller should provide path)
-                log::warn!("ModelManager: No models directory provided, using fallback path");
-                dirs::data_dir()
-                    .or_else(|| dirs::home_dir())
-                    .ok_or_else(|| anyhow!("Could not find system data directory"))?
-                    .join("Poly")
-                    .join("models")
-                    .join("summary")
-            }
-        };
-
+    /// Create a new model manager with the given models directory.
+    ///
+    /// For production use, the caller must provide a path resolved via
+    /// Tauri's `app.path().app_data_dir()` API. A convenience initializer
+    /// that uses a hardcoded system path is intentionally NOT provided —
+    /// this prevents writable model data from ending up in the read-only
+    /// resource directory or an incorrect platform-specific default.
+    pub fn new_with_models_dir(models_dir: PathBuf) -> Result<Self> {
         log::info!(
-            "Built-in AI ModelManager using directory: {}",
+            "Local AI ModelManager using directory: {}",
             models_dir.display()
         );
 
@@ -190,7 +169,7 @@ impl ModelManager {
             self.models_dir.display()
         );
 
-        let model_defs = get_available_models();
+        let model_defs = get_all_models();
         let mut models_map = HashMap::new();
 
         for model_def in model_defs {
@@ -362,7 +341,7 @@ impl ModelManager {
         }
 
         // Get model definition
-        let model_def = get_model_by_name(model_name)
+        let model_def = get_model_by_name_any(model_name)
             .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
         // Add to active downloads
@@ -835,7 +814,7 @@ impl ModelManager {
     pub async fn delete_model(&self, model_name: &str) -> Result<()> {
         log::info!("Deleting model: {}", model_name);
 
-        let model_def = get_model_by_name(model_name)
+        let model_def = get_model_by_name_any(model_name)
             .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
         let file_path = self.models_dir.join(&model_def.gguf_file);

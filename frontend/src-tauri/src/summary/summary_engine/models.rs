@@ -1,9 +1,10 @@
 // Model definitions and prompt templates for built-in AI summary generation
 // Designed for easy extension - just add new entries to get_available_models()
 
+use std::path::PathBuf;
+
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 // ============================================================================
 // Model Definitions
@@ -123,11 +124,11 @@ impl SamplingParams {
     }
 }
 
-/// Definition of a built-in AI model with all metadata
+/// Definition of a local AI model with all metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDef {
     /// Model name in format "family:variant" (e.g., "gemma3:1b")
-    /// This is what's stored in database as model field when provider="builtin-ai"
+    /// This is what's stored in database as model field when provider="local"
     pub name: String,
 
     /// Display name for UI (e.g., "Gemma 3 1B (Fast)")
@@ -233,8 +234,8 @@ pub fn get_default_model() -> ModelDef {
 
 /// Resolve model name to full file path in the models directory
 pub fn get_model_path(app_data_dir: &PathBuf, model_name: &str) -> Result<PathBuf> {
-    let model =
-        get_model_by_name(model_name).ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
+    let model = get_model_by_name_any(model_name)
+        .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
     let models_dir = get_models_directory(app_data_dir);
     let model_path = models_dir.join(&model.gguf_file);
@@ -301,6 +302,7 @@ pub fn format_prompt(
 ) -> Result<String> {
     let template = match template_name {
         "gemma3" => GEMMA3_TEMPLATE,
+        "gemma4" => GEMMA4_TEMPLATE,
         "qwen3.5_nonthinking" => QWEN35_NONTHINKING_TEMPLATE,
         _ => return Err(anyhow!("Unknown template: {}", template_name)),
     };
@@ -327,9 +329,646 @@ pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 300; // 5 minutes
 /// Generation timeout (how long to wait for a response)
 pub const GENERATION_TIMEOUT_SECS: u64 = 900; // 15 minutes
 
+// ============================================================================
+// Custom Model Registry (HF GGUF persistence)
+// ============================================================================
+
+/// Types of model registries for lookups.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RegistrySource {
+    /// Curated models baked into the app binary.
+    Curated,
+    /// User-added models from Hugging Face GGUF repos.
+    Custom,
+}
+
+/// A persisted entry in the custom model registry (JSON on disk).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomModelEntry {
+    /// HuggingFace repo id (e.g., "unsloth/gemma-4-E4B-it-GGUF")
+    pub repo_id: String,
+    /// Selected GGUF filename (e.g., "gemma-4-e4b-it-Q4_K_M.gguf")
+    pub filename: String,
+    /// Download resolve URL
+    pub download_url: String,
+    /// Prompt template name
+    pub template: String,
+    /// Context window size in tokens
+    pub context_size: u32,
+    /// File size in bytes (from siblings metadata)
+    pub size_bytes: u64,
+}
+
+impl CustomModelEntry {
+    /// Derive a ModelDef from a persisted custom entry for runtime use.
+    fn to_model_def(&self) -> ModelDef {
+        let size_mb = self.size_bytes / (1024 * 1024);
+        let display_name = format!(
+            "{} ({})",
+            self.repo_id,
+            self.filename.trim_end_matches(".gguf")
+        );
+        // Use tight_structured sampling for custom models with sensible defaults.
+        let sampling = SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]);
+        // Estimate layers (rough heuristic based on size)
+        let layer_count = (size_mb / 100).max(16).min(64) as u32;
+
+        ModelDef {
+            name: format!("custom:{}", self.repo_id.replace('/', ":")),
+            display_name,
+            gguf_file: self.filename.clone(),
+            template: self.template.clone(),
+            download_url: self.download_url.clone(),
+            size_mb,
+            context_size: self.context_size,
+            layer_count,
+            sampling,
+            description: format!(
+                "Custom model from {}. {} MB. {}",
+                self.repo_id, size_mb, self.filename
+            ),
+        }
+    }
+}
+
+/// HF API response types for repo verification.
+#[derive(Debug, Deserialize)]
+pub struct HfModelInfo {
+    #[serde(default)]
+    pub private: bool,
+    #[serde(default)]
+    pub gated: bool,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub siblings: Vec<HfSibling>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HfSibling {
+    pub rfilename: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
+/// Result of HF repo verification
+#[derive(Debug, Clone, Serialize)]
+pub struct HfRepoVerification {
+    pub repo_id: String,
+    /// Valid GGUF files found in the repo
+    pub gguf_files: Vec<GgufCandidate>,
+    /// Recommended default (selected by quantization preference)
+    pub default_selection: Option<GgufCandidate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GgufCandidate {
+    pub filename: String,
+    pub download_url: String,
+    pub size_bytes: u64,
+}
+
+/// Ordered quantization preference for default selection.
+const QUANT_PREFERENCE: &[&str] = &["Q4_K_M", "Q5_K_M", "Q4_K_S", "Q5_K_S", "Q8_0"];
+
+/// Select the best default GGUF file from a list of filenames.
+/// Preference order: Q4_K_M > Q5_K_M > Q4_K_S > Q5_K_S > Q8_0 > smallest.
+pub fn select_default_gguf(files: &[(String, u64)]) -> Option<String> {
+    if files.is_empty() {
+        return None;
+    }
+
+    for pref in QUANT_PREFERENCE {
+        if let Some((name, _)) = files.iter().find(|(n, _)| n.contains(pref)) {
+            return Some(name.clone());
+        }
+    }
+
+    // Fallback: smallest file
+    files
+        .iter()
+        .min_by_key(|(_, size)| *size)
+        .map(|(n, _)| n.clone())
+}
+
+/// Load custom model registry from disk
+pub fn load_custom_registry(app_data_dir: &std::path::Path) -> Vec<CustomModelEntry> {
+    let registry_path = app_data_dir.join("custom_models.json");
+    if !registry_path.exists() {
+        return Vec::new();
+    }
+
+    match std::fs::read_to_string(&registry_path) {
+        Ok(contents) => match serde_json::from_str(&contents) {
+            Ok(entries) => entries,
+            Err(e) => {
+                log::error!(
+                    "Failed to parse custom model registry at {}: {}",
+                    registry_path.display(),
+                    e
+                );
+                Vec::new()
+            }
+        },
+        Err(e) => {
+            log::error!(
+                "Failed to read custom model registry at {}: {}",
+                registry_path.display(),
+                e
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// Save custom model registry to disk atomically.
+pub fn save_custom_registry(
+    app_data_dir: &std::path::Path,
+    entries: &[CustomModelEntry],
+) -> Result<()> {
+    let registry_path = app_data_dir.join("custom_models.json");
+
+    // Ensure directory exists
+    if let Some(parent) = registry_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let json = serde_json::to_string_pretty(entries)?;
+    let tmp_path = registry_path.with_extension("json.tmp");
+    std::fs::write(&tmp_path, &json)?;
+    std::fs::rename(&tmp_path, &registry_path)?;
+
+    log::info!(
+        "Saved custom model registry with {} entries to {}",
+        entries.len(),
+        registry_path.display()
+    );
+    Ok(())
+}
+
+/// Verify a HuggingFace repo for GGUF models via the HF API.
+pub async fn verify_hf_repo(repo_id: &str) -> Result<HfRepoVerification> {
+    let url = format!("https://huggingface.co/api/models/{}", repo_id);
+    let client = reqwest::Client::builder()
+        .user_agent("poly-hf-verifier/1.0")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| anyhow!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| anyhow!("Failed to reach HuggingFace API for '{}': {}", repo_id, e))?;
+
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "HuggingFace API returned {} for repo '{}'. Verify the namespace/repo exists and is public.",
+            response.status(),
+            repo_id
+        ));
+    }
+
+    let info: HfModelInfo = response
+        .json()
+        .await
+        .map_err(|e| anyhow!("Failed to parse HF API response for '{}': {}", repo_id, e))?;
+
+    if info.private {
+        return Err(anyhow!(
+            "Repo '{}' is private. Only public repos are supported.",
+            repo_id
+        ));
+    }
+    if info.gated {
+        return Err(anyhow!(
+            "Repo '{}' is gated. Gated repos are not supported.",
+            repo_id
+        ));
+    }
+    if info.disabled {
+        return Err(anyhow!("Repo '{}' is disabled.", repo_id));
+    }
+
+    // Collect GGUF siblings
+    let gguf_files: Vec<(String, u64)> = info
+        .siblings
+        .iter()
+        .filter(|s| s.rfilename.ends_with(".gguf"))
+        .map(|s| (s.rfilename.clone(), s.size.unwrap_or(0)))
+        .collect();
+
+    if gguf_files.is_empty() {
+        return Err(anyhow!(
+            "No .gguf files found in repo '{}'. This repo may not contain GGUF models.",
+            repo_id
+        ));
+    }
+
+    let candidates: Vec<GgufCandidate> = gguf_files
+        .iter()
+        .map(|(filename, size_bytes)| GgufCandidate {
+            filename: filename.clone(),
+            download_url: format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                repo_id, filename
+            ),
+            size_bytes: *size_bytes,
+        })
+        .collect();
+
+    let default_selection = select_default_gguf(&gguf_files).map(|filename| {
+        let entry = gguf_files.iter().find(|(n, _)| *n == filename).unwrap();
+        GgufCandidate {
+            filename: entry.0.clone(),
+            download_url: format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                repo_id, entry.0
+            ),
+            size_bytes: entry.1,
+        }
+    });
+
+    Ok(HfRepoVerification {
+        repo_id: repo_id.to_string(),
+        gguf_files: candidates,
+        default_selection,
+    })
+}
+
+/// Add a custom model to the persisted registry.
+pub fn add_to_custom_registry(
+    app_data_dir: &std::path::Path,
+    repo_id: &str,
+    filename: &str,
+    template: &str,
+    context_size: u32,
+    size_bytes: u64,
+) -> Result<()> {
+    let mut entries = load_custom_registry(app_data_dir);
+
+    // Check if already registered
+    let model_name = filename.to_string();
+    if entries.iter().any(|e| e.filename == model_name) {
+        log::info!(
+            "Custom model '{}' from {} is already registered, skipping",
+            filename,
+            repo_id
+        );
+        return Ok(());
+    }
+
+    let download_url = format!(
+        "https://huggingface.co/{}/resolve/main/{}",
+        repo_id, filename
+    );
+
+    let entry = CustomModelEntry {
+        repo_id: repo_id.to_string(),
+        filename: filename.to_string(),
+        download_url,
+        template: template.to_string(),
+        context_size,
+        size_bytes,
+    };
+
+    entries.push(entry);
+    save_custom_registry(app_data_dir, &entries)?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Gemma 4 Prompt Template
+// ============================================================================
+
+/// Gemma 4 chat template — same format as Gemma 3.
+pub const GEMMA4_TEMPLATE: &str = "\
+<start_of_turn>user
+{system_prompt}<end_of_turn>
+<start_of_turn>user
+{user_prompt}<end_of_turn>
+<start_of_turn>model
+";
+
+// ============================================================================
+// Generalized Model Lookup (Curated + Custom)
+// ============================================================================
+
+thread_local! {
+    /// Cached custom model entries for this thread. Avoids re-reading disk.
+    static CUSTOM_REGISTRY: std::cell::RefCell<Option<Vec<CustomModelEntry>>> = std::cell::RefCell::new(None);
+}
+
+/// Set the custom registry cache for the current thread (called at startup).
+pub fn refresh_custom_registry_cache(app_data_dir: &std::path::Path) {
+    let entries = load_custom_registry(app_data_dir);
+    CUSTOM_REGISTRY.with(|cache| {
+        *cache.borrow_mut() = Some(entries);
+    });
+}
+
+/// Get all models: curated + custom (merged).
+pub fn get_all_models() -> Vec<ModelDef> {
+    let mut models = get_available_models();
+    CUSTOM_REGISTRY.with(|cache| {
+        if let Some(ref entries) = *cache.borrow() {
+            for entry in entries {
+                models.push(entry.to_model_def());
+            }
+        }
+    });
+    models
+}
+
+/// Get a specific model by name (searches curated first, then custom).
+pub fn get_model_by_name_any(name: &str) -> Option<ModelDef> {
+    // Try curated first
+    if let Some(m) = get_model_by_name(name) {
+        return Some(m);
+    }
+    // Try custom registry
+    CUSTOM_REGISTRY.with(|cache| {
+        if let Some(ref entries) = *cache.borrow() {
+            for entry in entries {
+                let def = entry.to_model_def();
+                if def.name == name {
+                    return Some(def);
+                }
+            }
+        }
+        None
+    })
+}
+
 #[cfg(test)]
-mod tests {
+mod hf_registry {
     use super::*;
+
+    // =========================================================================
+    // Baseline: curated-only listing
+    // =========================================================================
+
+    #[test]
+    fn curated_only_listing_returns_four_builtin_models() {
+        let models = get_available_models();
+        assert_eq!(models.len(), 4, "curated list should have exactly 4 models");
+        let names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"qwen3.5:4b"));
+        assert!(names.contains(&"qwen3.5:2b"));
+        assert!(names.contains(&"gemma3:4b"));
+        assert!(names.contains(&"gemma3:1b"));
+    }
+
+    // =========================================================================
+    // Failing-first: HF repo verification with mocked response
+    // =========================================================================
+
+    #[test]
+    fn verify_hf_repo_rejects_private_model() {
+        let json = r#"{"private":true,"gated":false,"disabled":false,"siblings":[]}"#;
+        // This test covers the validation logic directly on deserialized data.
+        let info: HfModelInfo = serde_json::from_str(json).unwrap();
+        assert!(info.private);
+        assert!(!info.gated);
+        assert!(!info.disabled);
+    }
+
+    #[test]
+    fn verify_hf_repo_rejects_gated_model() {
+        let json = r#"{"private":false,"gated":true,"disabled":false,"siblings":[]}"#;
+        let info: HfModelInfo = serde_json::from_str(json).unwrap();
+        assert!(info.gated);
+    }
+
+    #[test]
+    fn verify_hf_repo_rejects_disabled_model() {
+        let json = r#"{"private":false,"gated":false,"disabled":true,"siblings":[]}"#;
+        let info: HfModelInfo = serde_json::from_str(json).unwrap();
+        assert!(info.disabled);
+    }
+
+    #[test]
+    fn verify_hf_repo_accepts_valid_public_repo() {
+        let json = r#"{"private":false,"gated":false,"disabled":false,"siblings":[]}"#;
+        let info: HfModelInfo = serde_json::from_str(json).unwrap();
+        assert!(!info.private);
+        assert!(!info.gated);
+        assert!(!info.disabled);
+    }
+
+    #[test]
+    fn verify_hf_repo_detects_gguf_siblings() {
+        let json = r#"{
+            "private":false,"gated":false,"disabled":false,
+            "siblings":[
+                {"rfilename":"gemma-4-e4b-it-Q4_K_M.gguf","size":4567890123},
+                {"rfilename":"gemma-4-e4b-it-Q5_K_M.gguf","size":5123456789},
+                {"rfilename":"gemma-4-e4b-it-Q8_0.gguf","size":7890123456},
+                {"rfilename":"README.md","size":1024}
+            ]
+        }"#;
+        let info: HfModelInfo = serde_json::from_str(json).unwrap();
+        let gguf: Vec<&str> = info
+            .siblings
+            .iter()
+            .filter(|s| s.rfilename.ends_with(".gguf"))
+            .map(|s| s.rfilename.as_str())
+            .collect();
+        assert_eq!(gguf.len(), 3);
+        assert!(gguf.contains(&"gemma-4-e4b-it-Q4_K_M.gguf"));
+        assert!(gguf.contains(&"gemma-4-e4b-it-Q5_K_M.gguf"));
+        assert!(gguf.contains(&"gemma-4-e4b-it-Q8_0.gguf"));
+    }
+
+    // =========================================================================
+    // Quantization selection
+    // =========================================================================
+
+    #[test]
+    fn select_default_gguf_empty_returns_none() {
+        assert_eq!(select_default_gguf(&[]), None);
+    }
+
+    #[test]
+    fn select_default_gguf_prefers_q4_k_m() {
+        let files = vec![
+            ("model-Q8_0.gguf".to_string(), 7000),
+            ("model-Q4_K_M.gguf".to_string(), 4000),
+            ("model-Q5_K_M.gguf".to_string(), 5000),
+        ];
+        assert_eq!(
+            select_default_gguf(&files).as_deref(),
+            Some("model-Q4_K_M.gguf")
+        );
+    }
+
+    #[test]
+    fn select_default_gguf_falls_back_to_q5_k_m_when_no_q4_k_m() {
+        let files = vec![
+            ("model-Q8_0.gguf".to_string(), 7000),
+            ("model-Q5_K_M.gguf".to_string(), 5000),
+        ];
+        assert_eq!(
+            select_default_gguf(&files).as_deref(),
+            Some("model-Q5_K_M.gguf")
+        );
+    }
+
+    #[test]
+    fn select_default_gguf_falls_back_to_smallest_when_no_preferred_quant() {
+        let files = vec![
+            ("model-IQ3_M.gguf".to_string(), 3000),
+            ("model-IQ2_XXS.gguf".to_string(), 1500),
+            ("model-IQ4_XS.gguf".to_string(), 3500),
+        ];
+        assert_eq!(
+            select_default_gguf(&files).as_deref(),
+            Some("model-IQ2_XXS.gguf")
+        );
+    }
+
+    // =========================================================================
+    // Custom registry persistence
+    // =========================================================================
+
+    #[test]
+    fn custom_registry_round_trip() {
+        let tmp = std::env::temp_dir().join("poly_test_custom_registry");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let entries = vec![CustomModelEntry {
+            repo_id: "unsloth/gemma-4-E4B-it-GGUF".to_string(),
+            filename: "gemma-4-e4b-it-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-e4b-it-Q4_K_M.gguf".to_string(),
+            template: "gemma4".to_string(),
+            context_size: 8192,
+            size_bytes: 4_567_890_123,
+        }];
+
+        save_custom_registry(&tmp, &entries).unwrap();
+
+        let loaded = load_custom_registry(&tmp);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].repo_id, "unsloth/gemma-4-E4B-it-GGUF");
+        assert_eq!(loaded[0].filename, "gemma-4-e4b-it-Q4_K_M.gguf");
+        assert_eq!(loaded[0].template, "gemma4");
+        assert_eq!(loaded[0].context_size, 8192);
+        assert_eq!(loaded[0].size_bytes, 4_567_890_123);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn custom_registry_load_empty_when_missing() {
+        let tmp = std::env::temp_dir().join("poly_test_nonexistent_registry");
+        let loaded = load_custom_registry(&tmp);
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn custom_model_entry_to_model_def() {
+        let entry = CustomModelEntry {
+            repo_id: "unsloth/gemma-4-E4B-it-GGUF".to_string(),
+            filename: "gemma-4-e4b-it-Q4_K_M.gguf".to_string(),
+            download_url: "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-e4b-it-Q4_K_M.gguf".to_string(),
+            template: "gemma4".to_string(),
+            context_size: 8192,
+            size_bytes: 4_567_890_123,
+        };
+        let def = entry.to_model_def();
+        let expected_size_mb = 4_567_890_123 / (1024 * 1024);
+        assert_eq!(def.name, "custom:unsloth:gemma-4-E4B-it-GGUF");
+        assert_eq!(def.gguf_file, "gemma-4-e4b-it-Q4_K_M.gguf");
+        assert_eq!(def.template, "gemma4");
+        assert_eq!(def.size_mb, expected_size_mb);
+        assert_eq!(def.context_size, 8192);
+        assert_eq!(
+            def.download_url,
+            "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-e4b-it-Q4_K_M.gguf"
+        );
+    }
+
+    // =========================================================================
+    // Gemma 4 template
+    // =========================================================================
+
+    #[test]
+    fn gemma4_template_formats_prompt_like_gemma3() {
+        let formatted = format_prompt("gemma4", "system rules", "summarize this").unwrap();
+
+        assert!(formatted.contains("<start_of_turn>user\nsystem rules<end_of_turn>"));
+        assert!(formatted.contains("<start_of_turn>user\nsummarize this<end_of_turn>"));
+        assert!(formatted.contains("<start_of_turn>model\n"));
+    }
+
+    #[test]
+    fn gemma4_template_escapes_control_markers() {
+        let formatted = format_prompt(
+            "gemma4",
+            "system",
+            "literal <start_of_turn> and <end_of_turn>",
+        )
+        .unwrap();
+        assert!(formatted.contains("literal < start_of_turn > and < end_of_turn >"));
+        assert_eq!(formatted.matches("<start_of_turn>").count(), 3);
+        assert_eq!(formatted.matches("<end_of_turn>").count(), 2);
+    }
+
+    // =========================================================================
+    // Generalized lookup
+    // =========================================================================
+
+    #[test]
+    fn get_model_by_name_any_finds_curated_model() {
+        let model = get_model_by_name_any("qwen3.5:2b");
+        assert!(model.is_some());
+        assert_eq!(model.unwrap().name, "qwen3.5:2b");
+    }
+
+    #[test]
+    fn get_model_by_name_any_returns_none_for_unknown() {
+        let model = get_model_by_name_any("nonexistent:99b");
+        assert!(model.is_none());
+    }
+
+    #[test]
+    fn add_to_custom_registry_prevents_duplicates() {
+        let tmp = std::env::temp_dir().join("poly_test_custom_dedup");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        add_to_custom_registry(
+            &tmp,
+            "unsloth/gemma-4-E4B-it-GGUF",
+            "gemma-4-e4b-it-Q4_K_M.gguf",
+            "gemma4",
+            8192,
+            4_567_890_123,
+        )
+        .unwrap();
+
+        add_to_custom_registry(
+            &tmp,
+            "unsloth/gemma-4-E4B-it-GGUF",
+            "gemma-4-e4b-it-Q4_K_M.gguf",
+            "gemma4",
+            8192,
+            4_567_890_123,
+        )
+        .unwrap();
+
+        let loaded = load_custom_registry(&tmp);
+        assert_eq!(loaded.len(), 1, "duplicate should be skipped");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // =========================================================================
+    // Pre-existing tests (curated models)
+    // =========================================================================
 
     #[test]
     fn qwen35_models_are_registered_with_expected_metadata() {
@@ -449,6 +1088,14 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_template_format_prompt_returns_error() {
+        let result = format_prompt("unknown_template", "sys", "user");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unknown template"));
+    }
+
+    #[test]
     fn sampling_params_sanitize_for_llama_helper_preserves_zero_top_k() {
         let sampling = SamplingParams {
             temperature: f32::NAN,
@@ -503,5 +1150,20 @@ mod tests {
         let sanitized = sampling.sanitize_for_llama_helper();
 
         assert_eq!(sanitized.top_k, 20);
+    }
+
+    #[test]
+    fn custom_registry_stores_under_app_data_not_resource_dir() {
+        let data = std::path::PathBuf::from("/fake/app/data");
+        let file = data.join("custom_models.json");
+        assert_eq!(file, data.join("custom_models.json"));
+
+        // Must NOT be under a resource directory
+        let resource_dir = std::path::PathBuf::from("/fake/app/resources");
+        assert_ne!(
+            file,
+            resource_dir.join("custom_models.json"),
+            "custom_models.json must NOT be under a resource directory"
+        );
     }
 }

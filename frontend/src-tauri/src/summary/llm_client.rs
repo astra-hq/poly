@@ -74,14 +74,14 @@ pub struct ClaudeChatContent {
 /// * `provider_type` - The LLM provider type (OpenAI, Anthropic, Groq, Ollama, etc.)
 /// * `base_url` - The base URL for the provider API endpoint
 /// * `model_name` - The specific model to use
-/// * `api_key` - API key (not needed for Ollama and BuiltInAI)
+/// * `api_key` - API key (not needed for Ollama and Local)
 /// * `system_prompt` - System instructions for the LLM
 /// * `user_prompt` - User query/content to process
-/// * `is_builtin` - Whether to use the local built-in AI sidecar instead of HTTP
+/// * `is_builtin` - Whether to use the local AI sidecar instead of HTTP
 /// * `max_tokens` - Optional max tokens override
 /// * `temperature` - Optional temperature override
 /// * `top_p` - Optional top_p override
-/// * `app_data_dir` - App data directory (required for BuiltInAI)
+/// * `app_data_dir` - App data directory (required for local AI)
 /// * `cancellation_token` - Optional token to cancel the request
 pub async fn generate_summary(
     client: &Client,
@@ -105,10 +105,10 @@ pub async fn generate_summary(
         }
     }
 
-    // Handle BuiltInAI provider separately (uses local sidecar, no HTTP API)
+    // Handle local AI provider separately (uses local sidecar, no HTTP API)
     if is_builtin {
         let app_data_dir = app_data_dir
-            .ok_or_else(|| "app_data_dir is required for BuiltInAI provider".to_string())?;
+            .ok_or_else(|| "app_data_dir is required for local AI provider".to_string())?;
         return crate::summary::summary_engine::generate_with_builtin(
             app_data_dir,
             model_name,
@@ -239,52 +239,53 @@ pub async fn generate_summary(
         }
     };
 
-    let parse_response = async |response: reqwest::Response, format: &RequestFormat| -> Result<String, String> {
-        if !response.status().is_success() {
-            let error_body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(format!("LLM API request failed: {}", error_body));
-        }
-
-        match format {
-            RequestFormat::Anthropic => {
-                let chat_response = response
-                    .json::<ClaudeChatResponse>()
+    let parse_response =
+        async |response: reqwest::Response, format: &RequestFormat| -> Result<String, String> {
+            if !response.status().is_success() {
+                let error_body = response
+                    .text()
                     .await
-                    .map_err(|e| format!("Failed to parse Claude response: {}", e))?;
-
-                info!("🐞 LLM Response received from Claude");
-
-                let content = chat_response
-                    .content
-                    .get(0)
-                    .ok_or("No content in LLM response")?
-                    .text
-                    .trim();
-                Ok(content.to_string())
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                return Err(format!("LLM API request failed: {}", error_body));
             }
-            RequestFormat::OpenAi => {
-                let chat_response = response
-                    .json::<ChatResponse>()
-                    .await
-                    .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
 
-                let provider_label = provider_type.label();
-                info!("🐞 LLM Response received from {}", provider_label);
+            match format {
+                RequestFormat::Anthropic => {
+                    let chat_response = response
+                        .json::<ClaudeChatResponse>()
+                        .await
+                        .map_err(|e| format!("Failed to parse Claude response: {}", e))?;
 
-                let content = chat_response
-                    .choices
-                    .get(0)
-                    .ok_or("No content in LLM response")?
-                    .message
-                    .content
-                    .trim();
-                Ok(content.to_string())
+                    info!("🐞 LLM Response received from Claude");
+
+                    let content = chat_response
+                        .content
+                        .get(0)
+                        .ok_or("No content in LLM response")?
+                        .text
+                        .trim();
+                    Ok(content.to_string())
+                }
+                RequestFormat::OpenAi => {
+                    let chat_response = response
+                        .json::<ChatResponse>()
+                        .await
+                        .map_err(|e| format!("Failed to parse LLM response: {}", e))?;
+
+                    let provider_label = provider_type.label();
+                    info!("🐞 LLM Response received from {}", provider_label);
+
+                    let content = chat_response
+                        .choices
+                        .get(0)
+                        .ok_or("No content in LLM response")?
+                        .message
+                        .content
+                        .trim();
+                    Ok(content.to_string())
+                }
             }
-        }
-    };
+        };
 
     // For Custom providers, try OpenAI format first, then Anthropic as fallback.
     // Known providers only try their own format.
@@ -335,16 +336,14 @@ pub async fn generate_summary_legacy(
     app_data_dir: Option<&PathBuf>,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<String, String> {
-    let (provider_type, base_url, is_builtin) = legacy_to_provider_params(
-        provider,
-        ollama_endpoint,
-        custom_openai_endpoint,
-    );
-    let (resolved_max_tokens, resolved_temperature, resolved_top_p) = if provider == &super::LLMProvider::CustomOpenAI {
-        (max_tokens, temperature, top_p)
-    } else {
-        (None, None, None)
-    };
+    let (provider_type, base_url, is_builtin) =
+        legacy_to_provider_params(provider, ollama_endpoint, custom_openai_endpoint);
+    let (resolved_max_tokens, resolved_temperature, resolved_top_p) =
+        if provider == &super::LLMProvider::CustomOpenAI {
+            (max_tokens, temperature, top_p)
+        } else {
+            (None, None, None)
+        };
     generate_summary(
         client,
         &provider_type,
@@ -359,7 +358,8 @@ pub async fn generate_summary_legacy(
         resolved_top_p,
         app_data_dir,
         cancellation_token,
-    ).await
+    )
+    .await
 }
 
 fn legacy_to_provider_params(
@@ -395,16 +395,10 @@ fn legacy_to_provider_params(
             "https://openrouter.ai/api/v1".to_string(),
             false,
         ),
-        super::LLMProvider::BuiltInAI => (
-            ProviderType::Ollama,
-            String::new(),
-            true,
-        ),
+        super::LLMProvider::BuiltInAI => (ProviderType::Ollama, String::new(), true),
         super::LLMProvider::CustomOpenAI => (
             ProviderType::Custom,
-            custom_openai_endpoint
-                .unwrap_or("")
-                .to_string(),
+            custom_openai_endpoint.unwrap_or("").to_string(),
             false,
         ),
     }
@@ -431,7 +425,7 @@ impl LLMProvider {
             "groq" => Ok(Self::Groq),
             "ollama" => Ok(Self::Ollama),
             "openrouter" => Ok(Self::OpenRouter),
-            "builtin-ai" | "local-llama" | "localllama" => Ok(Self::BuiltInAI),
+            "local" | "local-llama" | "localllama" => Ok(Self::BuiltInAI),
             "custom-openai" => Ok(Self::CustomOpenAI),
             _ => Err(format!("Unsupported LLM provider: {}", s)),
         }
