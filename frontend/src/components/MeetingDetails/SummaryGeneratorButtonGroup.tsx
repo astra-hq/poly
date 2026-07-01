@@ -25,7 +25,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
 import { useState, useEffect, ReactNode } from 'react';
 import { isOllamaNotInstalledError } from '@/lib/utils';
-import { BuiltInModelInfo } from '@/lib/builtin-ai';
+import { LocalModelInfo } from '@/lib/local-ai';
 
 interface SummaryGeneratorButtonGroupProps {
   languageSlot?: ReactNode;
@@ -89,14 +89,14 @@ export function SummaryGeneratorButtonGroup({
     return null;
   }
 
-  const checkBuiltInAIModelsAndGenerate = async () => {
+  const checkLocalAIModelsAndGenerate = async () => {
     setIsCheckingModels(true);
     try {
       const selectedModel = modelConfig.model;
 
       // Check if specific model is configured
       if (!selectedModel) {
-        toast.error('No built-in AI model selected', {
+        toast.error('No local AI model selected', {
           description: 'Please select a model in settings',
           duration: 5000,
         });
@@ -105,7 +105,7 @@ export function SummaryGeneratorButtonGroup({
       }
 
       // Check model readiness (with filesystem refresh)
-      const isReady = await invoke<boolean>('builtin_ai_is_model_ready', {
+      const isReady = await invoke<boolean>('local_ai_is_model_ready', {
         modelName: selectedModel,
         refresh: true,
       });
@@ -117,7 +117,7 @@ export function SummaryGeneratorButtonGroup({
       }
 
       // Model not ready - check detailed status
-      const modelInfo = await invoke<BuiltInModelInfo | null>('builtin_ai_get_model_info', {
+      const modelInfo = await invoke<LocalModelInfo | null>('local_ai_get_model_info', {
         modelName: selectedModel,
       });
 
@@ -187,9 +187,9 @@ export function SummaryGeneratorButtonGroup({
   };
 
   const checkOllamaModelsAndGenerate = async () => {
-    // Handle built-in AI provider
-    if (modelConfig.provider === 'builtin-ai') {
-      await checkBuiltInAIModelsAndGenerate();
+    // Handle local AI provider
+    if (modelConfig.provider === 'local') {
+      await checkLocalAIModelsAndGenerate();
       return;
     }
 
