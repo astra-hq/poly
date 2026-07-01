@@ -25,6 +25,8 @@ import {
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { ModelConfig as SharedModelConfig } from '@/services/configService';
+import { configService } from '@/services/configService';
+import type { ProviderConfig, ProviderModel } from '@/types/providers';
 
 interface OpenRouterModel {
   id: string;
@@ -95,6 +97,12 @@ export function ModelSettingsModal({
   // Local AI models state
   const [builtinAiModels, setBuiltinAiModels] = useState<any[]>([]);
 
+  // Provider list from config
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  // Dynamic models for generic providers (fetched via api_get_provider_models)
+  const [providerModels, setProviderModels] = useState<ProviderModel[]>([]);
+  const [isLoadingProviderModels, setIsLoadingProviderModels] = useState(false);
+
   // Auto-unlock when API key becomes empty, 
   useEffect(() => {
     const hasContent = !!apiKey?.trim();
@@ -103,25 +111,47 @@ export function ModelSettingsModal({
     }
   }, [apiKey]);
 
+  // Load providers from config
+  useEffect(() => {
+    configService.getProviders().then(setProviders).catch(() => {});
+  }, []);
+
+  // Fetch models for a non-hardcoded provider via the provider system
+  const loadProviderModels = async (providerId: string) => {
+    setIsLoadingProviderModels(true);
+    try {
+      const models = await configService.getProviderModels(providerId);
+      setProviderModels(models);
+      return models;
+    } catch {
+      setProviderModels([]);
+      return [];
+    } finally {
+      setIsLoadingProviderModels(false);
+    }
+  };
+
   const modelOptions: Record<string, string[]> = {
     claude: claudeModels,
     groq: groqModels,
     openai: openaiModels,
     openrouter: openRouterModels.map((m) => m.id),
     'local': builtinAiModels.map((m) => m.name),
+    _provider: providerModels.map((m) => m.id),
   };
 
+  const selectedProvider = providers.find((p) => p.id === modelConfig.provider);
   const requiresApiKey =
     modelConfig.provider === 'claude' ||
     modelConfig.provider === 'groq' ||
     modelConfig.provider === 'openai' ||
-    modelConfig.provider === 'openrouter';
+    modelConfig.provider === 'openrouter' ||
+    (!!selectedProvider && selectedProvider.type !== 'ollama' && selectedProvider.type !== 'local');
 
   const isDoneDisabled =
     requiresApiKey && (!apiKey || (typeof apiKey === 'string' && !apiKey.trim()));
 
-  useEffect(() => {
-    const fetchModelConfig = async () => {
+  const fetchModelConfig = async () => {
       // If parent component manages config, skip fetch and just mark as loaded
       if (skipInitialFetch) {
         return;
@@ -150,6 +180,7 @@ export function ModelSettingsModal({
       }
     };
 
+  useEffect(() => {
     fetchModelConfig();
   }, [skipInitialFetch]);
 
@@ -347,11 +378,11 @@ export function ModelSettingsModal({
 
                 // Try to restore cached model for the new provider
                 const savedModel = map[provider];
-                const providerModels = modelOptions[provider];
-                const defaultModel = providerModels && providerModels.length > 0
-                  ? providerModels[0]
+                const hardcodedModels = modelOptions[provider as keyof typeof modelOptions];
+                const defaultModel = hardcodedModels && hardcodedModels.length > 0
+                  ? hardcodedModels[0]
                   : '';
-                const model = (savedModel && providerModels?.includes(savedModel))
+                const model = (savedModel && hardcodedModels?.includes(savedModel))
                   ? savedModel
                   : defaultModel;
 
@@ -360,15 +391,13 @@ export function ModelSettingsModal({
                   provider,
                   model,
                 });
-                // API key is now synced automatically via useEffect watching providerApiKeys
 
-                // Load OpenRouter models only when OpenRouter is selected
-                if (provider === 'openrouter') {
+                const knownProviders = ['claude', 'groq', 'openai', 'openrouter', 'local', 'ollama'];
+                if (!knownProviders.includes(provider)) {
+                  loadProviderModels(provider);
+                } else if (provider === 'openrouter') {
                   loadOpenRouterModels();
-                }
-
-                // Load local AI models when selected
-                if (provider === 'local') {
+                } else if (provider === 'local') {
                   loadBuiltinAiModels();
                 }
               }}
@@ -377,15 +406,37 @@ export function ModelSettingsModal({
                 <SelectValue placeholder="Select provider" />
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto">
-                <SelectItem value="local">Local (Offline, No API needed)</SelectItem>
-                <SelectItem value="claude">Claude</SelectItem>
-                <SelectItem value="groq">Groq</SelectItem>
-                <SelectItem value="openai">OpenAI</SelectItem>
-                <SelectItem value="openrouter">OpenRouter</SelectItem>
+                {providers.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                    {p.type === 'local' ? ' (On-device)' : ''}
+                  </SelectItem>
+                ))}
+                {providers.length === 0 && (
+                  <>
+                    <SelectItem value="local">Local (Offline, No API needed)</SelectItem>
+                    <SelectItem value="claude">Claude</SelectItem>
+                    <SelectItem value="groq">Groq</SelectItem>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="openrouter">OpenRouter</SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
 
             {modelConfig.provider !== 'local' && (
+              (() => {
+                const hardcodedModels = modelOptions[modelConfig.provider];
+                const dynamicModels = modelOptions._provider;
+                const mergedModels = hardcodedModels && hardcodedModels.length > 0
+                  ? hardcodedModels
+                  : dynamicModels && dynamicModels.length > 0
+                    ? dynamicModels
+                    : modelConfig.model
+                      ? [modelConfig.model]
+                      : [];
+
+                return (
               <Popover open={modelComboboxOpen} onOpenChange={setModelComboboxOpen} modal={true}>
                 <PopoverTrigger asChild>
                   <Button
@@ -407,7 +458,8 @@ export function ModelSettingsModal({
                       {(modelConfig.provider === 'openrouter' && isLoadingOpenRouter) ||
                        (modelConfig.provider === 'openai' && isLoadingOpenAI) ||
                        (modelConfig.provider === 'claude' && isLoadingClaude) ||
-                       (modelConfig.provider === 'groq' && isLoadingGroq) ? (
+                       (modelConfig.provider === 'groq' && isLoadingGroq) ||
+                       isLoadingProviderModels ? (
                         <div className="py-6 text-center text-sm text-muted-foreground">
                           <RefreshCw className="mx-auto h-4 w-4 animate-spin mb-2" />
                           Loading models...
@@ -416,7 +468,7 @@ export function ModelSettingsModal({
                         <>
                           <CommandEmpty>No models found.</CommandEmpty>
                           <CommandGroup>
-                            {modelOptions[modelConfig.provider]?.map((model) => (
+                            {mergedModels.map((model) => (
                               <CommandItem
                                 key={model}
                                 value={model}
@@ -441,6 +493,8 @@ export function ModelSettingsModal({
                   </Command>
                 </PopoverContent>
               </Popover>
+              );
+              })()
             )}
           </div>
         </div>

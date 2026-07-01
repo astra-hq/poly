@@ -50,8 +50,8 @@ impl SettingsRepository {
         provider: &str,
         api_key: &str,
     ) -> std::result::Result<(), String> {
-        if provider == "parakeet" {
-            return Ok(()); // Parakeet doesn't need an API key
+        if provider == "parakeet" || provider == "local" {
+            return Ok(()); // Local transcription doesn't need an API key
         }
 
         let secret_ref = crate::secrets::refs::transcript_provider_key(provider);
@@ -65,8 +65,8 @@ impl SettingsRepository {
         store: &(dyn SecretStore + Sync),
         provider: &str,
     ) -> std::result::Result<Option<String>, String> {
-        if provider == "parakeet" {
-            return Ok(None); // Parakeet doesn't need an API key
+        if provider == "parakeet" || provider == "local" {
+            return Ok(None); // Local transcription doesn't need an API key
         }
 
         let secret_ref = crate::secrets::refs::transcript_provider_key(provider);
@@ -95,8 +95,8 @@ impl SettingsRepository {
         store: &(dyn SecretStore + Sync),
         provider: &str,
     ) -> std::result::Result<(), String> {
-        if provider == "parakeet" {
-            return Ok(()); // Parakeet doesn't need an API key
+        if provider == "parakeet" || provider == "local" {
+            return Ok(()); // Local transcription doesn't need an API key
         }
 
         let secret_ref = crate::secrets::refs::transcript_provider_key(provider);

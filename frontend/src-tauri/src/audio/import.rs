@@ -815,7 +815,7 @@ async fn get_configured_model<R: Runtime>(
     let provider = &config.transcript.provider;
     let model = &config.transcript.model;
 
-    if provider == "parakeet" {
+    if provider == "parakeet" || provider == "local" {
         Ok(model.clone())
     } else {
         Ok(DEFAULT_PARAKEET_MODEL.to_string())

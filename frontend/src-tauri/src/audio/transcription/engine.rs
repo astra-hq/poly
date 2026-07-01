@@ -64,20 +64,20 @@ pub async fn validate_transcription_model_ready<R: Runtime>(
                 config
             }
             Ok(None) => {
-                info!("📝 No transcript config found, defaulting to parakeet");
+                info!("📝 No transcript config found, defaulting to local");
                 crate::api::api::TranscriptConfig {
-                    provider: "parakeet".to_string(),
+                    provider: "local".to_string(),
                     model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
                     api_key_status: None,
                 }
             }
             Err(e) => {
                 warn!(
-                    "⚠️ Failed to get transcript config: {}, defaulting to parakeet",
+                    "⚠️ Failed to get transcript config: {}, defaulting to local",
                     e
                 );
                 crate::api::api::TranscriptConfig {
-                    provider: "parakeet".to_string(),
+                    provider: "local".to_string(),
                     model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
                     api_key_status: None,
                 }
@@ -86,8 +86,8 @@ pub async fn validate_transcription_model_ready<R: Runtime>(
 
     // Validate based on provider
     match config.provider.as_str() {
-        "parakeet" => {
-            info!("🔍 Validating Parakeet model...");
+        "parakeet" | "local" => {
+            info!("🔍 Validating local transcription model...");
             // Ensure parakeet engine is initialized first
             if let Err(init_error) = crate::parakeet_engine::commands::parakeet_init().await {
                 warn!("❌ Failed to initialize Parakeet engine: {}", init_error);
@@ -121,7 +121,7 @@ pub async fn validate_transcription_model_ready<R: Runtime>(
                 other
             );
             Err(format!(
-                "Provider '{}' is not supported for local transcription. Please select 'parakeet'.",
+                "Provider '{}' is not supported for local transcription. Please select 'local'.",
                 other
             ))
         }
@@ -145,20 +145,20 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
                 config
             }
             Ok(None) => {
-                info!("📝 No transcript config found, defaulting to parakeet");
+                info!("📝 No transcript config found, defaulting to local");
                 crate::api::api::TranscriptConfig {
-                    provider: "parakeet".to_string(),
+                    provider: "local".to_string(),
                     model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
                     api_key_status: None,
                 }
             }
             Err(e) => {
                 warn!(
-                    "⚠️ Failed to get transcript config: {}, defaulting to parakeet",
+                    "⚠️ Failed to get transcript config: {}, defaulting to local",
                     e
                 );
                 crate::api::api::TranscriptConfig {
-                    provider: "parakeet".to_string(),
+                    provider: "local".to_string(),
                     model: crate::config::DEFAULT_PARAKEET_MODEL.to_string(),
                     api_key_status: None,
                 }
@@ -167,8 +167,8 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
 
     // Initialize the appropriate engine based on provider
     match config.provider.as_str() {
-        "parakeet" => {
-            info!("🦜 Initializing Parakeet transcription engine");
+        "parakeet" | "local" => {
+            info!("🦜 Initializing local transcription engine");
 
             // Get Parakeet engine
             let engine = {
@@ -200,11 +200,11 @@ pub async fn get_or_init_transcription_engine<R: Runtime>(
         }
         other => {
             warn!(
-                "❌ Unsupported transcription provider: {} (only 'parakeet' is supported)",
+                "❌ Unsupported transcription provider: {} (only 'local' is supported)",
                 other
             );
             Err(format!(
-                "Provider '{}' is not supported for local transcription. Only 'parakeet' is supported.",
+                "Provider '{}' is not supported for local transcription. Only 'local' is supported.",
                 other
             ))
         }

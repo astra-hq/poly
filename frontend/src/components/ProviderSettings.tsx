@@ -33,10 +33,8 @@ import {
   EyeOff,
   Lock,
   Unlock,
-  ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { LocalModelManager } from '@/components/LocalModelManager';
 import { configService } from '@/services/configService';
 import type { ProviderConfig, ProviderType } from '@/types/providers';
 import { PROVIDER_TYPE_LABELS, PROVIDER_DEFAULT_URLS, PROVIDER_DEFAULT_MODELS } from '@/types/providers';
@@ -44,6 +42,7 @@ import { PROVIDER_TYPE_LABELS, PROVIDER_DEFAULT_URLS, PROVIDER_DEFAULT_MODELS } 
 // ── Helpers ───────────────────────────────────────────────────────────
 
 const PROVIDER_TYPES: ProviderType[] = [
+  'local',
   'open_a_i',
   'anthropic',
   'groq',
@@ -123,9 +122,6 @@ export function ProviderSettings() {
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<ProviderConfig | null>(null);
   const [deleting, setDeleting] = useState(false);
-
-  // Local model manager expansion
-  const [localExpanded, setLocalExpanded] = useState(false);
 
   // API key lock & visibility
   const [isApiKeyLocked, setIsApiKeyLocked] = useState(false);
@@ -229,9 +225,9 @@ export function ProviderSettings() {
     } else if (!/^[a-z0-9_-]+$/.test(formState.id.trim())) {
       errors.id = 'ID must contain only lowercase letters, numbers, hyphens, and underscores';
     }
-    if (!formState.base_url.trim()) {
+    if (!formState.base_url.trim() && formState.type !== 'local') {
       errors.base_url = 'Base URL is required';
-    } else {
+    } else if (formState.type !== 'local') {
       try {
         new URL(formState.base_url.trim());
       } catch {
@@ -353,59 +349,13 @@ export function ProviderSettings() {
         </Button>
       </div>
 
-      {/* Built-in Local provider — always visible, non-deletable */}
-      <div className="border rounded-lg bg-white border-blue-200 ring-1 ring-blue-100">
-        <div
-          className="p-4 cursor-pointer hover:bg-blue-50/50 transition-colors"
-          onClick={() => setLocalExpanded(!localExpanded)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              setLocalExpanded(!localExpanded);
-            }
-          }}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2 min-w-0 flex-1">
-              <Server className="w-4 h-4 text-blue-500 shrink-0" />
-              <span className="font-medium truncate">Local</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 shrink-0">
-                Built-in
-              </span>
-            </div>
-            <div className="flex items-center gap-1 shrink-0">
-              <ChevronDown
-                className={`w-4 h-4 text-gray-400 transition-transform ${
-                  localExpanded ? 'rotate-180' : ''
-                }`}
-              />
-            </div>
-          </div>
-          <div className="mt-2 text-sm text-gray-600">
-            On-device AI using llama.cpp. Download and manage local models for offline summarization.
-          </div>
-        </div>
-        {localExpanded && (
-          <div className="border-t border-blue-100 p-4">
-            <LocalModelManager
-              selectedModel=""
-              onModelSelect={() => {}}
-              layout="inline"
-            />
-          </div>
-        )}
-      </div>
-
       {/* Empty state */}
       {!hasProviders && (
         <div className="flex flex-col items-center justify-center py-12 text-center">
           <Server className="w-16 h-16 text-gray-300 mb-4" />
           <h4 className="text-lg font-semibold text-gray-900 mb-2">No Providers Configured</h4>
           <p className="text-sm text-gray-500 mb-6 max-w-md">
-            Poly includes a built-in <strong>Local</strong> provider for on-device AI processing.
-            You can also add cloud providers like OpenAI, Anthropic, Groq, OpenRouter, or any
+            Add cloud providers like OpenAI, Anthropic, Groq, OpenRouter, or any
             OpenAI-compatible endpoint for summarization and knowledge graph features.
           </p>
           <Button size="sm" onClick={openAddDialog}>
@@ -425,7 +375,7 @@ export function ProviderSettings() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {provider.type === 'ollama' ? (
+                  {provider.type === 'ollama' || provider.type === 'local' ? (
                     <Server className="w-4 h-4 text-gray-500 shrink-0" />
                   ) : (
                     <Globe className="w-4 h-4 text-gray-500 shrink-0" />
@@ -592,7 +542,7 @@ export function ProviderSettings() {
             </div>
 
             {/* API Key */}
-            {formState.type !== 'ollama' && (
+            {formState.type !== 'ollama' && formState.type !== 'local' && (
               <div>
                 <Label htmlFor="provider-api-key">API Key</Label>
                 <div className="flex gap-2 mt-1">

@@ -811,7 +811,7 @@ pub async fn api_save_transcript_config<R: Runtime>(
 
     // 1. Write API key to SecretStore FIRST (fail-fast contract)
     if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
-        if provider != "parakeet" {
+        if provider != "parakeet" && provider != "local" {
             log_info!("API key provided, saving for transcript provider...");
             let store = KeyringFirstSecretStore::default_store()
                 .map_err(|e| format!("Failed to initialize secret store: {}", e))?;

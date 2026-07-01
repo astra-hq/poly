@@ -54,7 +54,7 @@ impl Default for SummaryConfig {
 /// Non-secret transcript configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TranscriptConfig {
-    /// Transcription provider (parakeet, deepgram, elevenLabs, groq, openai).
+    /// Transcription provider (references a provider from the `providers` list).
     #[serde(default = "default_transcript_provider")]
     pub provider: String,
 
@@ -64,7 +64,7 @@ pub struct TranscriptConfig {
 }
 
 fn default_transcript_provider() -> String {
-    "parakeet".into()
+    "local".into()
 }
 
 fn default_transcript_model() -> String {
@@ -219,13 +219,22 @@ impl Default for PolyConfig {
     fn default() -> Self {
         // Create sensible default providers
         Self {
-            providers: vec![ProviderConfig {
-                id: "openai".to_string(),
-                name: "OpenAI".to_string(),
-                provider_type: crate::providers::ProviderType::OpenAI,
-                base_url: "https://api.openai.com/v1".to_string(),
-                default_model: "gpt-4o".to_string(),
-            }],
+            providers: vec![
+                ProviderConfig {
+                    id: "local".to_string(),
+                    name: "Local".to_string(),
+                    provider_type: crate::providers::ProviderType::Local,
+                    base_url: String::new(),
+                    default_model: String::new(),
+                },
+                ProviderConfig {
+                    id: "openai".to_string(),
+                    name: "OpenAI".to_string(),
+                    provider_type: crate::providers::ProviderType::OpenAI,
+                    base_url: "https://api.openai.com/v1".to_string(),
+                    default_model: "gpt-4o".to_string(),
+                },
+            ],
             summary: SummaryConfig {
                 provider_id: "local".to_string(),
                 model: "gpt-4o-2024-11-20".to_string(),
@@ -324,15 +333,16 @@ mod tests {
     #[test]
     fn default_transcript_matches_app_defaults() {
         let t = TranscriptConfig::default();
-        assert_eq!(t.provider, "parakeet");
+        assert_eq!(t.provider, "local");
         assert_eq!(t.model, crate::config::DEFAULT_PARAKEET_MODEL);
     }
 
     #[test]
     fn default_poly_config_has_default_providers() {
         let cfg = PolyConfig::default();
-        assert_eq!(cfg.providers.len(), 1);
-        assert_eq!(cfg.providers[0].id, "openai");
+        assert_eq!(cfg.providers.len(), 2);
+        assert_eq!(cfg.providers[0].id, "local");
+        assert_eq!(cfg.providers[1].id, "openai");
     }
 
     #[test]
@@ -378,7 +388,7 @@ mod tests {
         let cfg: PolyConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(cfg.summary.provider_id, "groq");
         assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
-        assert_eq!(cfg.transcript.provider, "parakeet");
+        assert_eq!(cfg.transcript.provider, "local");
         assert_eq!(cfg.preferences.language, "auto-translate");
     }
 
@@ -419,8 +429,8 @@ mod tests {
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         // Summary defaults to "local", never "ollama"
         assert_eq!(cfg.summary.provider_id, "local");
-        // Transcript defaults to "parakeet", never "localWhisper"
-        assert_eq!(cfg.transcript.provider, "parakeet");
+        // Transcript defaults to "local", never "localWhisper"
+        assert_eq!(cfg.transcript.provider, "local");
         assert!(
             !yaml.contains("ollama"),
             "ollama must not appear in default: {}",
@@ -432,7 +442,7 @@ mod tests {
     fn default_config_has_no_whisper_transcription_path() {
         let cfg = PolyConfig::default();
         let yaml = serde_yaml::to_string(&cfg).unwrap();
-        assert_eq!(cfg.transcript.provider, "parakeet");
+        assert_eq!(cfg.transcript.provider, "local");
         assert!(
             !yaml.contains("localWhisper"),
             "localWhisper must not appear in default: {}",

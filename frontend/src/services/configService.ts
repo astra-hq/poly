@@ -11,7 +11,7 @@ import { TranscriptModelProps } from '@/components/TranscriptSettings';
 import type { ProviderConfig, ProviderModel } from '@/types/providers';
 
 export interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openrouter' | 'openai' | 'local';
+  provider: string;
   model: string;
   /**
    * @deprecated Use providerApiKeys from ConfigContext instead.

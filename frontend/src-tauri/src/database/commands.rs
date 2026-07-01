@@ -201,7 +201,7 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
     cfg.summary.model = default_summary_model.to_string();
 
     // Default Transcription Model: Parakeet
-    cfg.transcript.provider = "parakeet".to_string();
+    cfg.transcript.provider = "local".to_string();
     cfg.transcript.model = crate::config::DEFAULT_PARAKEET_MODEL.to_string();
 
     if let Err(e) = config_repo.save_atomic(&cfg) {

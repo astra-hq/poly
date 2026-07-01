@@ -100,7 +100,7 @@ pub async fn start_retranscription<R: Runtime>(
     // Reset cancellation flag
     RETRANSCRIPTION_CANCELLED.store(false, Ordering::SeqCst);
 
-    let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_parakeet = matches!(provider.as_deref(), Some("parakeet" | "local"));
     let result = run_retranscription(
         app.clone(),
         meeting_id.clone(),
@@ -195,7 +195,7 @@ async fn run_retranscription<R: Runtime>(
     let audio_path = find_audio_file(&folder_path)?;
 
     // Determine which provider to use (default to whisper)
-    let use_parakeet = provider.as_deref() == Some("parakeet");
+    let use_parakeet = matches!(provider.as_deref(), Some("parakeet" | "local"));
 
     info!(
         "Starting retranscription for meeting {} with language {:?}, model {:?}, provider {:?}",
@@ -662,14 +662,14 @@ async fn get_configured_parakeet_model<R: Runtime>(app: &AppHandle<R>) -> Result
     let provider = &config.transcript.provider;
     let model = &config.transcript.model;
 
-    if provider == "parakeet" {
+    if provider == "parakeet" || provider == "local" {
         info!(
             "Found transcript config: provider={}, model={}",
             provider, model
         );
         Ok(model.clone())
     } else {
-        warn!("Configured provider is not Parakeet, using default model");
+        warn!("Configured provider is not a local transcription provider, using default model");
         Ok(DEFAULT_PARAKEET_MODEL.to_string())
     }
 }

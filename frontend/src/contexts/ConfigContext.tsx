@@ -69,7 +69,7 @@ interface ConfigContextType {
 
   // Ollama models
   models: OllamaModel[];
-  modelOptions: Record<ModelConfig['provider'], string[]>;
+  modelOptions: Record<string, string[]>;
   error: string;
 
   // Summary configuration
@@ -316,7 +316,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Calculate model options based on available models
-  const modelOptions: Record<ModelConfig['provider'], string[]> = {
+  const modelOptions: Record<string, string[]> = {
     ollama: models.map(model => model.name),
     claude: ['claude-3-5-sonnet-latest'],
     groq: ['llama-3.3-70b-versatile'],

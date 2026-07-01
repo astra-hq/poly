@@ -188,6 +188,22 @@ pub async fn complete_onboarding<R: Runtime>(
     config.summary = onboarding_config.summary;
     config.transcript = onboarding_config.transcript;
 
+    // Ensure the "local" provider exists in the providers list
+    let has_local = config.providers.iter().any(|p| p.id == "local");
+    if !has_local {
+        config.providers.insert(
+            0,
+            crate::providers::ProviderConfig {
+                id: "local".to_string(),
+                name: "Local".to_string(),
+                provider_type: crate::providers::ProviderType::Local,
+                base_url: String::new(),
+                default_model: String::new(),
+            },
+        );
+        info!("Added 'local' provider to config during onboarding");
+    }
+
     state
         .config_repo
         .save_atomic(&config)
@@ -224,7 +240,7 @@ pub fn build_onboarding_config(model: &str) -> crate::poly_config::PolyConfig {
     let mut config = crate::poly_config::PolyConfig::default();
     config.summary.provider_id = "local".to_string();
     config.summary.model = model.to_string();
-    config.transcript.provider = "parakeet".to_string();
+    config.transcript.provider = "local".to_string();
     config.transcript.model = crate::config::DEFAULT_PARAKEET_MODEL.to_string();
     config
 }
@@ -259,9 +275,9 @@ mod tests {
     }
 
     #[test]
-    fn onboarding_config_uses_parakeet_transcript() {
+    fn onboarding_config_uses_local_transcript_provider() {
         let config = build_onboarding_config("qwen3-8b");
-        assert_eq!(config.transcript.provider, "parakeet");
+        assert_eq!(config.transcript.provider, "local");
         assert_eq!(
             config.transcript.model,
             crate::config::DEFAULT_PARAKEET_MODEL
