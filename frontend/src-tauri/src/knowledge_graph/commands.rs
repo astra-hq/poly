@@ -1021,7 +1021,9 @@ mod poll_track_status_tests {
     #[async_trait]
     impl KnowledgeGraphProvider for TrackStatusMockProvider {
         async fn health(&self) -> KnowledgeGraphResult<KnowledgeGraphHealth> {
-            Err(KnowledgeGraphProviderError::UnsupportedOperation { operation: "health" })
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "health",
+            })
         }
 
         async fn insert_text(
@@ -1052,9 +1054,7 @@ mod poll_track_status_tests {
             Err(KnowledgeGraphProviderError::UnsupportedOperation { operation: "query" })
         }
 
-        async fn pipeline_status(
-            &self,
-        ) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
+        async fn pipeline_status(&self) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "pipeline_status",
             })
@@ -1127,11 +1127,8 @@ mod poll_track_status_tests {
         let empty = track_status_response(vec![]);
         let populated = track_status_response(vec![make_doc("d1", "PROCESSED")]);
 
-        let provider = TrackStatusMockProvider::new(vec![
-            empty.clone(),
-            empty.clone(),
-            populated.clone(),
-        ]);
+        let provider =
+            TrackStatusMockProvider::new(vec![empty.clone(), empty.clone(), populated.clone()]);
 
         let result = poll_track_status_until_final(&provider, "test-track").await;
         assert!(result.is_ok(), "expected success, got: {:?}", result.err());
@@ -1163,17 +1160,15 @@ mod poll_track_status_tests {
 
     #[tokio::test]
     async fn poll_returns_when_all_docs_failed() {
-        let status = track_status_response(vec![
-            make_failed_doc("d1", "timeout"),
-        ]);
+        let status = track_status_response(vec![make_failed_doc("d1", "timeout")]);
 
-        let provider = TrackStatusMockProvider::new(vec![
-            track_status_response(vec![]),
-            status,
-        ]);
+        let provider = TrackStatusMockProvider::new(vec![track_status_response(vec![]), status]);
 
         let result = poll_track_status_until_final(&provider, "test-track").await;
-        assert!(result.is_ok(), "FAILED is a final status so poll should return");
+        assert!(
+            result.is_ok(),
+            "FAILED is a final status so poll should return"
+        );
         let status = result.unwrap();
         assert_eq!(status.documents.len(), 1);
         assert_eq!(status.documents[0].status, "FAILED");
@@ -1184,10 +1179,8 @@ mod poll_track_status_tests {
 
     #[tokio::test]
     async fn poll_continues_when_some_docs_still_pending() {
-        let mixed_pending = track_status_response(vec![
-            make_doc("d1", "PROCESSED"),
-            make_doc("d2", "PENDING"),
-        ]);
+        let mixed_pending =
+            track_status_response(vec![make_doc("d1", "PROCESSED"), make_doc("d2", "PENDING")]);
         let all_processed = track_status_response(vec![
             make_doc("d1", "PROCESSED"),
             make_doc("d2", "PROCESSED"),
@@ -1242,9 +1235,7 @@ mod summary_source_tests {
 #[cfg(test)]
 mod collect_track_failures_tests {
     use super::*;
-    use crate::knowledge_graph::types::{
-        KnowledgeGraphTrackStatus, TrackStatusDocument,
-    };
+    use crate::knowledge_graph::types::{KnowledgeGraphTrackStatus, TrackStatusDocument};
 
     fn make_doc(id: &str, status: &str, error_msg: Option<&str>) -> TrackStatusDocument {
         TrackStatusDocument {
@@ -1316,8 +1307,7 @@ mod collect_track_failures_tests {
         assert_eq!(
             result,
             Some(
-                "2 document(s) in track track-123 failed processing (no error details)"
-                    .to_string()
+                "2 document(s) in track track-123 failed processing (no error details)".to_string()
             )
         );
     }

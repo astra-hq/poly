@@ -2,7 +2,6 @@ use log::info;
 use rand::Rng;
 use serde::Serialize;
 use std::collections::HashSet;
-use std::io::{BufRead, Read};
 use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -17,8 +16,8 @@ use crate::poly_config::config::{
     KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets,
 };
 use crate::poly_config::repository::ConfigRepository;
-use crate::providers::ProviderType;
 use crate::process_path;
+use crate::providers::ProviderType;
 use crate::secrets::keyring_first_store::KeyringFirstSecretStore;
 use crate::secrets::refs::knowledge_graph_profile_key;
 use crate::secrets::status::mask_api_key;
@@ -36,7 +35,6 @@ pub struct DependencyInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct SetupDependencyResult {
     pub docker: DependencyInfo,
-    pub ollama: DependencyInfo,
     pub platform: String,
 }
 
@@ -260,9 +258,8 @@ fn emit_setup_progress<R: Runtime>(app: &AppHandle<R>, message: &str, level: &st
 }
 
 fn poly_docker_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        "Could not determine home directory for Poly docker setup".to_string()
-    })?;
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Could not determine home directory for Poly docker setup".to_string())?;
     Ok(home.join(".poly").join("docker"))
 }
 
@@ -299,10 +296,9 @@ pub async fn api_setup_kg_check_deps() -> Result<SetupDependencyResult, String> 
     info!("api_setup_kg_check_deps called");
 
     let docker = check_docker();
-    let ollama = check_ollama();
     let platform = std::env::consts::OS.to_string();
 
-    Ok(SetupDependencyResult { docker, ollama, platform })
+    Ok(SetupDependencyResult { docker, platform })
 }
 
 /// Check whether Docker is installed (docker --version).
@@ -322,147 +318,49 @@ fn check_docker() -> DependencyInfo {
     }
 }
 
-/// Check whether Ollama is installed (ollama --version).
-fn check_ollama() -> DependencyInfo {
-    match process_path::command("ollama").arg("--version").output() {
-        Ok(output) if output.status.success() => {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            DependencyInfo {
-                installed: true,
-                version: Some(version),
-            }
-        }
-        _ => DependencyInfo {
-            installed: false,
-            version: None,
-        },
-    }
-}
-
-/// Pull an embedding model via Ollama, emitting progress events.
-/// This is Phase 2 of the "Set it up for me" flow.
-#[tauri::command]
-pub async fn api_setup_kg_pull_model<R: Runtime>(
-    app: AppHandle<R>,
-    model: String,
-) -> Result<String, String> {
-    info!("api_setup_kg_pull_model called for model: {}", model);
-
-    emit_setup_progress(
-        &app,
-        &format!("Pulling embedding model '{}' via Ollama...", model),
-        "info",
-        "pull-model",
-    );
-
-    let mut child = process_path::command("ollama")
-        .args(["pull", &model])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            let msg = format!("Failed to run ollama pull: {}. Is Ollama installed?", e);
-            emit_setup_progress(&app, &msg, "error", "error");
-            msg
-        })?;
-
-    // ollama pull uses \r-based progress bars, not just \n-terminated lines.
-    // Reading raw bytes and splitting on both \r and \n gives us every
-    // incremental progress update instead of only the final output.
-    if let Some(stdout) = child.stdout.take() {
-        let mut reader = std::io::BufReader::new(stdout);
-        let mut line_buf = Vec::new();
-        loop {
-            match reader.read_until(b'\n', &mut line_buf) {
-                Ok(0) => break,
-                Ok(_) => {
-                    while let Some(&last) = line_buf.last() {
-                        if last == b'\r' || last == b'\n' {
-                            line_buf.pop();
-                        } else {
-                            break;
-                        }
-                    }
-                    if !line_buf.is_empty() {
-                        for chunk in line_buf.split(|&b| b == b'\r') {
-                            let trimmed = String::from_utf8_lossy(chunk).trim().to_string();
-                            if !trimmed.is_empty() {
-                                emit_setup_progress(&app, &trimmed, "info", "pull-model");
-                            }
-                        }
-                    }
-                    line_buf.clear();
-                }
-                Err(e) => {
-                    info!("Error reading ollama pull stdout: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
-    let status = child.wait().map_err(|e| {
-        let msg = format!("Failed to wait for ollama pull: {}", e);
-        emit_setup_progress(&app, &msg, "error", "error");
-        msg
-    })?;
-
-    if !status.success() {
-        let stderr = child
-            .stderr
-            .take()
-            .map(|s| {
-                let mut buf = String::new();
-                std::io::BufReader::new(s).read_to_string(&mut buf).ok();
-                buf
-            })
-            .unwrap_or_default();
-        let msg = if stderr.trim().is_empty() {
-            format!("Ollama pull failed (exit code: {:?})", status.code())
-        } else {
-            format!("Ollama pull failed: {}", stderr.trim())
-        };
-        emit_setup_progress(&app, &msg, "error", "error");
-        return Err(msg);
-    }
-
-    emit_setup_progress(
-        &app,
-        &format!("Model '{}' pulled successfully", model),
-        "success",
-        "pull-model",
-    );
-
-    Ok(format!("Model '{}' is ready", model))
-}
-
-/// Update the local `.env` file to match a profile's current LLM model.
-///
 /// Resolve the LLM binding config for a KG profile.
 ///
 /// When `llm_provider_id` is set, looks up the provider in the global
 /// providers list and maps its type to the LightRAG binding string
-/// (`openai`, `anthropic`, `ollama`, etc.). Falls back to Ollama when
-/// no provider is configured.
+/// (`openai`, `anthropic`, `ollama`, etc.). When no provider is
+/// configured, defaults to the local bridge via openai binding.
 fn resolve_llm_binding(
     config: &crate::poly_config::config::PolyConfig,
     profile: &KnowledgeGraphProfile,
 ) -> (String, String) {
     let provider_id = match &profile.llm_provider_id {
         Some(id) if !id.is_empty() => id,
-        _ => return ("ollama".into(), "http://host.docker.internal:11434".into()),
+        _ => {
+            return (
+                "openai".into(),
+                "http://host.docker.internal:11337/v1".into(),
+            )
+        }
     };
 
     match config.find_provider(provider_id) {
         Some(p) => {
             let binding = match p.provider_type {
-                ProviderType::OpenAI | ProviderType::Groq | ProviderType::OpenRouter | ProviderType::Custom => "openai",
+                ProviderType::OpenAI
+                | ProviderType::Groq
+                | ProviderType::OpenRouter
+                | ProviderType::Custom
+                | ProviderType::Local => "openai",
                 ProviderType::Anthropic => "anthropic",
                 ProviderType::Ollama => "ollama",
             };
-            (binding.to_string(), p.base_url.clone())
+            // For Local provider, use the bridge host URL, not whatever base_url is set
+            let host = if matches!(p.provider_type, ProviderType::Local) {
+                "http://host.docker.internal:11337/v1".to_string()
+            } else {
+                p.base_url.clone()
+            };
+            (binding.to_string(), host)
         }
-        None => ("ollama".into(), "http://host.docker.internal:11434".into()),
+        None => (
+            "openai".into(),
+            "http://host.docker.internal:11337/v1".into(),
+        ),
     }
 }
 
@@ -508,7 +406,9 @@ pub async fn api_update_knowledge_graph_env<R: Runtime>(
     let model = &profile.llm_model;
 
     // Resolve binding, host, and API key from provider config
-    let full_config = config_repo.load().map_err(|e| format!("Failed to load config: {}", e))?;
+    let full_config = config_repo
+        .load()
+        .map_err(|e| format!("Failed to load config: {}", e))?;
     let (binding, host) = resolve_llm_binding(&full_config, profile);
 
     // Look up API key from SecretStore for non-Ollama providers
@@ -544,9 +444,13 @@ pub async fn api_update_knowledge_graph_env<R: Runtime>(
                 *line = new;
                 changed = true;
             }
-        } else if line.starts_with("OPENAI_API_KEY=") {
+        } else if line.starts_with("OPENAI_API_KEY=") || line.starts_with("LLM_BINDING_API_KEY=") {
             has_api_key_line = true;
-            let new = format!("OPENAI_API_KEY={}", api_key);
+            let new = if line.starts_with("OPENAI_API_KEY=") {
+                format!("OPENAI_API_KEY={}", api_key)
+            } else {
+                format!("LLM_BINDING_API_KEY={}", api_key)
+            };
             if *line != new {
                 *line = new;
                 changed = true;
@@ -565,7 +469,9 @@ pub async fn api_update_knowledge_graph_env<R: Runtime>(
 
     // If OPENAI_API_KEY wasn't found in the file, append it after LLM_BINDING_HOST
     if !has_api_key_line {
-        let insert_pos = lines.iter().position(|l| l.starts_with("LLM_BINDING_HOST="))
+        let insert_pos = lines
+            .iter()
+            .position(|l| l.starts_with("LLM_BINDING_HOST="))
             .map(|i| i + 1)
             .unwrap_or(lines.len());
         lines.insert(insert_pos, format!("LLM_BINDING_API_KEY={}", api_key));
@@ -575,10 +481,63 @@ pub async fn api_update_knowledge_graph_env<R: Runtime>(
     if changed {
         std::fs::write(&dot_env_path, lines.join("\n"))
             .map_err(|e| format!("Failed to write .env: {}", e))?;
-        info!("Updated .env for profile '{}': binding={}, host={}, model={}", profile_id, binding, host, model);
+        info!(
+            "Updated .env for profile '{}': binding={}, host={}, model={}",
+            profile_id, binding, host, model
+        );
     }
 
     Ok(())
+}
+
+/// Pure function: generate the `.env` content for a local KG stack.
+///
+/// Exposed for testing — no side effects, no secret store, no I/O.
+fn generate_kg_env_content(
+    neo4j_password: &str,
+    lightrag_api_key: &str,
+    llm_binding: &str,
+    llm_binding_host: &str,
+    llm_binding_api_key: &str,
+    llm_model: &str,
+) -> String {
+    format!(
+        "# Auto-generated by Poly knowledge-graph setup\n\
+         NEO4J_AUTH=neo4j/{}\n\
+         LIGHTRAG_API_KEY={}\n\
+         \n\
+         # LightRAG / embedding model reference\n\
+         LIGHTRAG_EMBEDDING_MODEL=bge-m3\n\
+         LIGHTRAG_EMBEDDING_MODEL_NAME=BAAI/bge-m3\n\
+         \n\
+         # LightRAG — LLM config\n\
+         LLM_BINDING={}\n\
+         LLM_BINDING_HOST={}\n\
+         LLM_BINDING_API_KEY={}\n\
+         LLM_MODEL={}\n\
+         KEYWORD_LLM_MODEL={}\n\
+         QUERY_LLM_MODEL={}\n\
+         \n\
+         EMBEDDING_BINDING=openai\n\
+         EMBEDDING_BINDING_HOST=http://host.docker.internal:11337/v1\n\
+         EMBEDDING_API_KEY=not-needed\n\
+         EMBEDDING_MODEL=bge-m3\n\
+         EMBEDDING_DIM=1024\n\
+         LIGHTRAG_PARSER=*:native-teP,*:legacy-R\n\
+         \n\
+         # Entity extraction: JSON mode + custom Poly meeting ontology\n\
+         ENTITY_EXTRACTION_USE_JSON=true\n\
+         ENTITY_TYPE_PROMPT_FILE=poly_meeting_ontology.yml\n\
+         PROMPT_DIR=/app/data/prompts",
+        neo4j_password,
+        lightrag_api_key,
+        llm_binding,
+        llm_binding_host,
+        llm_binding_api_key,
+        llm_model,
+        llm_model,
+        llm_model
+    )
 }
 
 /// Auto-provision a local knowledge graph stack via docker compose.
@@ -703,7 +662,10 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
             let bytes: [u8; 32] = rand::thread_rng().gen();
             let new_key = format!(
                 "poly-lrag-{}",
-                bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+                bytes
+                    .iter()
+                    .map(|b| format!("{:02x}", b))
+                    .collect::<String>()
             );
             store
                 .set(&secret_ref, &new_key)
@@ -737,9 +699,16 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
                             ProviderType::OpenAI
                             | ProviderType::Groq
                             | ProviderType::OpenRouter
-                            | ProviderType::Custom => "openai",
+                            | ProviderType::Custom
+                            | ProviderType::Local => "openai",
                             ProviderType::Anthropic => "anthropic",
                             ProviderType::Ollama => "ollama",
+                        };
+                        // For Local provider, use the bridge host URL
+                        let host = if matches!(p.provider_type, ProviderType::Local) {
+                            "http://host.docker.internal:11337/v1".to_string()
+                        } else {
+                            p.base_url.clone()
                         };
                         // Look up the API key for non-Ollama providers
                         let api_key = if binding != "ollama" {
@@ -753,18 +722,26 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
                         } else {
                             String::new()
                         };
-                        (binding.to_string(), p.base_url.clone(), api_key)
+                        (binding.to_string(), host, api_key)
                     }
-                    None => {
-                        ("ollama".into(), "http://host.docker.internal:11434".into(), String::new())
-                    }
+                    None => (
+                        "openai".into(),
+                        "http://host.docker.internal:11337/v1".into(),
+                        String::new(),
+                    ),
                 },
-                Err(_) => {
-                    ("ollama".into(), "http://host.docker.internal:11434".into(), String::new())
-                }
+                Err(_) => (
+                    "openai".into(),
+                    "http://host.docker.internal:11337/v1".into(),
+                    String::new(),
+                ),
             }
         } else {
-            ("ollama".into(), "http://host.docker.internal:11434".into(), String::new())
+            (
+                "openai".into(),
+                "http://host.docker.internal:11337/v1".into(),
+                String::new(),
+            )
         }
     };
 
@@ -773,43 +750,18 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
     let neo4j_bytes: [u8; 32] = rand::thread_rng().gen();
     let neo4j_password = format!(
         "poly-{}",
-        neo4j_bytes.iter().map(|b| format!("{:02x}", b)).collect::<String>()
+        neo4j_bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>()
     );
-    let dot_env_content = format!(
-        "# Auto-generated by Poly knowledge-graph setup\n\
-         NEO4J_AUTH=neo4j/{}\n\
-         LIGHTRAG_API_KEY={}\n\
-         \n\
-         # LightRAG / embedding model reference\n\
-         LIGHTRAG_EMBEDDING_MODEL=bge-m3\n\
-         LIGHTRAG_EMBEDDING_MODEL_NAME=BAAI/bge-m3\n\
-         \n\
-         # LightRAG — LLM config\n\
-         LLM_BINDING={}\n\
-         LLM_BINDING_HOST={}\n\
-         OPENAI_API_KEY={}\n\
-         LLM_MODEL={}\n\
-         KEYWORD_LLM_MODEL={}\n\
-         QUERY_LLM_MODEL={}\n\
-         \n\
-         EMBEDDING_BINDING=ollama\n\
-         EMBEDDING_BINDING_HOST=http://host.docker.internal:11434\n\
-         EMBEDDING_MODEL=bge-m3:latest\n\
-         EMBEDDING_DIM=1024\n\
-         LIGHTRAG_PARSER=*:native-teP,*:legacy-R\n\
-         \n\
-         # Entity extraction: JSON mode + custom Poly meeting ontology\n\
-         ENTITY_EXTRACTION_USE_JSON=true\n\
-         ENTITY_TYPE_PROMPT_FILE=poly_meeting_ontology.yml\n\
-         PROMPT_DIR=/app/data/prompts\n",
-        neo4j_password,
-        lightrag_api_key,
-        llm_binding,
-        llm_binding_host,
-        llm_binding_api_key,
-        llm_model,
-        llm_model,
-        llm_model
+    let dot_env_content = generate_kg_env_content(
+        &neo4j_password,
+        &lightrag_api_key,
+        &llm_binding,
+        &llm_binding_host,
+        &llm_binding_api_key,
+        &llm_model,
     );
 
     std::fs::write(&dot_env_path, dot_env_content).map_err(|e| {
@@ -1013,7 +965,7 @@ pub async fn api_setup_local_knowledge_graph<R: Runtime>(
         name: "Local LightRAG".to_string(),
         kind: ProfileKind::Local,
         embedding: EmbeddingConfig {
-            provider: "ollama".to_string(),
+            provider: "openai".to_string(),
             model: embedding_model,
             dimensions: 1024,
         },
@@ -1599,7 +1551,7 @@ mod tests {
                 name: "Local LightRAG".into(),
                 kind: ProfileKind::Local,
                 embedding: EmbeddingConfig {
-                    provider: "ollama".into(),
+                    provider: "openai".into(),
                     model: "BAAI/bge-m3".into(),
                     dimensions: 1024,
                 },
@@ -1658,5 +1610,139 @@ mod tests {
         // And: the key is still in SecretStore
         let stored = store.get(&secret_ref).await.unwrap();
         assert_eq!(stored.as_deref(), Some(raw_key));
+    }
+
+    // ── generate_kg_env_content tests ─────────────────────────────
+
+    #[test]
+    fn test_kg_env_content_uses_openai_llm_binding() {
+        let content = generate_kg_env_content(
+            "secret",
+            "poly-key",
+            "openai",
+            "http://host.docker.internal:11337/v1",
+            "not-needed",
+            "test-model",
+        );
+        assert!(content.contains("LLM_BINDING=openai"));
+    }
+
+    #[test]
+    fn test_kg_env_content_uses_openai_embedding_binding() {
+        let content = generate_kg_env_content(
+            "secret",
+            "poly-key",
+            "openai",
+            "http://host.docker.internal:11337/v1",
+            "not-needed",
+            "test-model",
+        );
+        assert!(content.contains("EMBEDDING_BINDING=openai"));
+    }
+
+    #[test]
+    fn test_kg_env_content_has_bridge_host() {
+        let content = generate_kg_env_content(
+            "secret",
+            "poly-key",
+            "openai",
+            "http://host.docker.internal:11337/v1",
+            "not-needed",
+            "test-model",
+        );
+        assert!(content.contains("LLM_BINDING_HOST=http://host.docker.internal:11337/v1"));
+        assert!(content.contains("EMBEDDING_BINDING_HOST=http://host.docker.internal:11337/v1"));
+    }
+
+    #[test]
+    fn test_kg_env_content_uses_llm_binding_api_key() {
+        let content = generate_kg_env_content(
+            "secret",
+            "poly-key",
+            "openai",
+            "http://host.docker.internal:11337/v1",
+            "not-needed",
+            "test-model",
+        );
+        assert!(content.contains("LLM_BINDING_API_KEY=not-needed"));
+        assert!(!content.contains("OPENAI_API_KEY="));
+    }
+
+    #[test]
+    fn test_kg_env_content_no_ollama_defaults() {
+        let content = generate_kg_env_content(
+            "secret",
+            "poly-key",
+            "openai",
+            "http://host.docker.internal:11337/v1",
+            "not-needed",
+            "test-model",
+        );
+        assert!(
+            !content.contains("ollama"),
+            "generated env must not contain any ollama reference"
+        );
+        assert!(
+            !content.contains("11434"),
+            "generated env must not reference ollama port 11434"
+        );
+    }
+
+    #[test]
+    fn test_kg_env_content_ollama_binding_respected_when_explicit() {
+        let content = generate_kg_env_content(
+            "secret",
+            "poly-key",
+            "ollama",
+            "http://host.docker.internal:11434",
+            "",
+            "llama3:8b",
+        );
+        assert!(content.contains("LLM_BINDING=ollama"));
+        assert!(content.contains("LLM_BINDING_HOST=http://host.docker.internal:11434"));
+    }
+
+    #[test]
+    fn test_kg_env_content_has_embedding_dim_1024() {
+        let content = generate_kg_env_content(
+            "secret",
+            "poly-key",
+            "openai",
+            "http://host.docker.internal:11337/v1",
+            "not-needed",
+            "test-model",
+        );
+        assert!(content.contains("EMBEDDING_DIM=1024"));
+        assert!(content.contains("EMBEDDING_MODEL=bge-m3"));
+    }
+
+    #[test]
+    fn test_kg_env_content_includes_neo4j_and_lightrag_keys() {
+        let content = generate_kg_env_content(
+            "poly-abc123",
+            "poly-lrag-def456",
+            "openai",
+            "http://host.docker.internal:11337/v1",
+            "not-needed",
+            "test-model",
+        );
+        assert!(content.contains("NEO4J_AUTH=neo4j/poly-abc123"));
+        assert!(content.contains("LIGHTRAG_API_KEY=poly-lrag-def456"));
+    }
+
+    // ── Dependency check tests ──────────────────────────────────
+
+    #[test]
+    fn test_setup_deps_result_has_no_ollama_field() {
+        let result = SetupDependencyResult {
+            docker: DependencyInfo {
+                installed: true,
+                version: Some("v1".into()),
+            },
+            platform: "macos".into(),
+        };
+        assert!(result.docker.installed);
+        assert_eq!(result.platform, "macos");
+        // Compile-time check: struct has no ollama field
     }
 }
