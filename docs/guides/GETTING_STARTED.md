@@ -249,14 +249,14 @@ When the app launches for the first time:
 
 1. **Microphone permission** — macOS/Windows will prompt for microphone access. Grant it.
 2. **Screen recording permission** (macOS only) — Required for system audio capture. Grant it.
-3. **Whisper model download** — The first time you start a recording, Poly downloads a Whisper model (typically ~1.5 GB for the `base` model). This happens once.
+3. **Parakeet model download** — The first time you start a recording, Poly downloads the Parakeet transcription model (typically ~1.5 GB). This happens once.
 4. **Recording** — Click the record button, select your microphone and system audio devices, and start a meeting.
 
 ### First recording checklist
 
 - [ ] Microphone permission granted
 - [ ] System audio device selected (BlackHole on macOS, or WASAPI loopback on Windows)
-- [ ] Whisper model downloaded (automatic on first recording)
+- [ ] Parakeet model downloaded (automatic on first recording)
 - [ ] Audio levels visible in the UI (confirms capture is working)
 
 > For system audio on macOS, you'll need to install a virtual audio device like [BlackHole](https://github.com/ExistentialAudio/BlackHole). On Windows, WASAPI loopback is built-in.
@@ -328,7 +328,7 @@ Install CMake:
 
 ### First recording is slow / transcription delayed
 
-The first recording downloads the Whisper model. Subsequent recordings use the cached model and start much faster. You can also switch to a smaller model in Settings → Transcription for quicker startup.
+The first recording downloads the Parakeet model. Subsequent recordings use the cached model and start much faster. You can also switch to a smaller model in Settings → Transcription for quicker startup.
 
 ---
 

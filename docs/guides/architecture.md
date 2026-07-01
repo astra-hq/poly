@@ -36,9 +36,9 @@ graph TD
 
 *   **Tauri Core:** The heart of the application, responsible for managing the window, handling events, and exposing the Rust core to the frontend.
 *   **Audio Engine:** Captures audio from the microphone and system, processes it, and prepares it for transcription.
-*   **Transcription Engine:** Uses local speech-to-text models (Whisper or Parakeet) to transcribe the captured audio. It can be accelerated with a GPU.
+*   **Transcription Engine:** Uses local speech-to-text models (Parakeet) to transcribe the captured audio. It can be accelerated with a GPU.
 *   **Database:** A local SQLite database that stores runtime data only: meeting metadata, transcripts, summaries, and knowledge graph runtime state. Non-secret config is stored in `poly.yml`; raw secrets (API keys) are stored in the OS keychain via `SecretStore`. Legacy `settings` and `transcript_settings` tables are dropped on first startup after migration — they are not active config stores.
-*   **Summary Engine:** Generates meeting summaries using various Large Language Models (LLMs), including local models via Ollama.
+*   **Summary Engine:** Generates meeting summaries using various Large Language Models (LLMs), including on-device models via the Local provider, with external options such as Ollama, Claude, Groq, OpenRouter, and OpenAI-compatible endpoints.
 
 ## Config & Secret Storage Architecture
 

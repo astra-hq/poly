@@ -8,15 +8,15 @@ This guide walks you through running the LightRAG knowledge-graph stack locally 
 
 - [Docker](https://docs.docker.com/get-docker/) + Docker Compose v2
 - At least 4 GB of free RAM (LightRAG + Neo4j together)
-- (Optional) An OpenAI, Groq, or Ollama API key if you want LLM-powered query responses
+- (Optional) An OpenAI, Groq, or Local provider API key if you want LLM-powered query responses
 
 ## Quick Start
 
 1. **Auto-setup (recommended)**
 
-   Open **Settings** → **Knowledge Graph** in the Poly app and add a **Local** profile. The app automatically creates `~/.poly/docker/`, copies the compose template, and generates `kg.env` with sensible defaults.
+Open **Settings** → **Knowledge Graph** in the Poly app and add a **Local** profile. The app automatically creates `~/.poly/docker/`, copies the compose template, and generates `kg.env` with sensible defaults. The Local bridge connects the Poly desktop app to a LightRAG instance running inside Docker alongside Neo4j.
 
-   If you prefer to set up the files manually, create `~/.poly/docker/` and place `docker-compose.kg.yml` and `kg.env` there.
+If you prefer to set up the files manually, create `~/.poly/docker/` and place `docker-compose.kg.yml` and `kg.env` there.
 
 2. **Edit `~/.poly/docker/kg.env` and replace the placeholders**
 

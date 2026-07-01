@@ -66,11 +66,11 @@ Whether you're a defense consultant, enterprise executive, legal professional, o
 ## Features
 
 - **Local First:** All processing is done on your machine. No data ever leaves your computer.
-- **Real-time Transcription:** Get a live transcript of your meeting as it happens, powered by Whisper and Parakeet models.
+- **Real-time Transcription:** Get a live transcript of your meeting as it happens, powered by Parakeet models.
 - **AI-Powered Summaries:** Generate meeting summaries using powerful language models.
 - **Multi-Platform:** Runs on macOS and Linux.
 - **Open Source:** Poly is open source and free to use under the MIT license.
-- **Flexible AI Provider Support:** Choose from Ollama (local), Claude, Groq, OpenRouter, or use your own OpenAI-compatible endpoint.
+- **Flexible AI Provider Support:** Choose from Local (on-device), Claude, Groq, OpenRouter, or use your own OpenAI-compatible endpoint. Ollama is available as an advanced external option.
 
 ## Installation
 
@@ -101,7 +101,7 @@ pnpm install
 
 ### 🎯 Local Transcription
 
-Transcribe meetings entirely on your device using **Whisper** or **Parakeet** models. No cloud required.
+Transcribe meetings entirely on your device using **Parakeet** models. You can also bring your own Hugging Face GGUF model for custom transcription. No cloud required.
 
 <p align="center">
     <img src="docs/images/home.png" width="650" style="border-radius: 10px;" alt="Poly transcription interface" />
@@ -119,7 +119,9 @@ Import existing audio files to generate transcripts, or enhance and re-transcrib
 
 ### 🤖 AI-Powered Summaries
 
-Generate meeting summaries with your choice of AI provider. **Ollama** (local) is recommended, with support for Claude, Groq, OpenRouter, and OpenAI.
+Generate meeting summaries with your choice of AI provider. **Local** (on-device) is recommended, with support for Claude, Groq, OpenRouter, and OpenAI. Ollama is available as an advanced external option.
+
+You can also connect to a local Knowledge Graph bridge (Docker + LightRAG + Neo4j) for meeting indexing and semantic search.
 
 <p align="center">
     <img src="docs/images/summary.png" width="650" style="border-radius: 10px;" alt="Poly summary generation" />
