@@ -36,7 +36,7 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
         summary: SummaryConfig {
             provider_id: "openai".to_string(),
             model: "gpt-4o-2024-11-20".to_string(),
-            whisper_model: "large-v3-turbo".to_string(),
+            _whisper_model: Some("large-v3-turbo".to_string()),
         },
         transcript: TranscriptConfig {
             provider: "parakeet".to_string(),
@@ -69,7 +69,6 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
     // Assert expected fields are present
     assert!(yaml.contains("openai"));
     assert!(yaml.contains("gpt-4o-2024-11-20"));
-    assert!(yaml.contains("large-v3-turbo"));
     assert!(yaml.contains("http://localhost:11434"));
     assert!(yaml.contains("parakeet"));
     assert!(yaml.contains("custom-model-v2"));
@@ -96,13 +95,15 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
     assert_eq!(restored.providers, cfg.providers);
     assert_eq!(restored.summary.provider_id, cfg.summary.provider_id);
     assert_eq!(restored.summary.model, cfg.summary.model);
-    assert_eq!(restored.summary.whisper_model, cfg.summary.whisper_model);
+    assert_eq!(restored.summary._whisper_model, None); // skip_serializing
     assert_eq!(restored.transcript.provider, cfg.transcript.provider);
     assert_eq!(restored.transcript.model, cfg.transcript.model);
     assert_eq!(restored.knowledge_graph.profiles.len(), 1);
     assert_eq!(restored.knowledge_graph.profiles[0].id, "kg-1");
     assert_eq!(
-        restored.knowledge_graph.profiles[0].llm_provider_id.as_deref(),
+        restored.knowledge_graph.profiles[0]
+            .llm_provider_id
+            .as_deref(),
         Some("custom-ai")
     );
     assert_eq!(
@@ -135,7 +136,10 @@ preferences:
     assert_eq!(cfg.transcript.provider, "groq");
 
     // Defaulted fields
-    assert_eq!(cfg.summary.whisper_model, "large-v3-turbo"); // default
+    assert_eq!(
+        cfg.summary._whisper_model,
+        Some("large-v3-turbo".to_string())
+    ); // default
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8"); // default
     assert!(cfg.providers.is_empty());
     assert!(cfg.knowledge_graph.profiles.is_empty()); // default
@@ -155,7 +159,10 @@ fn empty_yaml_produces_all_defaults() {
 
     assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
-    assert_eq!(cfg.summary.whisper_model, "large-v3-turbo");
+    assert_eq!(
+        cfg.summary._whisper_model,
+        Some("large-v3-turbo".to_string())
+    );
     assert_eq!(cfg.transcript.provider, "parakeet");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert!(cfg.providers.is_empty());
@@ -213,7 +220,7 @@ fn save_and_load_roundtrip_via_file() {
         summary: SummaryConfig {
             provider_id: "ollama".to_string(),
             model: "llama3.1:8b".to_string(),
-            whisper_model: "medium".to_string(),
+            _whisper_model: Some("medium".to_string()),
         },
         transcript: TranscriptConfig {
             provider: "localWhisper".to_string(),
@@ -241,7 +248,7 @@ fn save_and_load_roundtrip_via_file() {
     assert_eq!(restored.providers[0].base_url, "http://192.168.1.100:11434");
     assert_eq!(restored.summary.provider_id, "ollama");
     assert_eq!(restored.summary.model, "llama3.1:8b");
-    assert_eq!(restored.summary.whisper_model, "medium");
+    assert_eq!(restored.summary._whisper_model, Some("medium".to_string()));
     assert_eq!(restored.transcript.provider, "localWhisper");
     assert_eq!(restored.transcript.model, "large-v3");
     assert!(restored.knowledge_graph.profiles.is_empty());
@@ -301,9 +308,7 @@ fn load_default_returns_default_config() {
 
 #[test]
 fn load_from_file_missing_returns_default() {
-    let cfg = PolyConfig::load_from_path(&std::path::PathBuf::from(
-        "/nonexistent/path/poly.yml",
-    ));
+    let cfg = PolyConfig::load_from_path(&std::path::PathBuf::from("/nonexistent/path/poly.yml"));
     assert!(cfg.is_ok(), "Missing file should return default, not error");
     let cfg = cfg.unwrap();
     assert_eq!(cfg.summary.provider_id, "openai");
@@ -314,9 +319,9 @@ fn load_from_file_missing_returns_default() {
 #[test]
 fn default_poly_config_has_sensible_values() {
     let cfg = PolyConfig::default();
-    assert_eq!(cfg.summary.provider_id, "openai");
+    assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
-    assert_eq!(cfg.summary.whisper_model, "large-v3-turbo");
+    assert_eq!(cfg.summary._whisper_model, None);
     assert_eq!(cfg.transcript.provider, "parakeet");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert_eq!(cfg.preferences.language, "auto-translate");
@@ -340,7 +345,7 @@ fn poly_config_atomic_save_preserves_existing_file_on_failure() {
         summary: SummaryConfig {
             provider_id: "openai".to_string(),
             model: "original-model".to_string(),
-            whisper_model: "large-v3-turbo".to_string(),
+            ..Default::default()
         },
         transcript: TranscriptConfig::default(),
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
@@ -368,7 +373,7 @@ fn poly_config_atomic_save_preserves_existing_file_on_failure() {
         summary: SummaryConfig {
             provider_id: "claude".to_string(),
             model: "new-model".to_string(),
-            whisper_model: "large-v3-turbo".to_string(),
+            _whisper_model: Some("large-v3-turbo".to_string()),
         },
         transcript: TranscriptConfig::default(),
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
@@ -425,7 +430,10 @@ fn startup_creates_default_poly_yaml_without_config_tables() {
     // Returned config has correct defaults
     assert_eq!(cfg.summary.provider_id, "openai");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
-    assert_eq!(cfg.summary.whisper_model, "large-v3-turbo");
+    assert_eq!(
+        cfg.summary._whisper_model,
+        Some("large-v3-turbo".to_string())
+    );
     assert_eq!(cfg.transcript.provider, "parakeet");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert_eq!(cfg.preferences.language, "auto-translate");
@@ -498,7 +506,7 @@ preferences:
     // Legacy values were loaded and migrated.
     assert_eq!(cfg.summary.provider_id, "ollama");
     assert_eq!(cfg.summary.model, "llama3.1:8b");
-    assert_eq!(cfg.summary.whisper_model, "medium");
+    assert_eq!(cfg.summary._whisper_model, Some("medium".to_string()));
     assert_eq!(cfg.transcript.provider, "localWhisper");
     assert_eq!(cfg.transcript.model, "large-v3");
     assert_eq!(cfg.preferences.language, "de");
@@ -509,7 +517,10 @@ preferences:
     // Legacy file is preserved (never deleted).
     assert!(legacy_path.exists());
     let legacy_after = fs::read_to_string(&legacy_path).unwrap();
-    assert_eq!(legacy_after, legacy_yaml, "legacy file must not be modified");
+    assert_eq!(
+        legacy_after, legacy_yaml,
+        "legacy file must not be modified"
+    );
 }
 
 /// When no Poly config exists and the legacy file contains malformed YAML,
