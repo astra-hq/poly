@@ -23,21 +23,18 @@ pub struct SummaryConfig {
     #[serde(default = "default_summary_model")]
     pub model: String,
 
-    /// Whisper model used for transcription (local or remote).
-    #[serde(default = "default_whisper_model")]
-    pub whisper_model: String,
+    /// Legacy whisper_model field — silently accepted during deserialization
+    /// but NEVER serialized back to YAML.
+    #[serde(default, skip_serializing)]
+    pub _whisper_model: Option<String>,
 }
 
 fn default_summary_provider_id() -> String {
-    "openai".into()
+    "local".into()
 }
 
 fn default_summary_model() -> String {
     "gpt-4o-2024-11-20".into()
-}
-
-fn default_whisper_model() -> String {
-    crate::config::DEFAULT_WHISPER_MODEL.into()
 }
 
 impl Default for SummaryConfig {
@@ -45,7 +42,7 @@ impl Default for SummaryConfig {
         Self {
             provider_id: default_summary_provider_id(),
             model: default_summary_model(),
-            whisper_model: default_whisper_model(),
+            _whisper_model: None,
         }
     }
 }
@@ -57,8 +54,7 @@ impl Default for SummaryConfig {
 /// Non-secret transcript configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TranscriptConfig {
-    /// Transcription provider (localWhisper, parakeet, deepgram, elevenLabs,
-    /// groq, openai).
+    /// Transcription provider (parakeet, deepgram, elevenLabs, groq, openai).
     #[serde(default = "default_transcript_provider")]
     pub provider: String,
 
@@ -223,19 +219,17 @@ impl Default for PolyConfig {
     fn default() -> Self {
         // Create sensible default providers
         Self {
-            providers: vec![
-                ProviderConfig {
-                    id: "openai".to_string(),
-                    name: "OpenAI".to_string(),
-                    provider_type: crate::providers::ProviderType::OpenAI,
-                    base_url: "https://api.openai.com/v1".to_string(),
-                    default_model: "gpt-4o".to_string(),
-                },
-            ],
+            providers: vec![ProviderConfig {
+                id: "openai".to_string(),
+                name: "OpenAI".to_string(),
+                provider_type: crate::providers::ProviderType::OpenAI,
+                base_url: "https://api.openai.com/v1".to_string(),
+                default_model: "gpt-4o".to_string(),
+            }],
             summary: SummaryConfig {
-                provider_id: "openai".to_string(),
+                provider_id: "local".to_string(),
                 model: "gpt-4o-2024-11-20".to_string(),
-                whisper_model: crate::config::DEFAULT_WHISPER_MODEL.to_string(),
+                _whisper_model: None,
             },
             transcript: TranscriptConfig::default(),
             knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
@@ -270,9 +264,15 @@ impl PolyConfig {
         }
     }
 
-    /// Parse a YAML string.
+    /// Parse a YAML string, migrating stale legacy provider IDs to `local`.
     pub fn load_from_str(yaml: &str) -> Result<Self> {
-        serde_yaml::from_str(yaml).with_context(|| "Failed to parse YAML config".to_string())
+        let mut config: Self = serde_yaml::from_str(yaml)
+            .with_context(|| "Failed to parse YAML config".to_string())?;
+        // Migrate the legacy built-in-AI provider ID (0.x compat).
+        if config.summary.provider_id == "builtin-ai" {
+            config.summary.provider_id = "local".to_string();
+        }
+        Ok(config)
     }
 
     // ── persistence ─────────────────────────────────────────────────────
@@ -317,9 +317,8 @@ mod tests {
     #[test]
     fn default_summary_matches_app_defaults() {
         let s = SummaryConfig::default();
-        assert_eq!(s.provider_id, "openai");
+        assert_eq!(s.provider_id, "local");
         assert_eq!(s.model, "gpt-4o-2024-11-20");
-        assert_eq!(s.whisper_model, crate::config::DEFAULT_WHISPER_MODEL);
     }
 
     #[test]
@@ -367,7 +366,10 @@ mod tests {
         assert_eq!(back.name, "x");
         assert_eq!(back.kind, ProfileKind::Remote);
         assert_eq!(back.notes.as_deref(), Some("note"));
-        assert!(back.api_key.is_none(), "api_key must be None after roundtrip");
+        assert!(
+            back.api_key.is_none(),
+            "api_key must be None after roundtrip"
+        );
     }
 
     #[test]
@@ -378,5 +380,79 @@ mod tests {
         assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
         assert_eq!(cfg.transcript.provider, "parakeet");
         assert_eq!(cfg.preferences.language, "auto-translate");
+    }
+
+    #[test]
+    fn new_default_uses_local() {
+        let cfg = PolyConfig::default();
+        assert_eq!(cfg.summary.provider_id, "local");
+    }
+
+    #[test]
+    fn new_whisper_model_absent_from_default() {
+        let s = SummaryConfig::default();
+        let yaml = serde_yaml::to_string(&s).unwrap();
+        assert!(
+            !yaml.contains("whisper_model"),
+            "whisper_model must not be serialized: got\n{}",
+            yaml
+        );
+    }
+
+    #[test]
+    fn legacy_provider_id_migrates_to_local() {
+        const YAML: &str = "summary:\n  provider_id: builtin-ai\n";
+        let cfg = PolyConfig::load_from_str(YAML).unwrap();
+        assert_eq!(cfg.summary.provider_id, "local");
+    }
+
+    #[test]
+    fn old_yaml_with_whisper_model_still_parses() {
+        let yaml = "summary:\n  provider_id: local\n  whisper_model: large-v3\n";
+        let cfg = PolyConfig::load_from_str(yaml).unwrap();
+        assert_eq!(cfg.summary.provider_id, "local");
+    }
+
+    #[test]
+    fn default_config_has_no_ollama_dependency() {
+        let cfg = PolyConfig::default();
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        // Summary defaults to "local", never "ollama"
+        assert_eq!(cfg.summary.provider_id, "local");
+        // Transcript defaults to "parakeet", never "localWhisper"
+        assert_eq!(cfg.transcript.provider, "parakeet");
+        assert!(
+            !yaml.contains("ollama"),
+            "ollama must not appear in default: {}",
+            yaml
+        );
+    }
+
+    #[test]
+    fn default_config_has_no_whisper_transcription_path() {
+        let cfg = PolyConfig::default();
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        assert_eq!(cfg.transcript.provider, "parakeet");
+        assert!(
+            !yaml.contains("localWhisper"),
+            "localWhisper must not appear in default: {}",
+            yaml
+        );
+        assert!(
+            !yaml.contains("whisper_model"),
+            "whisper_model must not appear in default: {}",
+            yaml
+        );
+    }
+
+    #[test]
+    fn builtin_ai_is_not_an_active_provider_alias() {
+        let cfg = PolyConfig::default();
+        assert_ne!(cfg.summary.provider_id, "builtin-ai");
+        assert_ne!(cfg.transcript.provider, "builtin-ai");
+        // "builtin-ai" in YAML is migrated to "local" at load time
+        let yaml = "summary:\n  provider_id: builtin-ai\n";
+        let migrated = PolyConfig::load_from_str(yaml).unwrap();
+        assert_eq!(migrated.summary.provider_id, "local");
     }
 }

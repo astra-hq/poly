@@ -78,7 +78,8 @@ pub struct UpdateProfileRequest {
 pub struct ModelConfig {
     pub provider: String,
     pub model: String,
-    #[serde(rename = "whisperModel")]
+    /// Deprecated: no longer stored in config. Always empty.
+    #[serde(rename = "whisperModel", default)]
     pub whisper_model: String,
     /// API key status (never the raw key). Use `api_get_api_key` to fetch the raw key.
     #[serde(rename = "apiKeyStatus", skip_serializing_if = "Option::is_none")]
@@ -91,7 +92,8 @@ pub struct ModelConfig {
 pub struct SaveModelConfigRequest {
     pub provider: String,
     pub model: String,
-    #[serde(rename = "whisperModel")]
+    /// Deprecated: no longer stored in config. Accepted but ignored.
+    #[serde(rename = "whisperModel", default)]
     pub whisper_model: String,
     #[serde(rename = "apiKey")]
     pub api_key: Option<String>,
@@ -486,10 +488,9 @@ pub async fn api_get_model_config<R: Runtime>(
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
     log_info!(
-        "Loaded model config: provider_id={}, model={}, whisperModel={}",
+        "Loaded model config: provider_id={}, model={}",
         &cfg.summary.provider_id,
         &cfg.summary.model,
-        &cfg.summary.whisper_model,
     );
 
     let store = KeyringFirstSecretStore::default_store()
@@ -502,7 +503,7 @@ pub async fn api_get_model_config<R: Runtime>(
     Ok(Some(ModelConfig {
         provider: cfg.summary.provider_id.clone(),
         model: cfg.summary.model,
-        whisper_model: cfg.summary.whisper_model,
+        whisper_model: String::new(),
         api_key_status: Some(api_key_status),
         ollama_endpoint: None,
     }))
@@ -514,15 +515,14 @@ pub async fn api_save_model_config<R: Runtime>(
     state: tauri::State<'_, AppState>,
     provider: String,
     model: String,
-    whisper_model: String,
+    _whisper_model: String,
     api_key: Option<String>,
     _auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "api_save_model_config called (native): provider_id='{}', model='{}', whisperModel='{}'",
+        "api_save_model_config called (native): provider_id='{}', model='{}'",
         &provider,
         &model,
-        &whisper_model,
     );
 
     // 1. Write API key to SecretStore FIRST (fail-fast: if this fails, YAML is untouched)
@@ -544,7 +544,6 @@ pub async fn api_save_model_config<R: Runtime>(
         .map_err(|e| format!("Failed to load config: {}", e))?;
     cfg.summary.provider_id = provider;
     cfg.summary.model = model;
-    cfg.summary.whisper_model = whisper_model;
 
     state
         .config_repo
@@ -570,7 +569,10 @@ pub async fn api_get_provider_models<R: Runtime>(
     state: tauri::State<'_, AppState>,
     provider_id: String,
 ) -> Result<Vec<providers::ProviderModel>, String> {
-    log_info!("api_get_provider_models called: provider_id='{}'", &provider_id);
+    log_info!(
+        "api_get_provider_models called: provider_id='{}'",
+        &provider_id
+    );
 
     let cfg = state
         .config_repo
@@ -612,7 +614,11 @@ pub async fn api_save_provider<R: Runtime>(
     provider: providers::ProviderConfig,
     api_key: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    log_info!("api_save_provider called: id='{}', name='{}'", &provider.id, &provider.name);
+    log_info!(
+        "api_save_provider called: id='{}', name='{}'",
+        &provider.id,
+        &provider.name
+    );
 
     // 1. Handle API key in SecretStore if provided
     let store = KeyringFirstSecretStore::default_store()
@@ -620,7 +626,10 @@ pub async fn api_save_provider<R: Runtime>(
     let secret_ref = refs::summary_provider_key(&provider.id);
     match api_key {
         Some(key) if !key.trim().is_empty() => {
-            log_info!("Saving API key for provider '{}' to SecretStore", &provider.id);
+            log_info!(
+                "Saving API key for provider '{}' to SecretStore",
+                &provider.id
+            );
             store
                 .set(&secret_ref, &key)
                 .await
@@ -628,7 +637,10 @@ pub async fn api_save_provider<R: Runtime>(
         }
         Some(_) => {
             // Empty string means clear the key
-            log_info!("Clearing API key for provider '{}' from SecretStore", &provider.id);
+            log_info!(
+                "Clearing API key for provider '{}' from SecretStore",
+                &provider.id
+            );
             store
                 .delete(&secret_ref)
                 .await
@@ -636,7 +648,10 @@ pub async fn api_save_provider<R: Runtime>(
         }
         None => {
             // No api_key parameter — leave existing key untouched
-            log_info!("No API key provided for '{}', leaving existing key unchanged", &provider.id);
+            log_info!(
+                "No API key provided for '{}', leaving existing key unchanged",
+                &provider.id
+            );
         }
     }
 
@@ -731,7 +746,7 @@ pub async fn api_get_api_key_status<R: Runtime>(
     let store = KeyringFirstSecretStore::default_store()
         .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
 
-    let secret_ref = if provider == "builtin-ai" {
+    let secret_ref = if provider == "local" {
         return Ok(ApiKeyStatus {
             has_secret: false,
             secret_ref: String::new(),

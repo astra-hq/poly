@@ -11,7 +11,11 @@ pub fn fix_path_env_once() -> Result<(), String> {
 
 pub fn command(program: &str) -> Command {
     if let Err(error) = fix_path_env_once() {
-        log::warn!("Failed to repair PATH before launching {}: {}", program, error);
+        log::warn!(
+            "Failed to repair PATH before launching {}: {}",
+            program,
+            error
+        );
     }
 
     Command::new(program)

@@ -12,7 +12,7 @@ impl SettingsRepository {
         provider: &str,
         api_key: &str,
     ) -> std::result::Result<(), String> {
-        if provider == "builtin-ai" {
+        if provider == "local" {
             return Ok(()); // No API key needed
         }
 
@@ -32,7 +32,7 @@ impl SettingsRepository {
         store: &(dyn SecretStore + Sync),
         provider: &str,
     ) -> std::result::Result<Option<String>, String> {
-        if provider == "builtin-ai" {
+        if provider == "local" {
             return Ok(None); // No API key needed
         }
 
@@ -77,7 +77,7 @@ impl SettingsRepository {
         store: &(dyn SecretStore + Sync),
         provider: &str,
     ) -> std::result::Result<(), String> {
-        if provider == "builtin-ai" {
+        if provider == "local" {
             return Ok(()); // No API key needed
         }
 

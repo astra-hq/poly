@@ -279,7 +279,7 @@ mod tests {
             summary: super::super::config::SummaryConfig {
                 provider_id: "ollama".into(),
                 model: "llama3.1:8b".into(),
-                whisper_model: "medium".into(),
+                ..Default::default()
             },
             ..PolyConfig::default()
         };
@@ -363,7 +363,7 @@ mod tests {
             summary: super::super::config::SummaryConfig {
                 provider_id: "ollama".into(),
                 model: "llama3.1:8b".into(),
-                whisper_model: "medium".into(),
+                _whisper_model: Some("medium".into()),
             },
             ..PolyConfig::default()
         };
