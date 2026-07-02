@@ -1,4 +1,6 @@
-// Types for Local AI (Summary Models) integration
+// Types for Local AI integration
+export const BGE_M3_MODEL_NAME = 'bge-m3:latest';
+
 export interface LocalModelInfo {
   name: string;
   display_name: string;
@@ -93,17 +95,20 @@ export class LocalAIAPI {
     return await invoke('local_ai_get_available_summary_model');
   }
 
-  static async getAvailableEmbeddingModel(): Promise<string | null> {
-    const models = await this.listModels();
-    const available = models.find(
-      (m) => m.model_type === 'embedding' && m.status.type === 'available'
-    );
-    return available?.name ?? null;
+  static async isBgeM3Ready(): Promise<boolean> {
+    return await invoke<boolean>('local_ai_is_model_ready', {
+      modelName: BGE_M3_MODEL_NAME,
+      refresh: true,
+    });
   }
 
+  /** @deprecated Use isBgeM3Ready() instead. Kept for backward compat. */
   static async isAnyEmbeddingModelReady(): Promise<boolean> {
-    const available = await this.getAvailableEmbeddingModel();
-    return available !== null;
+    return await this.isBgeM3Ready();
+  }
+
+  static async downloadBgeM3(): Promise<void> {
+    await invoke('local_ai_download_model', { modelName: BGE_M3_MODEL_NAME });
   }
 
   static async downloadModel(modelName: string): Promise<void> {

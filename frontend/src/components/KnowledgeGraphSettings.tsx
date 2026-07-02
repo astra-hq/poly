@@ -25,6 +25,7 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Download,
   Eye,
   EyeOff,
   RefreshCw,
@@ -50,7 +51,7 @@ import type {
 import { DEFAULT_EMBEDDING_CONFIG, DEFAULT_KG_PROFILE } from '@/types/knowledgeGraph';
 import type { ProviderConfig, ProviderModel } from '@/types/providers';
 import { PROVIDER_TYPE_LABELS } from '@/types/providers';
-import { LocalAIAPI } from '@/lib/local-ai';
+import { LocalAIAPI, BGE_M3_MODEL_NAME } from '@/lib/local-ai';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -139,6 +140,7 @@ function profileToForm(profile: KnowledgeGraphProfile): ProfileFormState {
 }
 
 function formToProfile(form: ProfileFormState): KnowledgeGraphProfile {
+  const isLocal = form.kind === 'local';
   return {
     id: form.id,
     name: form.name.trim(),
@@ -147,9 +149,9 @@ function formToProfile(form: ProfileFormState): KnowledgeGraphProfile {
     api_key: form.api_key.trim() || undefined,
     notes: form.notes.trim() || undefined,
     embedding: {
-      provider: form.embedding_provider.trim(),
-      model: form.embedding_model.trim(),
-      dimensions: parseInt(form.embedding_dimensions, 10) || DEFAULT_EMBEDDING_CONFIG.dimensions,
+      provider: isLocal ? DEFAULT_EMBEDDING_CONFIG.provider : form.embedding_provider.trim(),
+      model: isLocal ? DEFAULT_EMBEDDING_CONFIG.model : form.embedding_model.trim(),
+      dimensions: isLocal ? DEFAULT_EMBEDDING_CONFIG.dimensions : (parseInt(form.embedding_dimensions, 10) || DEFAULT_EMBEDDING_CONFIG.dimensions),
     },
     llm_model: form.llm_model.trim() || undefined,
     llm_provider_id: form.llm_provider_id.trim() || undefined,
@@ -237,7 +239,7 @@ export function KnowledgeGraphSettings() {
     configService.getProviders().then(setProviders).catch(() => {});
   }, []);
 
-  // Check embedding model availability when form dialog opens with local kind
+  // Check BAAI/bge-m3 embedding model availability when form dialog opens with local kind
   useEffect(() => {
     if (!showFormDialog || formState.kind !== 'local') {
       setEmbeddingModelReady(null);
@@ -245,7 +247,7 @@ export function KnowledgeGraphSettings() {
     }
     let cancelled = false;
     setCheckingEmbeddingModel(true);
-    LocalAIAPI.isAnyEmbeddingModelReady()
+    LocalAIAPI.isBgeM3Ready()
       .then((ready) => {
         if (!cancelled) {
           setEmbeddingModelReady(ready);
@@ -898,9 +900,18 @@ export function KnowledgeGraphSettings() {
               <Label htmlFor="kg-kind">Kind</Label>
               <Select
                 value={formState.kind}
-                onValueChange={(value) =>
-                  setFormState((prev) => ({ ...prev, kind: value as ProfileKind }))
-                }
+                onValueChange={(value) => {
+                  const newKind = value as ProfileKind;
+                  setFormState((prev) => ({
+                    ...prev,
+                    kind: newKind,
+                    ...(newKind === 'local' ? {
+                      embedding_provider: DEFAULT_EMBEDDING_CONFIG.provider,
+                      embedding_model: DEFAULT_EMBEDDING_CONFIG.model,
+                      embedding_dimensions: DEFAULT_EMBEDDING_CONFIG.dimensions.toString(),
+                    } : {}),
+                  }));
+                }}
               >
                 <SelectTrigger id="kg-kind" className="mt-1">
                   <SelectValue placeholder="Select kind" />
@@ -1076,22 +1087,24 @@ export function KnowledgeGraphSettings() {
                   <Label htmlFor="kg-emb-provider" className="text-xs">Provider</Label>
                   <Input
                     id="kg-emb-provider"
-                    value={formState.embedding_provider}
+                    value={formState.kind === 'local' ? 'local' : formState.embedding_provider}
                     onChange={(e) =>
                       setFormState((prev) => ({ ...prev, embedding_provider: e.target.value }))
                     }
                     className="mt-1"
+                    disabled={formState.kind === 'local'}
                   />
                 </div>
                 <div>
                   <Label htmlFor="kg-emb-model" className="text-xs">Model</Label>
                   <Input
                     id="kg-emb-model"
-                    value={formState.embedding_model}
+                    value={formState.kind === 'local' ? BGE_M3_MODEL_NAME : formState.embedding_model}
                     onChange={(e) =>
                       setFormState((prev) => ({ ...prev, embedding_model: e.target.value }))
                     }
                     className="mt-1"
+                    disabled={formState.kind === 'local'}
                   />
                 </div>
                 <div>
@@ -1099,11 +1112,12 @@ export function KnowledgeGraphSettings() {
                   <Input
                     id="kg-emb-dims"
                     type="number"
-                    value={formState.embedding_dimensions}
+                    value={formState.kind === 'local' ? '1024' : formState.embedding_dimensions}
                     onChange={(e) =>
                       setFormState((prev) => ({ ...prev, embedding_dimensions: e.target.value }))
                     }
                     className="mt-1"
+                    disabled={formState.kind === 'local'}
                   />
                 </div>
               </div>
@@ -1125,24 +1139,49 @@ export function KnowledgeGraphSettings() {
                 );
               })()}
 
-              {/* Local embedding model not ready warning */}
+              {/* Local embedding model status */}
               {formState.kind === 'local' && embeddingModelReady === false && !checkingEmbeddingModel && (
-                <Alert className="border-blue-500 bg-blue-50">
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1">
-                      <AlertDescription className="text-blue-800 text-sm">
-                        No local embedding model is downloaded. For local knowledge graph profiles,
-                        you need an embedding model like BAAI/bge-m3. Download it from the
-                        Model Manager in Settings, or download it now.
-                      </AlertDescription>
-                    </div>
+                <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="flex-1">
+                    <p className="text-sm text-blue-800 font-medium">
+                      BAAI/bge-m3 not downloaded
+                    </p>
+                    <p className="text-xs text-blue-600 mt-0.5">
+                      Required for local knowledge graph embeddings (1024 dimensions).
+                    </p>
                   </div>
-                </Alert>
+                  <Button
+                    size="sm"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      setCheckingEmbeddingModel(true);
+                      try {
+                        await LocalAIAPI.downloadBgeM3();
+                        setEmbeddingModelReady(true);
+                      } catch (err) {
+                        console.error('Failed to download BAAI/bge-m3:', err);
+                        setEmbeddingModelReady(false);
+                      } finally {
+                        setCheckingEmbeddingModel(false);
+                      }
+                    }}
+                    disabled={saving}
+                  >
+                    <Download className="w-4 h-4 mr-1" />
+                    Download
+                  </Button>
+                </div>
+              )}
+              {formState.kind === 'local' && embeddingModelReady === true && (
+                <p className="text-xs text-green-600 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  BAAI/bge-m3 is ready
+                </p>
               )}
               {formState.kind === 'local' && checkingEmbeddingModel && (
                 <p className="text-xs text-gray-500 flex items-center gap-1">
                   <RefreshCw className="w-3 h-3 animate-spin" />
-                  Checking embedding model availability...
+                  Checking BAAI/bge-m3 availability...
                 </p>
               )}
             </div>

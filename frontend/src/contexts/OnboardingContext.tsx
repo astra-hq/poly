@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PermissionStatus, OnboardingPermissions } from '@/types/onboarding';
 import { resolveOnboardingSummaryModelStatus } from '@/lib/onboarding-summary-model';
+import { LocalAIAPI, BGE_M3_MODEL_NAME } from '@/lib/local-ai';
 
 const PARAKEET_MODEL = 'parakeet-tdt-0.6b-v3-int8';
 
@@ -499,6 +500,22 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         model: modelToSave,
       });
       setCompleted(true);
+
+      // Ensure BAAI/bge-m3 is downloaded for local KG embedding support
+      try {
+        const bgeReady = await invoke<boolean>('local_ai_is_model_ready', {
+          modelName: BGE_M3_MODEL_NAME,
+          refresh: true,
+        });
+        if (!bgeReady) {
+          console.log('[OnboardingContext] Starting BAAI/bge-m3 download for KG embeddings');
+          invoke('local_ai_download_model', { modelName: BGE_M3_MODEL_NAME })
+            .catch(err => console.warn('[OnboardingContext] BAAI/bge-m3 download failed:', err));
+        }
+      } catch (err) {
+        console.warn('[OnboardingContext] BAAI/bge-m3 check failed:', err);
+      }
+
       console.log('[OnboardingContext] Onboarding completed with model:', modelToSave);
 
       // Reset the flag so subsequent state updates can be saved

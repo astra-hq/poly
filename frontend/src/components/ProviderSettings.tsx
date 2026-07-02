@@ -38,6 +38,7 @@ import { toast } from 'sonner';
 import { configService } from '@/services/configService';
 import type { ProviderConfig, ProviderType } from '@/types/providers';
 import { PROVIDER_TYPE_LABELS, PROVIDER_DEFAULT_URLS, PROVIDER_DEFAULT_MODELS } from '@/types/providers';
+import { LocalModelManager } from '@/components/LocalModelManager';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -368,61 +369,121 @@ export function ProviderSettings() {
       {/* Provider list */}
       {hasProviders && (
         <div className="space-y-3">
-          {providers.map((provider) => (
-            <div
-              key={provider.id}
-              className="border rounded-lg p-4 bg-white border-gray-200"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {provider.type === 'ollama' || provider.type === 'local' ? (
-                    <Server className="w-4 h-4 text-gray-500 shrink-0" />
-                  ) : (
-                    <Globe className="w-4 h-4 text-gray-500 shrink-0" />
-                  )}
-                  <span className="font-medium truncate">{provider.name}</span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
-                    {PROVIDER_TYPE_LABELS[provider.type]}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => openEditDialog(provider)}
-                    aria-label={`Edit ${provider.name}`}
-                    title="Edit provider"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeleteTarget(provider)}
-                    aria-label={`Delete ${provider.name}`}
-                    title="Delete provider"
-                    className="text-red-500 hover:text-red-600"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
+          {(() => {
+            const localProvider = providers.find((p) => p.id === 'local' || p.type === 'local');
+            const otherProviders = providers.filter((p) => p.id !== 'local' && p.type !== 'local');
 
-              <div className="mt-2 space-y-1 text-sm text-gray-600">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400 font-mono">{provider.id}</span>
-                </div>
-                <div className="truncate" title={provider.base_url}>
-                  {provider.base_url}
-                </div>
-                {provider.default_model && (
-                  <div className="text-xs text-gray-500">
-                    Default model: {provider.default_model}
+            return (
+              <>
+                {/* Special Local provider card */}
+                {localProvider && (
+                  <div className="border rounded-lg p-4 bg-white border-gray-200">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <Server className="w-4 h-4 text-gray-500 shrink-0" />
+                        <span className="font-medium truncate">{localProvider.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                          {PROVIDER_TYPE_LABELS[localProvider.type]}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEditDialog(localProvider)}
+                          aria-label={`Edit ${localProvider.name}`}
+                          title="Edit provider"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteTarget(localProvider)}
+                          aria-label={`Delete ${localProvider.name}`}
+                          title="Delete provider"
+                          className="text-red-500 hover:text-red-600"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 space-y-1 text-sm text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 font-mono">{localProvider.id}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 border-t pt-3">
+                      <LocalModelManager
+                        selectedModel=""
+                        onModelSelect={() => {}}
+                        layout="inline"
+                      />
+                    </div>
                   </div>
                 )}
-              </div>
-            </div>
-          ))}
+
+                {/* Other providers */}
+                {otherProviders.map((provider) => (
+                  <div
+                    key={provider.id}
+                    className="border rounded-lg p-4 bg-white border-gray-200"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        {provider.type === 'ollama' ? (
+                          <Server className="w-4 h-4 text-gray-500 shrink-0" />
+                        ) : (
+                          <Globe className="w-4 h-4 text-gray-500 shrink-0" />
+                        )}
+                        <span className="font-medium truncate">{provider.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                          {PROVIDER_TYPE_LABELS[provider.type]}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEditDialog(provider)}
+                          aria-label={`Edit ${provider.name}`}
+                          title="Edit provider"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteTarget(provider)}
+                          aria-label={`Delete ${provider.name}`}
+                          title="Delete provider"
+                          className="text-red-500 hover:text-red-600"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 space-y-1 text-sm text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 font-mono">{provider.id}</span>
+                      </div>
+                      <div className="truncate" title={provider.base_url}>
+                        {provider.base_url}
+                      </div>
+                      {provider.default_model && (
+                        <div className="text-xs text-gray-500">
+                          Default model: {provider.default_model}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
       )}
 

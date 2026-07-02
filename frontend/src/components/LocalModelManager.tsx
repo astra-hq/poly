@@ -275,7 +275,6 @@ export function LocalModelManager({
   }
 
   const summaryModels = models.filter((m) => m.model_type === 'summary');
-  const embeddingModels = models.filter((m) => m.model_type === 'embedding');
 
   const renderModelCard = (model: ModelInfo, showSelect: boolean) => {
     const progress = downloadProgress[model.name];
@@ -493,23 +492,6 @@ export function LocalModelManager({
           <p className="text-sm text-gray-500 text-center py-4">No summary models available.</p>
         ) : (
           summaryModels.map((m) => renderModelCard(m, true))
-        )}
-      </div>
-
-      {/* Embedding Models Section */}
-      <div className="flex items-center justify-between mb-4">
-        <h4 className="text-sm font-bold">Embedding Models</h4>
-      </div>
-      <div
-        className={cn(
-          'grid gap-4 mb-4',
-          layout === 'dialog' && 'max-h-[50vh] overflow-y-auto pr-2 pb-2'
-        )}
-      >
-        {embeddingModels.length === 0 ? (
-          <p className="text-sm text-gray-500 text-center py-4">No embedding models available.</p>
-        ) : (
-          embeddingModels.map((m) => renderModelCard(m, false))
         )}
       </div>
 
