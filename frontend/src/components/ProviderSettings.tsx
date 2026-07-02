@@ -33,6 +33,8 @@ import {
   EyeOff,
   Lock,
   Unlock,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { configService } from '@/services/configService';
@@ -132,6 +134,8 @@ export function ProviderSettings() {
   // "confirm" the key prevents save.  When no key existed, the lock should
   // not suppress the outgoing key — the user just typed it and locked it.
   const [originalKeyPresent, setOriginalKeyPresent] = useState(false);
+
+  const [localExpanded, setLocalExpanded] = useState(false);
 
   // ── Load providers ────────────────────────────────────────────────
 
@@ -377,24 +381,30 @@ export function ProviderSettings() {
               <>
                 {/* Special Local provider card */}
                 {localProvider && (
-                  <div className="border rounded-lg p-4 bg-white border-gray-200">
+                  <div className="border rounded-lg p-4 bg-white border-blue-200 ring-1 ring-blue-100">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <Server className="w-4 h-4 text-gray-500 shrink-0" />
+                        <Server className="w-4 h-4 text-blue-500 shrink-0" />
                         <span className="font-medium truncate">{localProvider.name}</span>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 shrink-0">
                           {PROVIDER_TYPE_LABELS[localProvider.type]}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <Button
                           variant="ghost"
-                          size="icon"
-                          onClick={() => openEditDialog(localProvider)}
-                          aria-label={`Edit ${localProvider.name}`}
-                          title="Edit provider"
+                          size="sm"
+                          onClick={() => setLocalExpanded((v) => !v)}
+                          aria-expanded={localExpanded}
+                          aria-label={localExpanded ? 'Collapse local models' : 'Expand local models'}
+                          title={localExpanded ? 'Collapse local models' : 'Expand local models'}
+                          className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
                         >
-                          <Pencil className="w-4 h-4" />
+                          {localExpanded ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
                         </Button>
                         <Button
                           variant="ghost"
@@ -415,13 +425,15 @@ export function ProviderSettings() {
                       </div>
                     </div>
 
-                    <div className="mt-4 border-t pt-3">
-                      <LocalModelManager
-                        selectedModel=""
-                        onModelSelect={() => {}}
-                        layout="inline"
-                      />
-                    </div>
+                    {localExpanded && (
+                      <div className="mt-4 border-t pt-3">
+                        <LocalModelManager
+                          selectedModel=""
+                          onModelSelect={() => {}}
+                          layout="inline"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
 
