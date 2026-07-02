@@ -27,6 +27,7 @@ import { toast } from 'sonner';
 import type { ModelConfig as SharedModelConfig } from '@/services/configService';
 import { configService } from '@/services/configService';
 import type { ProviderConfig, ProviderModel } from '@/types/providers';
+import { LocalModelInfo } from '@/lib/local-ai';
 
 interface OpenRouterModel {
   id: string;
@@ -95,7 +96,7 @@ export function ModelSettingsModal({
   const [isLoadingGroq, setIsLoadingGroq] = useState<boolean>(false);
 
   // Local AI models state
-  const [builtinAiModels, setBuiltinAiModels] = useState<any[]>([]);
+  const [builtinAiModels, setBuiltinAiModels] = useState<LocalModelInfo[]>([]);
 
   // Provider list from config
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
@@ -210,19 +211,13 @@ export function ModelSettingsModal({
   };
 
   const loadBuiltinAiModels = async () => {
-    if (builtinAiModels.length > 0) return; // Already loaded
-
     try {
-      const data = (await invoke('local_ai_list_models')) as any[];
-      setBuiltinAiModels(data);
-
-      // Auto-select first available model if none selected
-      if (data.length > 0 && !modelConfig.model) {
-        const firstAvailable = data.find((m: any) => m.status?.type === 'available');
-        if (firstAvailable) {
-          setModelConfig((prev: ModelConfig) => ({ ...prev, model: firstAvailable.name }));
-        }
-      }
+      const data = (await invoke('local_ai_list_models')) as LocalModelInfo[];
+      // Only include downloaded/available summary models as selectable options
+      const availableSummaryModels = data.filter(
+        (m) => m.status?.type === 'available' && m.model_type === 'summary'
+      );
+      setBuiltinAiModels(availableSummaryModels);
     } catch (err) {
       console.error('Error loading local AI models:', err);
       toast.error('Failed to load local AI models');
@@ -304,15 +299,37 @@ export function ModelSettingsModal({
     }
   }, [modelConfig.provider, apiKey]);
 
+  // Auto-fetch local models when provider is local (on mount and on provider change)
+  useEffect(() => {
+    if (modelConfig.provider === 'local') {
+      loadBuiltinAiModels();
+    }
+  }, [modelConfig.provider]);
+
   // Restore cached model when async model lists become available
   useEffect(() => {
     const providerModels = modelOptions[modelConfig.provider];
+
+    if (modelConfig.model && providerModels?.includes(modelConfig.model)) return;
+
+    if (modelConfig.provider === 'local') {
+      if (!providerModels || providerModels.length === 0) {
+        if (modelConfig.model) {
+          setModelConfig((prev: ModelConfig) => ({ ...prev, model: '' }));
+        }
+        return;
+      }
+      const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
+      const cachedModel = map[modelConfig.provider];
+      const targetModel = cachedModel && providerModels.includes(cachedModel)
+        ? cachedModel
+        : providerModels[0];
+      setModelConfig((prev: ModelConfig) => ({ ...prev, model: targetModel }));
+      return;
+    }
+
     if (!providerModels || providerModels.length === 0) return;
 
-    // If current model is already valid, nothing to do
-    if (modelConfig.model && providerModels.includes(modelConfig.model)) return;
-
-    // Try to restore from localStorage cache
     const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
     const cachedModel = map[modelConfig.provider];
     if (cachedModel && providerModels.includes(cachedModel)) {
@@ -397,8 +414,6 @@ export function ModelSettingsModal({
                   loadProviderModels(provider);
                 } else if (provider === 'openrouter') {
                   loadOpenRouterModels();
-                } else if (provider === 'local') {
-                  loadBuiltinAiModels();
                 }
               }}
             >
