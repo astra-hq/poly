@@ -50,6 +50,7 @@ import type {
 import { DEFAULT_EMBEDDING_CONFIG, DEFAULT_KG_PROFILE } from '@/types/knowledgeGraph';
 import type { ProviderConfig, ProviderModel } from '@/types/providers';
 import { PROVIDER_TYPE_LABELS } from '@/types/providers';
+import { LocalAIAPI } from '@/lib/local-ai';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -171,6 +172,10 @@ export function KnowledgeGraphSettings() {
   const [formErrors, setFormErrors] = useState<{ name?: string; url?: string }>({});
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
 
+  // Embedding model availability check
+  const [embeddingModelReady, setEmbeddingModelReady] = useState<boolean | null>(null);
+  const [checkingEmbeddingModel, setCheckingEmbeddingModel] = useState(false);
+
   // LLM model dropdown state for KG profile provider selection
   const [kgAvailableModels, setKgAvailableModels] = useState<ProviderModel[]>([]);
   const [kgLoadingModels, setKgLoadingModels] = useState(false);
@@ -231,6 +236,33 @@ export function KnowledgeGraphSettings() {
   useEffect(() => {
     configService.getProviders().then(setProviders).catch(() => {});
   }, []);
+
+  // Check embedding model availability when form dialog opens with local kind
+  useEffect(() => {
+    if (!showFormDialog || formState.kind !== 'local') {
+      setEmbeddingModelReady(null);
+      return;
+    }
+    let cancelled = false;
+    setCheckingEmbeddingModel(true);
+    LocalAIAPI.isAnyEmbeddingModelReady()
+      .then((ready) => {
+        if (!cancelled) {
+          setEmbeddingModelReady(ready);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setEmbeddingModelReady(false);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setCheckingEmbeddingModel(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [showFormDialog, formState.kind]);
 
   // Fetch models when LLM provider changes in the profile form
   useEffect(() => {
@@ -323,6 +355,7 @@ export function KnowledgeGraphSettings() {
     setFormErrors({});
     setShowApiKey(false);
     setShowFormDialog(true);
+    setEmbeddingModelReady(null);
   };
 
   const openEditDialog = (profile: KnowledgeGraphProfile) => {
@@ -331,6 +364,7 @@ export function KnowledgeGraphSettings() {
     setFormErrors({});
     setShowApiKey(false);
     setShowFormDialog(true);
+    setEmbeddingModelReady(null);
   };
 
   const validateForm = (): boolean => {
@@ -1090,6 +1124,27 @@ export function KnowledgeGraphSettings() {
                   </Alert>
                 );
               })()}
+
+              {/* Local embedding model not ready warning */}
+              {formState.kind === 'local' && embeddingModelReady === false && !checkingEmbeddingModel && (
+                <Alert className="border-blue-500 bg-blue-50">
+                  <div className="flex items-start gap-3">
+                    <div className="flex-1">
+                      <AlertDescription className="text-blue-800 text-sm">
+                        No local embedding model is downloaded. For local knowledge graph profiles,
+                        you need an embedding model like BAAI/bge-m3. Download it from the
+                        Model Manager in Settings, or download it now.
+                      </AlertDescription>
+                    </div>
+                  </div>
+                </Alert>
+              )}
+              {formState.kind === 'local' && checkingEmbeddingModel && (
+                <p className="text-xs text-gray-500 flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  Checking embedding model availability...
+                </p>
+              )}
             </div>
           </div>
 

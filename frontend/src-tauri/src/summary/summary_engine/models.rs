@@ -10,6 +10,26 @@ use serde::{Deserialize, Serialize};
 // Model Definitions
 // ============================================================================
 
+/// Type of a local AI model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelType {
+    /// Models used for summary generation (e.g., Qwen, Gemma)
+    Summary,
+    /// Models used for embedding/text vector generation (e.g., BGE)
+    Embedding,
+}
+
+impl ModelType {
+    /// Return the filesystem subdirectory name for this model type.
+    pub fn subdir(&self) -> &'static str {
+        match self {
+            ModelType::Summary => "summary",
+            ModelType::Embedding => "embedding",
+        }
+    }
+}
+
 /// Sampling parameters supported by the built-in AI -> llama-helper pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SamplingParams {
@@ -158,10 +178,19 @@ pub struct ModelDef {
 
     /// Short description for UI
     pub description: String,
+
+    /// Model type (summary or embedding)
+    pub model_type: ModelType,
 }
 
-/// Get all available built-in AI models
-/// Add new models here - the system will automatically detect and manage them
+impl ModelDef {
+    /// Return the filesystem subdirectory name for this model.
+    pub fn subdir(&self) -> &'static str {
+        self.model_type.subdir()
+    }
+}
+
+/// Get all available built-in AI summary models
 pub fn get_available_models() -> Vec<ModelDef> {
     vec![
         // Qwen 3.5 2B - Balanced tier
@@ -176,6 +205,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             layer_count: 24,
             sampling: SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()]),
             description: "Balanced Qwen 3.5 model for built-in summaries. Higher quality with modest local requirements.".to_string(),
+            model_type: ModelType::Summary,
         },
         // Qwen 3.5 4B - High quality tier
         ModelDef {
@@ -189,6 +219,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             layer_count: 32,
             sampling: SamplingParams::qwen35_summary(vec!["<|im_end|>".to_string()]),
             description: "High-quality Qwen 3.5 model for built-in summaries. Best local Qwen option in the current lineup.".to_string(),
+            model_type: ModelType::Summary,
         },
         // Gemma 3 4B - Legacy alternative retained for users who prefer Gemma output.
         ModelDef {
@@ -202,6 +233,7 @@ pub fn get_available_models() -> Vec<ModelDef> {
             layer_count: 35,
             sampling: SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]),
             description: "Balanced model. Great quality/speed trade-off. Requires ~3.5GB RAM.".to_string(),
+            model_type: ModelType::Summary,
         },
         // Gemma 3 1B - Visible legacy tier retained for already-shipped users.
         ModelDef {
@@ -215,6 +247,36 @@ pub fn get_available_models() -> Vec<ModelDef> {
             layer_count: 26,
             sampling: SamplingParams::gemma3_instruct(vec!["<end_of_turn>".to_string()]),
             description: "Fastest model. Runs on any hardware with ~1GB RAM. Good for quick summaries.".to_string(),
+            model_type: ModelType::Summary,
+        },
+    ]
+}
+
+/// Get all available built-in AI embedding models
+pub fn get_available_embedding_models() -> Vec<ModelDef> {
+    vec![
+        // BAAI/bge-m3 - multilingual embedding model
+        ModelDef {
+            name: "bge-m3:latest".to_string(),
+            display_name: "BAAI/bge-m3 (Multilingual)".to_string(),
+            gguf_file: "bge-m3-Q4_K_M.gguf".to_string(),
+            template: "".to_string(), // embedding models don't use chat templates
+            download_url: "https://huggingface.co/ChristianAzinn/bge-m3-GGUF/resolve/main/bge-m3-Q4_K_M.gguf".to_string(),
+            size_mb: 322,
+            context_size: 8192,
+            layer_count: 24,
+            sampling: SamplingParams {
+                temperature: 0.0,
+                top_k: 1,
+                top_p: 1.0,
+                presence_penalty: 0.0,
+                frequency_penalty: 0.0,
+                repeat_penalty: 1.0,
+                penalty_last_n: 0,
+                stop_tokens: vec![],
+            },
+            description: "BAAI/bge-m3 embedding model (1024 dimensions). Used for local knowledge graph embeddings. ~1GB download.".to_string(),
+            model_type: ModelType::Embedding,
         },
     ]
 }
@@ -232,20 +294,32 @@ pub fn get_default_model() -> ModelDef {
         .expect("At least one model must be defined")
 }
 
-/// Resolve model name to full file path in the models directory
+/// Resolve model name to full file path in the appropriate type subdirectory
 pub fn get_model_path(app_data_dir: &PathBuf, model_name: &str) -> Result<PathBuf> {
     let model = get_model_by_name_any(model_name)
         .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
-    let models_dir = get_models_directory(app_data_dir);
-    let model_path = models_dir.join(&model.gguf_file);
+    let model_path = app_data_dir
+        .join("models")
+        .join(model.subdir())
+        .join(&model.gguf_file);
 
     Ok(model_path)
 }
 
-/// Get the models directory path for built-in AI
+/// Get the models directory path for built-in AI (base directory, type subdirs inside)
 pub fn get_models_directory(app_data_dir: &PathBuf) -> PathBuf {
+    app_data_dir.join("models")
+}
+
+/// Get the models directory path for summary models (legacy path kept for backward compat)
+pub fn get_summary_models_directory(app_data_dir: &PathBuf) -> PathBuf {
     app_data_dir.join("models").join("summary")
+}
+
+/// Get the models directory path for embedding models
+pub fn get_embedding_models_directory(app_data_dir: &PathBuf) -> PathBuf {
+    app_data_dir.join("models").join("embedding")
 }
 
 // ============================================================================
@@ -388,6 +462,7 @@ impl CustomModelEntry {
                 "Custom model from {}. {} MB. {}",
                 self.repo_id, size_mb, self.filename
             ),
+            model_type: ModelType::Summary,
         }
     }
 }
@@ -669,9 +744,10 @@ pub fn refresh_custom_registry_cache(app_data_dir: &std::path::Path) {
     });
 }
 
-/// Get all models: curated + custom (merged).
+/// Get all models: curated summary + curated embedding + custom (merged).
 pub fn get_all_models() -> Vec<ModelDef> {
     let mut models = get_available_models();
+    models.extend(get_available_embedding_models());
     CUSTOM_REGISTRY.with(|cache| {
         if let Some(ref entries) = *cache.borrow() {
             for entry in entries {

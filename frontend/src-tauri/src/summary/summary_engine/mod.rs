@@ -29,7 +29,8 @@ pub use commands::{
 };
 pub use model_manager::{ModelInfo, ModelStatus};
 pub use models::{
-    get_all_models, get_available_models, get_default_model, get_model_by_name,
-    get_model_by_name_any, refresh_custom_registry_cache, CustomModelEntry, GgufCandidate,
-    HfRepoVerification, ModelDef, RegistrySource,
+    get_all_models, get_available_embedding_models, get_available_models, get_default_model,
+    get_embedding_models_directory, get_model_by_name, get_model_by_name_any,
+    get_summary_models_directory, refresh_custom_registry_cache, CustomModelEntry, GgufCandidate,
+    HfRepoVerification, ModelDef, ModelType, RegistrySource,
 };

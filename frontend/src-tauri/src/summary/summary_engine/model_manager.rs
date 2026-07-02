@@ -14,7 +14,7 @@ use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 
-use super::models::{get_all_models, get_model_by_name_any};
+use super::models::{get_all_models, get_model_by_name_any, ModelType};
 
 // ============================================================================
 // Model Status Types
@@ -104,10 +104,10 @@ pub struct ModelInfo {
 
     /// GGUF filename on disk
     pub gguf_file: String,
-}
 
-// ============================================================================
-// Model Manager
+    /// Model type (summary or embedding)
+    pub model_type: ModelType,
+}
 // ============================================================================
 
 pub struct ModelManager {
@@ -148,10 +148,17 @@ impl ModelManager {
 
     /// Initialize and scan for existing models
     pub async fn init(&self) -> Result<()> {
-        // Create models directory if it doesn't exist
+        // Create base models directory and type subdirectories
         if !self.models_dir.exists() {
             fs::create_dir_all(&self.models_dir).await?;
             log::info!("Created models directory: {}", self.models_dir.display());
+        }
+
+        for subdir in &["summary", "embedding"] {
+            let type_dir = self.models_dir.join(subdir);
+            if !type_dir.exists() {
+                fs::create_dir_all(&type_dir).await?;
+            }
         }
 
         // Scan for existing models
@@ -173,7 +180,7 @@ impl ModelManager {
         let mut models_map = HashMap::new();
 
         for model_def in model_defs {
-            let model_path = self.models_dir.join(&model_def.gguf_file);
+            let model_path = self.models_dir.join(model_def.subdir()).join(&model_def.gguf_file);
             log::debug!(
                 "Checking model '{}' at path: {}",
                 model_def.name,
@@ -256,6 +263,7 @@ impl ModelManager {
                 context_size: model_def.context_size,
                 description: model_def.description.clone(),
                 gguf_file: model_def.gguf_file.clone(),
+                model_type: model_def.model_type.clone(),
             };
 
             models_map.insert(model_def.name.clone(), model_info);
@@ -364,7 +372,7 @@ impl ModelManager {
             }
         }
 
-        let file_path = self.models_dir.join(&model_def.gguf_file);
+        let file_path = self.models_dir.join(model_def.subdir()).join(&model_def.gguf_file);
 
         // Check if model already exists and is valid (skip re-download)
         if file_path.exists() {
@@ -817,7 +825,7 @@ impl ModelManager {
         let model_def = get_model_by_name_any(model_name)
             .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
-        let file_path = self.models_dir.join(&model_def.gguf_file);
+        let file_path = self.models_dir.join(model_def.subdir()).join(&model_def.gguf_file);
 
         if file_path.exists() {
             fs::remove_file(&file_path).await?;

@@ -22,6 +22,7 @@ interface ModelInfo {
   context_size: number;
   description: string;
   gguf_file: string;
+  model_type: 'summary' | 'embedding';
 }
 
 interface DownloadProgressInfo {
@@ -273,220 +274,246 @@ export function LocalModelManager({
     );
   }
 
+  const summaryModels = models.filter((m) => m.model_type === 'summary');
+  const embeddingModels = models.filter((m) => m.model_type === 'embedding');
+
+  const renderModelCard = (model: ModelInfo, showSelect: boolean) => {
+    const progress = downloadProgress[model.name];
+    const progressInfo = downloadProgressInfo[model.name];
+    const modelIsDownloading = downloadingModels.has(model.name);
+    const isAvailable = model.status.type === 'available';
+    const isNotDownloaded = model.status.type === 'not_downloaded';
+    const isCorrupted = model.status.type === 'corrupted';
+    const isError = model.status.type === 'error';
+
+    return (
+      <div
+        key={model.name}
+        className={cn(
+          'p-4 rounded-lg border transition-colors',
+          modelIsDownloading
+            ? 'bg-white border-gray-200'
+            : 'bg-card',
+          showSelect && selectedModel === model.name
+            ? 'ring-2 ring-gray-800 border-gray-800'
+            : 'border-gray-200 hover:border-gray-300',
+          isAvailable && !modelIsDownloading && showSelect && 'cursor-pointer'
+        )}
+        onClick={() => {
+          if (showSelect && isAvailable && !modelIsDownloading) {
+            onModelSelect(model.name);
+          }
+        }}
+      >
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="min-w-0 break-words text-base font-bold leading-snug text-gray-900">{model.display_name || model.name}</span>
+              {isAvailable && (
+                <>
+                  <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-green-600">
+                    <span className="h-2 w-2 rounded-full bg-green-600"></span>
+                    Ready
+                  </span>
+                  {showSelect && selectedModel === model.name && (
+                    <span className="shrink-0 rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
+                      Selected
+                    </span>
+                  )}
+                </>
+              )}
+              {isCorrupted && (
+                <span className="flex shrink-0 items-center gap-1 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                  <BadgeAlert className="h-3 w-3" />
+                  Corrupted
+                </span>
+              )}
+              {isError && (
+                <span className="shrink-0 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                  Error
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:ml-4 sm:w-auto sm:justify-end">
+            {/* Not Downloaded - Show Download button */}
+            {isNotDownloaded && !modelIsDownloading && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-w-[100px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  downloadModel(model.name);
+                }}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                Download
+              </Button>
+            )}
+            {/* Downloading - Show Cancel button */}
+            {modelIsDownloading && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-w-[100px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cancelDownload(model.name);
+                }}
+              >
+                Cancel
+              </Button>
+            )}
+            {/* Error - Show Retry button */}
+            {isError && !modelIsDownloading && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-w-[100px]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  downloadModel(model.name);
+                }}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                Retry
+              </Button>
+            )}
+            {/* Corrupted - Show both Retry and Delete buttons */}
+            {isCorrupted && !modelIsDownloading && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    downloadModel(model.name);
+                  }}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  Retry
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteModel(model.name);
+                  }}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete
+                </Button>
+              </>
+            )}
+            {/* Available - Show small trash icon (only if not currently selected) */}
+            {isAvailable && !modelIsDownloading && (!showSelect || selectedModel !== model.name) && (
+              <button
+                className="p-2 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-red-600"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteModel(model.name);
+                }}
+                title="Delete model"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="text-sm text-gray-600">
+          {model.description && (
+            <p className="mb-1">{model.description}</p>
+          )}
+          {(isError || isCorrupted) && (
+            <p className="mb-1 text-xs text-red-600">
+              {isError && typeof model.status === 'object' && 'Error' in model.status
+                ? (model.status as any).Error
+                : isCorrupted
+                ? 'File is corrupted. Retry download or delete.'
+                : 'An error occurred'}
+            </p>
+          )}
+          <div className="text-xs text-gray-500">
+            <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)} • {model.context_size} tokens</span>
+          </div>
+          </div>
+        </div>
+
+        {/* Download progress bar */}
+        {modelIsDownloading && progress !== undefined && (
+          <div className="mt-3 pt-3 border-t border-gray-200">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium text-gray-900">Downloading...</span>
+              <span className="text-sm font-semibold text-gray-900">
+                {Math.round(progress)}%
+              </span>
+            </div>
+            <div className="text-sm text-gray-600 mb-2">
+              {progressInfo?.totalMb > 0 ? (
+                <>
+                  {progressInfo.downloadedMb.toFixed(1)} MiB / {progressInfo.totalMb.toFixed(1)} MiB
+                  {progressInfo.speedMbps > 0 && (
+                    <span className="ml-2 text-gray-500">
+                      ({progressInfo.speedMbps.toFixed(1)} MiB/s)
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)}</span>
+              )}
+            </div>
+            <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-gray-800 to-gray-900 rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div>
+      {/* Summary Models Section */}
       <div className="flex items-center justify-between mb-4">
-        <h4 className="text-sm font-bold">Local AI Models</h4>
+        <h4 className="text-sm font-bold">Summary Models</h4>
       </div>
-
       <div
         className={cn(
-          'grid gap-4',
+          'grid gap-4 mb-8',
           layout === 'dialog' && 'max-h-[50vh] overflow-y-auto pr-2 pb-2'
         )}
       >
-        {models.map((model) => {
-          const progress = downloadProgress[model.name];
-          const progressInfo = downloadProgressInfo[model.name];
-          const modelIsDownloading = downloadingModels.has(model.name);
-          const isAvailable = model.status.type === 'available';
-          const isNotDownloaded = model.status.type === 'not_downloaded';
-          const isCorrupted = model.status.type === 'corrupted';
-          const isError = model.status.type === 'error';
-
-          return (
-            <div
-              key={model.name}
-              className={cn(
-                'p-4 rounded-lg border transition-colors',
-                modelIsDownloading
-                  ? 'bg-white border-gray-200'
-                  : 'bg-card',
-                selectedModel === model.name
-                  ? 'ring-2 ring-gray-800 border-gray-800'
-                  : 'border-gray-200 hover:border-gray-300',
-                isAvailable && !modelIsDownloading && 'cursor-pointer'
-              )}
-              onClick={() => {
-                if (isAvailable && !modelIsDownloading) {
-                  onModelSelect(model.name);
-                }
-              }}
-            >
-            <div className="space-y-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="min-w-0 break-words text-base font-bold leading-snug text-gray-900">{model.display_name || model.name}</span>
-                    {isAvailable && (
-                      <>
-                        <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-green-600">
-                          <span className="h-2 w-2 rounded-full bg-green-600"></span>
-                          Ready
-                        </span>
-                        {selectedModel === model.name && (
-                          <span className="shrink-0 rounded bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                            Selected
-                          </span>
-                        )}
-                      </>
-                    )}
-                    {isCorrupted && (
-                      <span className="flex shrink-0 items-center gap-1 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                        <BadgeAlert className="h-3 w-3" />
-                        Corrupted
-                      </span>
-                    )}
-                    {isError && (
-                      <span className="shrink-0 rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                        Error
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex w-full shrink-0 flex-wrap items-center gap-2 sm:ml-4 sm:w-auto sm:justify-end">
-                  {/* Not Downloaded - Show Download button */}
-                  {isNotDownloaded && !modelIsDownloading && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="min-w-[100px]"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        downloadModel(model.name);
-                      }}
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Download
-                    </Button>
-                  )}
-                  {/* Downloading - Show Cancel button */}
-                  {modelIsDownloading && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="min-w-[100px]"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        cancelDownload(model.name);
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  )}
-                  {/* Error - Show Retry button */}
-                  {isError && !modelIsDownloading && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="min-w-[100px]"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        downloadModel(model.name);
-                      }}
-                    >
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Retry
-                    </Button>
-                  )}
-                  {/* Corrupted - Show both Retry and Delete buttons */}
-                  {isCorrupted && !modelIsDownloading && (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          downloadModel(model.name);
-                        }}
-                      >
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        Retry
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteModel(model.name);
-                        }}
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
-                      </Button>
-                    </>
-                  )}
-                  {/* Available - Show small trash icon (only if not currently selected) */}
-                  {isAvailable && !modelIsDownloading && selectedModel !== model.name && (
-                    <button
-                      className="p-2 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-red-600"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteModel(model.name);
-                      }}
-                      title="Delete model"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="text-sm text-gray-600">
-                {model.description && (
-                  <p className="mb-1">{model.description}</p>
-                )}
-                {(isError || isCorrupted) && (
-                  <p className="mb-1 text-xs text-red-600">
-                    {isError && typeof model.status === 'object' && 'Error' in model.status
-                      ? (model.status as any).Error
-                      : isCorrupted
-                      ? 'File is corrupted. Retry download or delete.'
-                      : 'An error occurred'}
-                  </p>
-                )}
-                <div className="text-xs text-gray-500">
-                  <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)} • {model.context_size} tokens</span>
-                </div>
-                </div>
-              </div>
-
-              {/* Download progress bar */}
-              {modelIsDownloading && progress !== undefined && (
-                <div className="mt-3 pt-3 border-t border-gray-200">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-gray-900">Downloading...</span>
-                    <span className="text-sm font-semibold text-gray-900">
-                      {Math.round(progress)}%
-                    </span>
-                  </div>
-                  <div className="text-sm text-gray-600 mb-2">
-                    {progressInfo?.totalMb > 0 ? (
-                      <>
-                        {progressInfo.downloadedMb.toFixed(1)} MiB / {progressInfo.totalMb.toFixed(1)} MiB
-                        {progressInfo.speedMbps > 0 && (
-                          <span className="ml-2 text-gray-500">
-                            ({progressInfo.speedMbps.toFixed(1)} MiB/s)
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <span>{formatSummaryModelSizeLabelFromMb(model.size_mb)}</span>
-                    )}
-                  </div>
-                  <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-gray-800 to-gray-900 rounded-full transition-all duration-300"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-
-        <CustomHFModelCard onModelAdded={fetchModels} />
+        {summaryModels.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-4">No summary models available.</p>
+        ) : (
+          summaryModels.map((m) => renderModelCard(m, true))
+        )}
       </div>
+
+      {/* Embedding Models Section */}
+      <div className="flex items-center justify-between mb-4">
+        <h4 className="text-sm font-bold">Embedding Models</h4>
+      </div>
+      <div
+        className={cn(
+          'grid gap-4 mb-4',
+          layout === 'dialog' && 'max-h-[50vh] overflow-y-auto pr-2 pb-2'
+        )}
+      >
+        {embeddingModels.length === 0 ? (
+          <p className="text-sm text-gray-500 text-center py-4">No embedding models available.</p>
+        ) : (
+          embeddingModels.map((m) => renderModelCard(m, false))
+        )}
+      </div>
+
+      <CustomHFModelCard onModelAdded={fetchModels} />
     </div>
   );
 }

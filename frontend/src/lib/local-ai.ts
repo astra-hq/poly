@@ -8,6 +8,7 @@ export interface LocalModelInfo {
   context_size: number;
   description: string;
   gguf_file: string;
+  model_type: 'summary' | 'embedding';
 }
 
 export type LocalModelStatus =
@@ -90,6 +91,19 @@ export class LocalAIAPI {
 
   static async getAvailableModel(): Promise<string | null> {
     return await invoke('local_ai_get_available_summary_model');
+  }
+
+  static async getAvailableEmbeddingModel(): Promise<string | null> {
+    const models = await this.listModels();
+    const available = models.find(
+      (m) => m.model_type === 'embedding' && m.status.type === 'available'
+    );
+    return available?.name ?? null;
+  }
+
+  static async isAnyEmbeddingModelReady(): Promise<boolean> {
+    const available = await this.getAvailableEmbeddingModel();
+    return available !== null;
   }
 
   static async downloadModel(modelName: string): Promise<void> {

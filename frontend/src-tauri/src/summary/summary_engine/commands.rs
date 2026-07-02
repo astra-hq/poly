@@ -51,7 +51,7 @@ pub struct ModelManagerState(pub Arc<Mutex<Option<Arc<ModelManager>>>>);
 
 /// Initialize the model manager
 pub async fn init_model_manager<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
-    let models_dir = app.path().app_data_dir()?.join("models").join("summary");
+    let models_dir = app.path().app_data_dir()?.join("models");
 
     let manager = ModelManager::new_with_models_dir(models_dir)?;
     manager.init().await?;
@@ -366,8 +366,7 @@ pub async fn init_model_manager_at_startup<R: Runtime>(app: &AppHandle<R>) -> Re
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?
-        .join("models")
-        .join("summary");
+        .join("models");
 
     let manager = ModelManager::new_with_models_dir(models_dir)
         .map_err(|e| format!("Failed to create ModelManager: {}", e))?;
