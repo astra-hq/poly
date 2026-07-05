@@ -324,6 +324,20 @@ jobs:
           cargo test --workspace -- --nocapture
         working-directory: frontend/src-tauri
 
+      - name: Conditionally disable updater artifacts for unsigned builds
+        if: ${{ !inputs.sign-binaries }}
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY not available — disabling updater artifacts for this build"
+            sed -i 's/"createUpdaterArtifacts": true/"createUpdaterArtifacts": false/' frontend/src-tauri/tauri.conf.json
+            grep -q '"createUpdaterArtifacts": false' frontend/src-tauri/tauri.conf.json && echo "Updater artifacts disabled in tauri.conf.json"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is available — updater artifacts remain enabled"
+          fi
+
       # Signed build — only when sign-binaries is true and macOS cert is available
       # On macOS, skips signed build if APPLE_CERTIFICATE secret is not set
       - name: Build Tauri app (signed)
