@@ -29,7 +29,13 @@ jobs:
 
       - name: Get pnpm store directory
         shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+        run: |
+          STORE_PATH=$(pnpm store path 2>/dev/null)
+          if [ -z "$STORE_PATH" ]; then
+            STORE_PATH="$HOME/.local/share/pnpm/store/v3_11"
+          fi
+          echo "STORE_PATH=$STORE_PATH" >> $GITHUB_ENV
+          echo "Detected pnpm store path: $STORE_PATH"
 
       - name: Setup pnpm cache
         uses: actions/cache@v4
