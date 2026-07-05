@@ -1,7 +1,7 @@
 use log::{debug as log_debug, error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
 
 use crate::{
@@ -22,6 +22,12 @@ use crate::{
         types::SecretStoreError,
     },
     state::AppState,
+    summary::summary_engine::{
+        init_model_manager,
+        model_manager::ModelStatus,
+        models::ModelType,
+        ModelManagerState,
+    },
 };
 
 // Hardcoded server URL
@@ -562,10 +568,11 @@ pub async fn api_save_model_config<R: Runtime>(
 }
 
 /// Fetch available models for a provider by calling its models endpoint.
-/// Results are cached for 5 minutes.
+/// Results are cached for 5 minutes.  For the Local provider listing
+/// returns downloaded summary models from the local model manager.
 #[tauri::command]
 pub async fn api_get_provider_models<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     provider_id: String,
 ) -> Result<Vec<providers::ProviderModel>, String> {
@@ -583,12 +590,60 @@ pub async fn api_get_provider_models<R: Runtime>(
         .find_provider(&provider_id)
         .ok_or_else(|| format!("Provider '{}' not found in config", &provider_id))?;
 
+    if provider.provider_type == providers::ProviderType::Local {
+        return get_local_models(app).await;
+    }
+
     let store = KeyringFirstSecretStore::default_store()
         .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
     let secret_ref = refs::summary_provider_key(&provider_id);
     let api_key = store.get(&secret_ref).await.ok().flatten();
 
     providers::get_provider_models(&provider, api_key.as_deref()).await
+}
+
+/// List downloaded local summary models (filtered from ModelManager).
+/// Excludes embedding models (bge-m3) and not-yet-downloaded models.
+async fn get_local_models<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Vec<providers::ProviderModel>, String> {
+    let mm_state: tauri::State<'_, ModelManagerState> = app.state();
+
+    {
+        let lock = mm_state.0.lock().await;
+        if lock.is_none() {
+            drop(lock);
+            init_model_manager(&app)
+                .await
+                .map_err(|e| format!("Failed to init model manager: {}", e))?;
+        }
+    }
+
+    let manager = {
+        let lock = mm_state.0.lock().await;
+        lock.as_ref()
+            .ok_or_else(|| "Model manager not initialized".to_string())?
+            .clone()
+    };
+
+    let models = manager.list_models().await;
+
+    let result: Vec<providers::ProviderModel> = models
+        .into_iter()
+        .filter(|m| m.model_type == ModelType::Summary)
+        .filter(|m| matches!(m.status, ModelStatus::Available))
+        .map(|m| providers::ProviderModel {
+            id: m.name,
+            name: m.display_name,
+        })
+        .collect();
+
+    log_info!(
+        "Local provider: {} available summary models",
+        result.len()
+    );
+
+    Ok(result)
 }
 
 /// Return all configured providers from the YAML config.
