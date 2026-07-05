@@ -2,8 +2,10 @@
 // Designed for easy extension - just add new entries to get_available_models()
 
 use std::path::PathBuf;
+use std::sync::RwLock;
 
 use anyhow::{anyhow, Result};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -480,11 +482,29 @@ pub struct HfModelInfo {
     pub siblings: Vec<HfSibling>,
 }
 
+/// LFS metadata nested inside a sibling. Present only when `?blobs=true`.
+#[derive(Debug, Deserialize)]
+struct HfLfsInfo {
+    #[serde(default)]
+    size: Option<u64>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct HfSibling {
     pub rfilename: String,
+    /// Flat size field (present in `?blobs=true` response).
     #[serde(default)]
     pub size: Option<u64>,
+    /// Nested LFS metadata with size (alternative location in `?blobs=true`).
+    #[serde(default)]
+    lfs: Option<HfLfsInfo>,
+}
+
+impl HfSibling {
+    /// Resolve the real byte size, preferring flat `size` over nested `lfs.size`.
+    pub fn real_size(&self) -> Option<u64> {
+        self.size.or_else(|| self.lfs.as_ref().and_then(|l| l.size))
+    }
 }
 
 /// Result of HF repo verification
@@ -527,14 +547,15 @@ pub fn select_default_gguf(files: &[(String, u64)]) -> Option<String> {
         .map(|(n, _)| n.clone())
 }
 
-/// Load custom model registry from disk
+/// Load custom model registry from disk, backfilling zero-size entries from
+/// the on-disk GGUF file metadata when available.
 pub fn load_custom_registry(app_data_dir: &std::path::Path) -> Vec<CustomModelEntry> {
     let registry_path = app_data_dir.join("custom_models.json");
     if !registry_path.exists() {
         return Vec::new();
     }
 
-    match std::fs::read_to_string(&registry_path) {
+    let mut entries: Vec<CustomModelEntry> = match std::fs::read_to_string(&registry_path) {
         Ok(contents) => match serde_json::from_str(&contents) {
             Ok(entries) => entries,
             Err(e) => {
@@ -543,7 +564,7 @@ pub fn load_custom_registry(app_data_dir: &std::path::Path) -> Vec<CustomModelEn
                     registry_path.display(),
                     e
                 );
-                Vec::new()
+                return Vec::new();
             }
         },
         Err(e) => {
@@ -552,9 +573,46 @@ pub fn load_custom_registry(app_data_dir: &std::path::Path) -> Vec<CustomModelEn
                 registry_path.display(),
                 e
             );
-            Vec::new()
+            return Vec::new();
+        }
+    };
+
+    let needs_save = backfill_zero_sizes(app_data_dir, &mut entries);
+    if needs_save {
+        if let Err(e) = save_custom_registry(app_data_dir, &entries) {
+            log::error!("Failed to persist backfilled custom registry: {}", e);
         }
     }
+
+    entries
+}
+
+/// Backfill `size_bytes: 0` entries using on-disk GGUF file metadata.
+/// Returns true if any entries were modified and the registry should be persisted.
+fn backfill_zero_sizes(app_data_dir: &std::path::Path, entries: &mut [CustomModelEntry]) -> bool {
+    let models_dir = app_data_dir.join("models").join("summary");
+    let mut dirty = false;
+
+    for entry in entries.iter_mut() {
+        if entry.size_bytes != 0 {
+            continue;
+        }
+        let file_path = models_dir.join(&entry.filename);
+        if let Ok(metadata) = std::fs::metadata(&file_path) {
+            let real_size = metadata.len();
+            if real_size > 0 {
+                log::info!(
+                    "Backfilling size_bytes for '{}' from on-disk file: {} bytes (was 0)",
+                    entry.filename,
+                    real_size
+                );
+                entry.size_bytes = real_size;
+                dirty = true;
+            }
+        }
+    }
+
+    dirty
 }
 
 /// Save custom model registry to disk atomically.
@@ -584,7 +642,7 @@ pub fn save_custom_registry(
 
 /// Verify a HuggingFace repo for GGUF models via the HF API.
 pub async fn verify_hf_repo(repo_id: &str) -> Result<HfRepoVerification> {
-    let url = format!("https://huggingface.co/api/models/{}", repo_id);
+    let url = format!("https://huggingface.co/api/models/{}?blobs=true", repo_id);
     let client = reqwest::Client::builder()
         .user_agent("poly-hf-verifier/1.0")
         .timeout(std::time::Duration::from_secs(30))
@@ -631,7 +689,7 @@ pub async fn verify_hf_repo(repo_id: &str) -> Result<HfRepoVerification> {
         .siblings
         .iter()
         .filter(|s| s.rfilename.ends_with(".gguf"))
-        .map(|s| (s.rfilename.clone(), s.size.unwrap_or(0)))
+        .map(|s| (s.rfilename.clone(), s.real_size().unwrap_or(0)))
         .collect();
 
     if gguf_files.is_empty() {
@@ -683,16 +741,36 @@ pub fn add_to_custom_registry(
 ) -> Result<()> {
     let mut entries = load_custom_registry(app_data_dir);
 
-    // Check if already registered
+    // Deduplicate and repair zero-size entries.
     let model_name = filename.to_string();
-    if entries.iter().any(|e| e.filename == model_name) {
-        log::info!(
-            "Custom model '{}' from {} is already registered, skipping",
-            filename,
-            repo_id
-        );
+    if let Some(existing) = entries.iter_mut().find(|e| e.filename == model_name) {
+        if existing.size_bytes == 0 {
+            let resolved = resolve_or_derive_size(app_data_dir, filename, size_bytes)?;
+            existing.size_bytes = resolved;
+            existing.download_url = format!(
+                "https://huggingface.co/{}/resolve/main/{}",
+                repo_id, filename
+            );
+            existing.template = template.to_string();
+            existing.context_size = context_size;
+            save_custom_registry(app_data_dir, &entries)?;
+            log::info!(
+                "Updated existing custom model '{}' (was size_bytes=0, now {} bytes)",
+                filename,
+                resolved,
+            );
+        } else {
+            log::info!(
+                "Custom model '{}' from {} is already registered with nonzero size, skipping",
+                filename,
+                repo_id
+            );
+        }
         return Ok(());
     }
+
+    // Reject zero-size entries to prevent corrupted/unavailable classification.
+    let resolved_size = resolve_or_derive_size(app_data_dir, filename, size_bytes)?;
 
     let download_url = format!(
         "https://huggingface.co/{}/resolve/main/{}",
@@ -705,13 +783,50 @@ pub fn add_to_custom_registry(
         download_url,
         template: template.to_string(),
         context_size,
-        size_bytes,
+        size_bytes: resolved_size,
     };
 
     entries.push(entry);
     save_custom_registry(app_data_dir, &entries)?;
 
     Ok(())
+}
+
+/// Resolve the real byte size for a custom model entry.
+///
+/// If `size_bytes > 0`, use it directly. Otherwise, try to derive from
+/// the on-disk GGUF file at `app_data_dir/models/summary/<filename>`.
+/// Returns an error if the size is zero and no file exists.
+fn resolve_or_derive_size(
+    app_data_dir: &std::path::Path,
+    filename: &str,
+    size_bytes: u64,
+) -> Result<u64> {
+    if size_bytes > 0 {
+        return Ok(size_bytes);
+    }
+    let file_path = app_data_dir.join("models").join("summary").join(filename);
+    if let Ok(metadata) = std::fs::metadata(&file_path) {
+        let real_size = metadata.len();
+        if real_size > 0 {
+            log::info!(
+                "add_to_custom_registry: derived size_bytes={} from existing file '{}'",
+                real_size,
+                filename,
+            );
+            return Ok(real_size);
+        }
+        return Err(anyhow!(
+            "Cannot register '{}': the on-disk file exists but is empty (0 bytes). \
+             Delete the file and re-download, or re-verify the HF repo to get the real size.",
+            filename
+        ));
+    }
+    Err(anyhow!(
+        "Cannot register '{}': file size is zero and no existing file found. \
+         Verify the HF repo with the latest app version to get real file sizes.",
+        filename
+    ))
 }
 
 // ============================================================================
@@ -731,30 +846,32 @@ pub const GEMMA4_TEMPLATE: &str = "\
 // Generalized Model Lookup (Curated + Custom)
 // ============================================================================
 
-thread_local! {
-    /// Cached custom model entries for this thread. Avoids re-reading disk.
-    static CUSTOM_REGISTRY: std::cell::RefCell<Option<Vec<CustomModelEntry>>> = std::cell::RefCell::new(None);
-}
+/// Global custom model registry cache shared across all threads.
+/// Uses `RwLock` so Tauri commands on arbitrary threads always see the latest
+/// entries refreshed at startup or after `add_custom_model`.
+static CUSTOM_REGISTRY: Lazy<RwLock<Option<Vec<CustomModelEntry>>>> =
+    Lazy::new(|| RwLock::new(None));
 
-/// Set the custom registry cache for the current thread (called at startup).
+/// Set the custom registry cache (called at startup and after registry mutations).
 pub fn refresh_custom_registry_cache(app_data_dir: &std::path::Path) {
-    let entries = load_custom_registry(app_data_dir);
-    CUSTOM_REGISTRY.with(|cache| {
-        *cache.borrow_mut() = Some(entries);
-    });
+    let mut entries = load_custom_registry(app_data_dir);
+    backfill_zero_sizes(app_data_dir, &mut entries);
+    if let Ok(mut cache) = CUSTOM_REGISTRY.write() {
+        *cache = Some(entries);
+    }
 }
 
 /// Get all models: curated summary + curated embedding + custom (merged).
 pub fn get_all_models() -> Vec<ModelDef> {
     let mut models = get_available_models();
     models.extend(get_available_embedding_models());
-    CUSTOM_REGISTRY.with(|cache| {
-        if let Some(ref entries) = *cache.borrow() {
+    if let Ok(cache) = CUSTOM_REGISTRY.read() {
+        if let Some(ref entries) = *cache {
             for entry in entries {
                 models.push(entry.to_model_def());
             }
         }
-    });
+    }
     models
 }
 
@@ -765,8 +882,8 @@ pub fn get_model_by_name_any(name: &str) -> Option<ModelDef> {
         return Some(m);
     }
     // Try custom registry
-    CUSTOM_REGISTRY.with(|cache| {
-        if let Some(ref entries) = *cache.borrow() {
+    if let Ok(cache) = CUSTOM_REGISTRY.read() {
+        if let Some(ref entries) = *cache {
             for entry in entries {
                 let def = entry.to_model_def();
                 if def.name == name {
@@ -774,8 +891,8 @@ pub fn get_model_by_name_any(name: &str) -> Option<ModelDef> {
                 }
             }
         }
-        None
-    })
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1241,5 +1358,532 @@ mod hf_registry {
             resource_dir.join("custom_models.json"),
             "custom_models.json must NOT be under a resource directory"
         );
+    }
+
+    // =========================================================================
+    // HfSibling.real_size() — flat vs nested lfs.size
+    // =========================================================================
+
+    #[test]
+    fn hf_sibling_real_size_uses_flat_size() {
+        let json = r#"{"rfilename":"model.gguf","size":12345678}"#;
+        let s: HfSibling = serde_json::from_str(json).unwrap();
+        assert_eq!(s.real_size(), Some(12345678));
+    }
+
+    #[test]
+    fn hf_sibling_real_size_falls_back_to_nested_lfs_size() {
+        // The ?blobs=true response can nest size under lfs.size.
+        let json = r#"{"rfilename":"model.gguf","lfs":{"size":87654321}}"#;
+        let s: HfSibling = serde_json::from_str(json).unwrap();
+        assert_eq!(s.real_size(), Some(87654321));
+    }
+
+    #[test]
+    fn hf_sibling_real_size_flat_wins_over_lfs() {
+        let json = r#"{"rfilename":"model.gguf","size":11111111,"lfs":{"size":22222222}}"#;
+        let s: HfSibling = serde_json::from_str(json).unwrap();
+        assert_eq!(s.real_size(), Some(11111111));
+    }
+
+    #[test]
+    fn hf_sibling_real_size_returns_none_when_no_size() {
+        let json = r#"{"rfilename":"model.gguf"}"#;
+        let s: HfSibling = serde_json::from_str(json).unwrap();
+        assert_eq!(s.real_size(), None);
+    }
+
+    // =========================================================================
+    // HF API response with ?blobs=true nested lfs.size format
+    // =========================================================================
+
+    #[test]
+    fn hf_model_info_parses_nested_lfs_sizes() {
+        // Simulates ?blobs=true response for unsloth/gemma-4-E4B-it-GGUF.
+        let json = r#"{
+            "private":false,"gated":false,"disabled":false,
+            "siblings":[
+                {"rfilename":"gemma-4-E4B-it-Q4_K_M.gguf","lfs":{"size":4977169568}},
+                {"rfilename":"gemma-4-E4B-it-Q5_K_M.gguf","lfs":{"size":5678901234}},
+                {"rfilename":"README.md","lfs":{"size":2048}}
+            ]
+        }"#;
+        let info: HfModelInfo = serde_json::from_str(json).unwrap();
+
+        let gguf_sizes: Vec<(String, u64)> = info
+            .siblings
+            .iter()
+            .filter(|s| s.rfilename.ends_with(".gguf"))
+            .map(|s| (s.rfilename.clone(), s.real_size().unwrap_or(0)))
+            .collect();
+
+        assert_eq!(gguf_sizes.len(), 2);
+        assert_eq!(
+            gguf_sizes[0],
+            ("gemma-4-E4B-it-Q4_K_M.gguf".to_string(), 4_977_169_568)
+        );
+        assert_eq!(
+            gguf_sizes[1],
+            ("gemma-4-E4B-it-Q5_K_M.gguf".to_string(), 5_678_901_234)
+        );
+    }
+
+    // =========================================================================
+    // Backfill: zero-size entries repaired from on-disk files
+    // =========================================================================
+
+    #[test]
+    fn backfill_zero_sizes_repairs_entry_when_file_exists() {
+        let tmp = std::env::temp_dir().join("poly_test_backfill_exists");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let models_dir = tmp.join("models").join("summary");
+        std::fs::create_dir_all(&models_dir).unwrap();
+
+        let gguf_path = models_dir.join("gemma-4-E4B-it-Q4_K_M.gguf");
+        let real_size: u64 = 4_977_169_568;
+        {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&gguf_path)
+                .unwrap();
+            file.set_len(real_size).unwrap();
+        }
+
+        let mut entries = vec![CustomModelEntry {
+            repo_id: "unsloth/gemma-4-E4B-it-GGUF".to_string(),
+            filename: "gemma-4-E4B-it-Q4_K_M.gguf".to_string(),
+            download_url: String::new(),
+            template: "gemma4".to_string(),
+            context_size: 32000,
+            size_bytes: 0,
+        }];
+
+        let dirty = backfill_zero_sizes(&tmp, &mut entries);
+        assert!(
+            dirty,
+            "backfill should report dirty when entry was repaired"
+        );
+        assert_eq!(entries[0].size_bytes, real_size);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn backfill_zero_sizes_leaves_nonzero_untouched() {
+        let tmp = std::env::temp_dir().join("poly_test_backfill_nonzero");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let mut entries = vec![CustomModelEntry {
+            repo_id: "test/repo".to_string(),
+            filename: "model.gguf".to_string(),
+            download_url: String::new(),
+            template: "gemma3".to_string(),
+            context_size: 4096,
+            size_bytes: 999_999,
+        }];
+
+        let dirty = backfill_zero_sizes(&tmp, &mut entries);
+        assert!(!dirty, "non-zero entry should not trigger backfill");
+        assert_eq!(entries[0].size_bytes, 999_999);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn backfill_zero_sizes_no_file_does_nothing() {
+        let tmp = std::env::temp_dir().join("poly_test_backfill_nofile");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let mut entries = vec![CustomModelEntry {
+            repo_id: "test/repo".to_string(),
+            filename: "nonexistent.gguf".to_string(),
+            download_url: String::new(),
+            template: "gemma3".to_string(),
+            context_size: 4096,
+            size_bytes: 0,
+        }];
+
+        let dirty = backfill_zero_sizes(&tmp, &mut entries);
+        assert!(!dirty, "no file → no backfill");
+        assert_eq!(entries[0].size_bytes, 0);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // =========================================================================
+    // load_custom_registry with backfill + persistence
+    // =========================================================================
+
+    #[test]
+    fn load_custom_registry_backfills_and_persists() {
+        let tmp = std::env::temp_dir().join("poly_test_load_backfill");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Write a registry with size_bytes: 0
+        let registry_json = r#"[
+            {
+                "repo_id": "unsloth/gemma-4-E4B-it-GGUF",
+                "filename": "gemma-4-E4B-it-Q4_K_M.gguf",
+                "download_url": "https://hf.co/test/resolve/main/test.gguf",
+                "template": "gemma4",
+                "context_size": 32000,
+                "size_bytes": 0
+            }
+        ]"#;
+        std::fs::write(tmp.join("custom_models.json"), registry_json).unwrap();
+
+        // Create the on-disk file with real size
+        let models_dir = tmp.join("models").join("summary");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let gguf_path = models_dir.join("gemma-4-E4B-it-Q4_K_M.gguf");
+        let real_size: u64 = 4_977_169_568;
+        {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&gguf_path)
+                .unwrap();
+            file.set_len(real_size).unwrap();
+        }
+
+        // Load → should backfill and persist
+        let entries = load_custom_registry(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].size_bytes, real_size,
+            "load_custom_registry should backfill zero-size from on-disk file"
+        );
+
+        // Re-load → backfill persistence should have been saved
+        let re_loaded = load_custom_registry(&tmp);
+        assert_eq!(
+            re_loaded[0].size_bytes, real_size,
+            "persisted registry should also have the backfilled size"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // =========================================================================
+    // add_to_custom_registry zero-size guard
+    // =========================================================================
+
+    #[test]
+    fn add_to_custom_registry_rejects_zero_size_when_no_file() {
+        let tmp = std::env::temp_dir().join("poly_test_add_zero_reject");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let result = add_to_custom_registry(
+            &tmp,
+            "test/repo",
+            "model.gguf",
+            "gemma3",
+            4096,
+            0, // size_bytes = 0, no file on disk
+        );
+        assert!(result.is_err(), "zero-size add should fail");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("file size is zero"),
+            "error should mention zero size"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_to_custom_registry_derives_size_from_existing_file() {
+        let tmp = std::env::temp_dir().join("poly_test_add_zero_derive");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Pre-create the GGUF file on disk
+        let models_dir = tmp.join("models").join("summary");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let gguf_path = models_dir.join("model.gguf");
+        let real_size: u64 = 1234567890;
+        {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&gguf_path)
+                .unwrap();
+            file.set_len(real_size).unwrap();
+        }
+
+        let result = add_to_custom_registry(
+            &tmp,
+            "test/repo",
+            "model.gguf",
+            "gemma3",
+            4096,
+            0, // size_bytes=0 but file exists
+        );
+        assert!(result.is_ok(), "should derive size from existing file");
+
+        let entries = load_custom_registry(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].size_bytes, real_size);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_to_custom_registry_rejects_zero_byte_file() {
+        let tmp = std::env::temp_dir().join("poly_test_add_zero_byte_file");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Create a zero-byte GGUF file on disk (partial/corrupted download)
+        let models_dir = tmp.join("models").join("summary");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let gguf_path = models_dir.join("model.gguf");
+        std::fs::write(&gguf_path, &[]).unwrap();
+
+        let result = add_to_custom_registry(
+            &tmp,
+            "test/repo",
+            "model.gguf",
+            "gemma3",
+            4096,
+            0, // size_bytes=0, file exists but empty
+        );
+        assert!(result.is_err(), "zero-byte file should be rejected");
+        assert!(
+            result.unwrap_err().to_string().contains("empty"),
+            "error should mention empty/zero-byte file"
+        );
+
+        // No registry entry should be persisted
+        let entries = load_custom_registry(&tmp);
+        assert!(
+            entries.is_empty(),
+            "zero-byte file must not produce a registry entry"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // =========================================================================
+    // Duplicate-entry size repair (zero → nonzero)
+    // =========================================================================
+
+    #[test]
+    fn add_to_custom_registry_repairs_existing_zero_size_entry() {
+        // Existing entry with size_bytes: 0, no file on disk, user re-registers
+        // with nonzero size from a fixed HF verification.
+        let tmp = std::env::temp_dir().join("poly_test_dup_repair_zero");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Seed a bad zero-size entry directly to disk (simulates old bug)
+        let seed = vec![CustomModelEntry {
+            repo_id: "test/repo".to_string(),
+            filename: "model.gguf".to_string(),
+            download_url: "https://hf.co/test/resolve/main/model.gguf".to_string(),
+            template: "gemma3".to_string(),
+            context_size: 4096,
+            size_bytes: 0,
+        }];
+        save_custom_registry(&tmp, &seed).unwrap();
+
+        // Re-register with real size from HF verification
+        let result = add_to_custom_registry(
+            &tmp,
+            "test/repo",
+            "model.gguf",
+            "gemma4",
+            32000,
+            4_977_169_568,
+        );
+        assert!(
+            result.is_ok(),
+            "re-registering existing zero-size entry with nonzero size should succeed"
+        );
+
+        let entries = load_custom_registry(&tmp);
+        assert_eq!(entries.len(), 1, "still one entry");
+        assert_eq!(entries[0].size_bytes, 4_977_169_568);
+        assert_eq!(
+            entries[0].template, "gemma4",
+            "duplicate repair should update template"
+        );
+        assert_eq!(
+            entries[0].context_size, 32000,
+            "duplicate repair should update context_size"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn add_to_custom_registry_repairs_existing_zero_from_file() {
+        // Existing entry with size_bytes: 0, file EXISTS on disk, user
+        // re-registers (possibly with size_bytes: 0 too). We derive from file.
+        let tmp = std::env::temp_dir().join("poly_test_dup_repair_file");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Seed a bad zero-size entry
+        let seed = vec![CustomModelEntry {
+            repo_id: "test/repo".to_string(),
+            filename: "model.gguf".to_string(),
+            download_url: "https://hf.co/test/resolve/main/model.gguf".to_string(),
+            template: "gemma3".to_string(),
+            context_size: 4096,
+            size_bytes: 0,
+        }];
+        save_custom_registry(&tmp, &seed).unwrap();
+
+        // Create the on-disk file
+        let models_dir = tmp.join("models").join("summary");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let file_path = models_dir.join("model.gguf");
+        let real_size: u64 = 999_999_999;
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&file_path)
+                .unwrap();
+            f.set_len(real_size).unwrap();
+        }
+
+        // Re-register, even with size_bytes: 0 — should derive from file
+        let result = add_to_custom_registry(&tmp, "test/repo", "model.gguf", "gemma3", 4096, 0);
+        assert!(result.is_ok(), "should repair from file");
+
+        let entries = load_custom_registry(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].size_bytes, real_size);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // =========================================================================
+    // Cross-thread custom registry visibility
+    // =========================================================================
+
+    #[test]
+    fn custom_registry_visible_across_threads_after_refresh() {
+        let tmp = std::env::temp_dir().join("poly_test_cross_thread");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let entry = CustomModelEntry {
+            repo_id: "test/repo".to_string(),
+            filename: "model.gguf".to_string(),
+            download_url: String::new(),
+            template: "gemma3".to_string(),
+            context_size: 4096,
+            size_bytes: 999_999,
+        };
+        save_custom_registry(&tmp, &[entry.clone()]).unwrap();
+
+        // Refresh on the main thread
+        refresh_custom_registry_cache(&tmp);
+
+        // Simulate lookup from a different thread (Tauri command on a runtime
+        // worker thread). Before the fix (thread_local!), this would return None.
+        let found = std::thread::spawn(move || get_model_by_name_any("custom:test:repo"))
+            .join()
+            .unwrap();
+
+        assert!(
+            found.is_some(),
+            "custom model should be visible from a different thread after refresh"
+        );
+        assert_eq!(found.unwrap().name, "custom:test:repo");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // =========================================================================
+    // Observed bug: unsloth/gemma-4-E4B-it-GGUF, size_bytes:0, file exists
+    // =========================================================================
+
+    #[test]
+    fn observed_case_zero_size_entry_with_existing_file_not_corrupted() {
+        // Given: a custom registry entry with size_bytes:0 (the old behavior)
+        // and an on-disk GGUF file with real size 4,977,169,568 bytes
+        // When: the registry is loaded and backfilled, then scanned
+        // Then: the model reports Available, not Corrupted/Unknown.
+
+        let tmp = std::env::temp_dir().join("poly_test_observed_case");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Write zero-size registry entry (simulating the bug)
+        let registry_json = serde_json::json!([{
+            "repo_id": "unsloth/gemma-4-E4B-it-GGUF",
+            "filename": "gemma-4-E4B-it-Q4_K_M.gguf",
+            "download_url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
+            "template": "gemma4",
+            "context_size": 32000,
+            "size_bytes": 0
+        }]);
+        std::fs::write(
+            tmp.join("custom_models.json"),
+            serde_json::to_string_pretty(&registry_json).unwrap(),
+        )
+        .unwrap();
+
+        // Create the on-disk GGUF file with the real observed size
+        let models_dir = tmp.join("models").join("summary");
+        std::fs::create_dir_all(&models_dir).unwrap();
+        let gguf_path = models_dir.join("gemma-4-E4B-it-Q4_K_M.gguf");
+        let real_size: u64 = 4_977_169_568;
+        {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(&gguf_path)
+                .unwrap();
+            file.set_len(real_size).unwrap();
+        }
+
+        // Step 1: Load and backfill
+        let entries = load_custom_registry(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].size_bytes, real_size,
+            "registry entry should be backfilled with real file size"
+        );
+
+        // Step 2: Verify to_model_def produces non-zero size_mb
+        let def = entries[0].to_model_def();
+        let expected_mb = (real_size / (1024 * 1024)) as u64;
+        assert_eq!(def.size_mb, expected_mb);
+        assert!(def.size_mb > 0, "size_mb must be > 0 after backfill");
+
+        // Step 3: Refresh cache and verify model is findable
+        refresh_custom_registry_cache(&tmp);
+        let model = get_model_by_name_any("custom:unsloth:gemma-4-E4B-it-GGUF");
+        assert!(model.is_some(), "custom model should be found");
+        let model = model.unwrap();
+        assert!(model.size_mb > 0, "ModelDef.size_mb must be nonzero");
+        assert_eq!(model.gguf_file, "gemma-4-E4B-it-Q4_K_M.gguf");
+
+        // Step 4: Simulate scan_models validation — with real size, the
+        // file_size_mb should be within 10% of expected.
+        let metadata = std::fs::metadata(&gguf_path).unwrap();
+        let file_size_mb = metadata.len() / (1024 * 1024);
+        let expected_min = (model.size_mb as f64 * 0.9) as u64;
+        let expected_max = (model.size_mb as f64 * 1.1) as u64;
+
+        assert!(
+            file_size_mb >= expected_min && file_size_mb <= expected_max,
+            "with real size_mb={}, file_size_mb={} should be within [{expected_min}, {expected_max}] (not Corrupted)",
+            model.size_mb, file_size_mb,
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
