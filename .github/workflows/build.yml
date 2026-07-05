@@ -99,8 +99,9 @@ jobs:
       - name: Get pnpm store directory
         shell: bash
         run: |
-          STORE_PATH=$(pnpm store path 2>/dev/null)
+          STORE_PATH=$(pnpm store path --silent) || true
           if [ -z "$STORE_PATH" ]; then
+            echo "pnpm store path returned empty, using default"
             STORE_PATH="$HOME/.local/share/pnpm/store/v3_11"
           fi
           echo "STORE_PATH=$STORE_PATH" >> $GITHUB_ENV
