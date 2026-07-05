@@ -28,9 +28,8 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 
 use super::config::{
-    KnowledgeGraphProfileWithoutSecrets,
-    KnowledgeGraphSettingsWithoutSecrets, PolyConfig, PreferencesConfig, SummaryConfig,
-    TranscriptConfig,
+    KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets, PolyConfig,
+    PreferencesConfig, SummaryConfig, TranscriptConfig,
 };
 use super::ConfigRepository;
 use crate::knowledge_graph::config::KnowledgeGraphSettings;
@@ -124,8 +123,7 @@ impl LegacyConfigExtractor {
         Ok(SummaryConfig {
             provider_id: read_column_string(&row, "provider").unwrap_or_else(|| "openai".into()),
             model: read_column_string(&row, "model").unwrap_or_else(|| "gpt-4o-2024-11-20".into()),
-            whisper_model: read_column_string(&row, "whisperModel")
-                .unwrap_or_else(|| "large-v3".into()),
+            ..Default::default()
         })
     }
 
@@ -850,7 +848,7 @@ mod tests {
         let loaded = config_repo.load().unwrap();
         // Check that extraction populated the config without providers
         // (providers come from default.yml template, not legacy extraction)
-        assert_eq!(loaded.summary.provider_id, "openai");
+        assert_eq!(loaded.summary.provider_id, "local");
     }
 
     #[tokio::test]
@@ -866,8 +864,6 @@ mod tests {
         assert!(result.is_ok(), "extraction should succeed with no tables");
 
         let loaded = config_repo.load().unwrap();
-        // Same check as extraction_on_empty_db_returns_ok — providers are not
-        // populated by legacy extraction.
-        assert_eq!(loaded.summary.provider_id, "openai");
+        assert_eq!(loaded.summary.provider_id, "local");
     }
 }

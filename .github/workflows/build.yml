@@ -65,6 +65,21 @@ jobs:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
 
+      - name: Verify runner architecture matches target
+        if: inputs.target != ''
+        shell: bash
+        run: |
+          HOST=$(uname -m)
+          echo "Host architecture: $HOST"
+          echo "Build target: ${{ inputs.target }}"
+          TARGET_ARCH=$(echo "${{ inputs.target }}" | cut -d'-' -f1)
+          if [ "$HOST" != "$TARGET_ARCH" ] && [ "$TARGET_ARCH" != "aarch64" -o "$HOST" != "arm64" ]; then
+            echo "ERROR: Host architecture ($HOST) does not match build target (${{ inputs.target }})."
+            echo "This job requires a runner with the target architecture. Aborting."
+            exit 1
+          fi
+          echo "Architecture check passed: $HOST matches ${{ inputs.target }}"
+
       - name: Get version from tauri.conf.json
         id: get-version
         shell: bash
@@ -85,21 +100,38 @@ jobs:
             echo "Build profile: release"
           fi
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-          run_install: false
+      - name: Determine bundle directory
+        id: bundle-dir
+        shell: bash
+        run: |
+          if [[ -n "${{ inputs.target }}" ]]; then
+            echo "prefix=target/${{ inputs.target }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "prefix=target" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          check-latest: true
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+          run_install: false
 
       - name: Get pnpm store directory
         shell: bash
         run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+          STORE_PATH=$(pnpm store path --silent) || true
+          if [ -z "$STORE_PATH" ]; then
+            echo "pnpm store path returned empty, using default"
+            STORE_PATH="$HOME/.local/share/pnpm/store/v3_11"
+          fi
+          echo "STORE_PATH=$STORE_PATH" >> $GITHUB_ENV
+          echo "Detected pnpm store path: $STORE_PATH"
 
       - name: Setup pnpm cache
         uses: actions/cache@v4
@@ -121,23 +153,23 @@ jobs:
           workspaces: ". -> target"
           key: ${{ inputs.platform }}-${{ inputs.target }}-vulkan-v2
 
-      - name: Install dependencies (Ubuntu 24.04)
-        if: contains(inputs.platform, 'ubuntu-24.04')
+      - name: Install dependencies (Ubuntu)
+        if: contains(inputs.platform, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev \
-            libwebkit2gtk-4.1-0=2.44.0-2 \
-            libwebkit2gtk-4.1-dev=2.44.0-2 \
-            libjavascriptcoregtk-4.1-0=2.44.0-2 \
-            libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-            gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-            gir1.2-webkit2-4.1=2.44.0-2
-
-      - name: Install dependencies (Ubuntu 22.04)
-        if: contains(inputs.platform, 'ubuntu-22.04')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev
+          UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || grep VERSION_ID /etc/os-release | cut -d'"' -f2)
+          echo "Detected Ubuntu version: $UBUNTU_VERSION"
+          if [ "$UBUNTU_VERSION" = "24.04" ]; then
+            sudo apt-get install -y libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev \
+              libwebkit2gtk-4.1-0=2.44.0-2 \
+              libwebkit2gtk-4.1-dev=2.44.0-2 \
+              libjavascriptcoregtk-4.1-0=2.44.0-2 \
+              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
+              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
+              gir1.2-webkit2-4.1=2.44.0-2
+          else
+            sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev libopenblas-dev libx11-dev libxtst-dev libxrandr-dev
+          fi
 
 
       - name: Prepare Vulkan SDK for Ubuntu 24.04
@@ -164,7 +196,7 @@ jobs:
           pnpm install
 
       - name: Rustup install target
-        if: ${{ inputs.target != '' && !contains(inputs.target, 'unknown-linux-gnu') }}
+        if: ${{ inputs.target != '' }}
         run: rustup target add ${{ inputs.target }}
 
       # ----- macOS signing setup (only when sign-binaries is true) -----
@@ -264,15 +296,17 @@ jobs:
             echo "Using CPU-only mode for Linux"
           fi
 
-          cargo build --release -p llama-helper $LLAMA_FEATURES
+          if [[ -n "${{ inputs.target }}" ]]; then
+            cargo build --release -p llama-helper $LLAMA_FEATURES --target ${{ inputs.target }}
+            mkdir -p frontend/src-tauri/binaries
+            cp target/${{ inputs.target }}/release/llama-helper frontend/src-tauri/binaries/llama-helper-${{ inputs.target }}
+          else
+            cargo build --release -p llama-helper $LLAMA_FEATURES
+            mkdir -p frontend/src-tauri/binaries
+            cp target/release/llama-helper frontend/src-tauri/binaries/llama-helper
+          fi
 
-          # Use host triple for binary name (not input target, which may differ on self-hosted runners)
-          TARGET=$(rustc -vV | grep "host:" | awk '{print $2}')
-
-          mkdir -p frontend/src-tauri/binaries
-          cp target/release/llama-helper frontend/src-tauri/binaries/llama-helper-${TARGET}
-
-          echo "Copied llama-helper to frontend/src-tauri/binaries/llama-helper-${TARGET}"
+          echo "Copied llama-helper to frontend/src-tauri/binaries/"
           ls -la frontend/src-tauri/binaries/
 
       - name: Cache FFmpeg binary
@@ -287,8 +321,22 @@ jobs:
         env:
           CARGO_BUILD_JOBS: 2
         run: |
-          cargo test --workspace -- --nocapture 2>&1; echo "EXIT_CODE=$?"
+          cargo test --workspace -- --nocapture
         working-directory: frontend/src-tauri
+
+      - name: Conditionally disable updater artifacts for unsigned builds
+        if: ${{ !inputs.sign-binaries }}
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY not available — disabling updater artifacts for this build"
+            sed -i 's/"createUpdaterArtifacts": true/"createUpdaterArtifacts": false/' frontend/src-tauri/tauri.conf.json
+            grep -q '"createUpdaterArtifacts": false' frontend/src-tauri/tauri.conf.json && echo "Updater artifacts disabled in tauri.conf.json"
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY is available — updater artifacts remain enabled"
+          fi
 
       # Signed build — only when sign-binaries is true and macOS cert is available
       # On macOS, skips signed build if APPLE_CERTIFICATE secret is not set
@@ -311,7 +359,7 @@ jobs:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
-          args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
+          args: ${{ inputs.build-args }} --target ${{ inputs.target }} ${{ steps.build-features.outputs.features }}
 
       # Unsigned build — passes signing key for updater but no code signing
       # Also used as fallback on macOS when APPLE_CERTIFICATE is not set
@@ -327,7 +375,7 @@ jobs:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
-          args: ${{ inputs.build-args }} ${{ steps.build-features.outputs.features }}
+          args: ${{ inputs.build-args }} --target ${{ inputs.target }} ${{ steps.build-features.outputs.features }}
 
       - name: Upload artifacts (macOS)
         if: inputs.upload-artifacts && contains(inputs.platform, 'macos')
@@ -335,22 +383,22 @@ jobs:
         with:
           name: ${{ inputs.asset-prefix }}-${{ inputs.target }}
           path: |
-            target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/dmg/*.dmg
-            target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app
-            target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app.tar.gz
-            target/${{ inputs.target }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app.tar.gz.sig
+            ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/dmg/*.dmg
+            ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app
+            ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app.tar.gz
+            ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/macos/*.app.tar.gz.sig
           retention-days: 30
 
       - name: Install FUSE for AppImage processing
-        if: contains(inputs.platform, 'ubuntu')
+        if: contains(inputs.platform, 'ubuntu') && contains(inputs.build-args, 'appimage')
         run: |
           sudo apt-get update
           sudo apt-get install -y fuse libfuse2
 
       - name: Remove libwayland-client.so from AppImage
-        if: contains(inputs.platform, 'ubuntu')
+        if: contains(inputs.platform, 'ubuntu') && contains(inputs.build-args, 'appimage')
         run: |
-          APPIMAGE_PATH=$(find target/${{ steps.build-profile.outputs.profile }}/bundle/appimage -name "*.AppImage" | head -1)
+          APPIMAGE_PATH=$(find ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/appimage -name "*.AppImage" 2>/dev/null | head -1)
 
           if [ -n "$APPIMAGE_PATH" ]; then
             echo "Processing AppImage: $APPIMAGE_PATH"
@@ -374,9 +422,9 @@ jobs:
         with:
           name: ${{ inputs.asset-prefix }}-${{ inputs.platform }}-${{ inputs.target }}
           path: |
-            target/${{ steps.build-profile.outputs.profile }}/bundle/deb/*.deb
-            target/${{ steps.build-profile.outputs.profile }}/bundle/appimage/*.AppImage
-            target/${{ steps.build-profile.outputs.profile }}/bundle/rpm/*.rpm
+            ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/deb/*.deb
+            ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/appimage/*.AppImage
+            ${{ steps.bundle-dir.outputs.prefix }}/${{ steps.build-profile.outputs.profile }}/bundle/rpm/*.rpm
           retention-days: 30
 
 

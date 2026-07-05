@@ -176,7 +176,7 @@ pub async fn complete_onboarding<R: Runtime>(
     state: tauri::State<'_, AppState>,
     model: String,
 ) -> Result<(), String> {
-    info!("Completing onboarding with builtin-ai model: {}", model);
+    info!("Completing onboarding with local LLM model: {}", model);
 
     // Step 1: Save model configuration to YAML config via ConfigRepository
     let mut config = state
@@ -184,14 +184,25 @@ pub async fn complete_onboarding<R: Runtime>(
         .load_or_create_default()
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
-    // Onboarding always uses builtin-ai (local LLM)
-    config.summary.provider_id = "builtin-ai".to_string();
-    config.summary.model = model.clone();
-    config.summary.whisper_model = "large-v3".to_string();
+    let onboarding_config = build_onboarding_config(&model);
+    config.summary = onboarding_config.summary;
+    config.transcript = onboarding_config.transcript;
 
-    // Transcription always uses parakeet
-    config.transcript.provider = "parakeet".to_string();
-    config.transcript.model = crate::config::DEFAULT_PARAKEET_MODEL.to_string();
+    // Ensure the "local" provider exists in the providers list
+    let has_local = config.providers.iter().any(|p| p.id == "local");
+    if !has_local {
+        config.providers.insert(
+            0,
+            crate::providers::ProviderConfig {
+                id: "local".to_string(),
+                name: "Local".to_string(),
+                provider_type: crate::providers::ProviderType::Local,
+                base_url: String::new(),
+                default_model: String::new(),
+            },
+        );
+        info!("Added 'local' provider to config during onboarding");
+    }
 
     state
         .config_repo
@@ -210,7 +221,7 @@ pub async fn complete_onboarding<R: Runtime>(
         .map_err(|e| format!("Failed to load onboarding status: {}", e))?;
 
     status.completed = true;
-    status.current_step = 4; // Max step (4 on macOS with permissions, 3 on other platforms)
+    status.current_step = 5; // Max step (5 on macOS with permissions + optional KG, 4 on other platforms)
     status.model_status.parakeet = "downloaded".to_string();
     status.model_status.summary = "downloaded".to_string();
     status.model_status.selected_summary_model = Some(model.clone());
@@ -223,6 +234,17 @@ pub async fn complete_onboarding<R: Runtime>(
     Ok(())
 }
 
+/// Build the config that `complete_onboarding` would write.
+/// Extracted so it can be unit-tested without a Tauri AppHandle.
+pub fn build_onboarding_config(model: &str) -> crate::poly_config::PolyConfig {
+    let mut config = crate::poly_config::PolyConfig::default();
+    config.summary.provider_id = "local".to_string();
+    config.summary.model = model.to_string();
+    config.transcript.provider = "local".to_string();
+    config.transcript.model = crate::config::DEFAULT_PARAKEET_MODEL.to_string();
+    config
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,7 +255,7 @@ mod tests {
             r#"{
                 "version": "1.0",
                 "completed": true,
-                "current_step": 4,
+                "current_step": 5,
                 "model_status": {
                     "parakeet": "downloaded",
                     "summary": "downloaded"
@@ -244,5 +266,50 @@ mod tests {
         .expect("old onboarding status should remain compatible");
 
         assert_eq!(status.model_status.selected_summary_model, None);
+    }
+
+    #[test]
+    fn onboarding_config_uses_local_provider() {
+        let config = build_onboarding_config("qwen3-8b");
+        assert_eq!(config.summary.provider_id, "local");
+    }
+
+    #[test]
+    fn onboarding_config_uses_local_transcript_provider() {
+        let config = build_onboarding_config("qwen3-8b");
+        assert_eq!(config.transcript.provider, "local");
+        assert_eq!(
+            config.transcript.model,
+            crate::config::DEFAULT_PARAKEET_MODEL
+        );
+    }
+
+    #[test]
+    fn onboarding_config_does_not_write_whisper_model() {
+        let config = build_onboarding_config("qwen3-8b");
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(
+            !yaml.contains("whisper_model"),
+            "whisper_model must not appear in serialized onboarding config: got\n{}",
+            yaml
+        );
+    }
+
+    #[test]
+    fn onboarding_config_sets_selected_model() {
+        let config = build_onboarding_config("qwen3-8b");
+        assert_eq!(config.summary.model, "qwen3-8b");
+    }
+
+    #[test]
+    fn onboarding_config_has_no_ollama_dependency() {
+        let config = build_onboarding_config("qwen3-8b");
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        assert!(
+            !yaml.contains("ollama"),
+            "ollama must not appear in serialized onboarding config: got\n{}",
+            yaml
+        );
+        assert_eq!(config.summary.provider_id, "local");
     }
 }

@@ -1,7 +1,7 @@
 use log::{debug as log_debug, error as log_error, info as log_info, warn as log_warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_store::StoreExt;
 
 use crate::{
@@ -22,6 +22,9 @@ use crate::{
         types::SecretStoreError,
     },
     state::AppState,
+    summary::summary_engine::{
+        init_model_manager, model_manager::ModelStatus, models::ModelType, ModelManagerState,
+    },
 };
 
 // Hardcoded server URL
@@ -78,23 +81,12 @@ pub struct UpdateProfileRequest {
 pub struct ModelConfig {
     pub provider: String,
     pub model: String,
-    #[serde(rename = "whisperModel")]
+    /// Deprecated: no longer stored in config. Always empty.
+    #[serde(rename = "whisperModel", default)]
     pub whisper_model: String,
     /// API key status (never the raw key). Use `api_get_api_key` to fetch the raw key.
     #[serde(rename = "apiKeyStatus", skip_serializing_if = "Option::is_none")]
     pub api_key_status: Option<ApiKeyStatus>,
-    #[serde(rename = "ollamaEndpoint")]
-    pub ollama_endpoint: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SaveModelConfigRequest {
-    pub provider: String,
-    pub model: String,
-    #[serde(rename = "whisperModel")]
-    pub whisper_model: String,
-    #[serde(rename = "apiKey")]
-    pub api_key: Option<String>,
     #[serde(rename = "ollamaEndpoint")]
     pub ollama_endpoint: Option<String>,
 }
@@ -486,10 +478,9 @@ pub async fn api_get_model_config<R: Runtime>(
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
     log_info!(
-        "Loaded model config: provider_id={}, model={}, whisperModel={}",
+        "Loaded model config: provider_id={}, model={}",
         &cfg.summary.provider_id,
         &cfg.summary.model,
-        &cfg.summary.whisper_model,
     );
 
     let store = KeyringFirstSecretStore::default_store()
@@ -502,7 +493,7 @@ pub async fn api_get_model_config<R: Runtime>(
     Ok(Some(ModelConfig {
         provider: cfg.summary.provider_id.clone(),
         model: cfg.summary.model,
-        whisper_model: cfg.summary.whisper_model,
+        whisper_model: String::new(),
         api_key_status: Some(api_key_status),
         ollama_endpoint: None,
     }))
@@ -514,15 +505,21 @@ pub async fn api_save_model_config<R: Runtime>(
     state: tauri::State<'_, AppState>,
     provider: String,
     model: String,
-    whisper_model: String,
+    whisper_model: Option<String>,
     api_key: Option<String>,
-    _auth_token: Option<String>,
+    ollama_endpoint: Option<String>,
+    auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Silence unused-parameter warnings for fields the frontend may send but
+    // that this command intentionally ignores.
+    let _ = whisper_model;
+    let _ = ollama_endpoint;
+    let _ = auth_token;
+
     log_info!(
-        "api_save_model_config called (native): provider_id='{}', model='{}', whisperModel='{}'",
+        "api_save_model_config called (native): provider_id='{}', model='{}'",
         &provider,
         &model,
-        &whisper_model,
     );
 
     // 1. Write API key to SecretStore FIRST (fail-fast: if this fails, YAML is untouched)
@@ -544,7 +541,6 @@ pub async fn api_save_model_config<R: Runtime>(
         .map_err(|e| format!("Failed to load config: {}", e))?;
     cfg.summary.provider_id = provider;
     cfg.summary.model = model;
-    cfg.summary.whisper_model = whisper_model;
 
     state
         .config_repo
@@ -563,14 +559,18 @@ pub async fn api_save_model_config<R: Runtime>(
 }
 
 /// Fetch available models for a provider by calling its models endpoint.
-/// Results are cached for 5 minutes.
+/// Results are cached for 5 minutes.  For the Local provider listing
+/// returns downloaded summary models from the local model manager.
 #[tauri::command]
 pub async fn api_get_provider_models<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     provider_id: String,
 ) -> Result<Vec<providers::ProviderModel>, String> {
-    log_info!("api_get_provider_models called: provider_id='{}'", &provider_id);
+    log_info!(
+        "api_get_provider_models called: provider_id='{}'",
+        &provider_id
+    );
 
     let cfg = state
         .config_repo
@@ -581,12 +581,57 @@ pub async fn api_get_provider_models<R: Runtime>(
         .find_provider(&provider_id)
         .ok_or_else(|| format!("Provider '{}' not found in config", &provider_id))?;
 
+    if provider.provider_type == providers::ProviderType::Local {
+        return get_local_models(app).await;
+    }
+
     let store = KeyringFirstSecretStore::default_store()
         .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
     let secret_ref = refs::summary_provider_key(&provider_id);
     let api_key = store.get(&secret_ref).await.ok().flatten();
 
     providers::get_provider_models(&provider, api_key.as_deref()).await
+}
+
+/// List downloaded local summary models (filtered from ModelManager).
+/// Excludes embedding models (bge-m3) and not-yet-downloaded models.
+async fn get_local_models<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<Vec<providers::ProviderModel>, String> {
+    let mm_state: tauri::State<'_, ModelManagerState> = app.state();
+
+    {
+        let lock = mm_state.0.lock().await;
+        if lock.is_none() {
+            drop(lock);
+            init_model_manager(&app)
+                .await
+                .map_err(|e| format!("Failed to init model manager: {}", e))?;
+        }
+    }
+
+    let manager = {
+        let lock = mm_state.0.lock().await;
+        lock.as_ref()
+            .ok_or_else(|| "Model manager not initialized".to_string())?
+            .clone()
+    };
+
+    let models = manager.list_models().await;
+
+    let result: Vec<providers::ProviderModel> = models
+        .into_iter()
+        .filter(|m| m.model_type == ModelType::Summary)
+        .filter(|m| matches!(m.status, ModelStatus::Available))
+        .map(|m| providers::ProviderModel {
+            id: m.name,
+            name: m.display_name,
+        })
+        .collect();
+
+    log_info!("Local provider: {} available summary models", result.len());
+
+    Ok(result)
 }
 
 /// Return all configured providers from the YAML config.
@@ -612,7 +657,11 @@ pub async fn api_save_provider<R: Runtime>(
     provider: providers::ProviderConfig,
     api_key: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    log_info!("api_save_provider called: id='{}', name='{}'", &provider.id, &provider.name);
+    log_info!(
+        "api_save_provider called: id='{}', name='{}'",
+        &provider.id,
+        &provider.name
+    );
 
     // 1. Handle API key in SecretStore if provided
     let store = KeyringFirstSecretStore::default_store()
@@ -620,7 +669,10 @@ pub async fn api_save_provider<R: Runtime>(
     let secret_ref = refs::summary_provider_key(&provider.id);
     match api_key {
         Some(key) if !key.trim().is_empty() => {
-            log_info!("Saving API key for provider '{}' to SecretStore", &provider.id);
+            log_info!(
+                "Saving API key for provider '{}' to SecretStore",
+                &provider.id
+            );
             store
                 .set(&secret_ref, &key)
                 .await
@@ -628,7 +680,10 @@ pub async fn api_save_provider<R: Runtime>(
         }
         Some(_) => {
             // Empty string means clear the key
-            log_info!("Clearing API key for provider '{}' from SecretStore", &provider.id);
+            log_info!(
+                "Clearing API key for provider '{}' from SecretStore",
+                &provider.id
+            );
             store
                 .delete(&secret_ref)
                 .await
@@ -636,7 +691,10 @@ pub async fn api_save_provider<R: Runtime>(
         }
         None => {
             // No api_key parameter — leave existing key untouched
-            log_info!("No API key provided for '{}', leaving existing key unchanged", &provider.id);
+            log_info!(
+                "No API key provided for '{}', leaving existing key unchanged",
+                &provider.id
+            );
         }
     }
 
@@ -731,7 +789,7 @@ pub async fn api_get_api_key_status<R: Runtime>(
     let store = KeyringFirstSecretStore::default_store()
         .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
 
-    let secret_ref = if provider == "builtin-ai" {
+    let secret_ref = if provider == "local" {
         return Ok(ApiKeyStatus {
             has_secret: false,
             secret_ref: String::new(),
@@ -796,7 +854,7 @@ pub async fn api_save_transcript_config<R: Runtime>(
 
     // 1. Write API key to SecretStore FIRST (fail-fast contract)
     if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
-        if provider != "parakeet" {
+        if provider != "parakeet" && provider != "local" {
             log_info!("API key provided, saving for transcript provider...");
             let store = KeyringFirstSecretStore::default_store()
                 .map_err(|e| format!("Failed to initialize secret store: {}", e))?;
@@ -1448,4 +1506,81 @@ pub async fn api_get_secret_storage_status<R: Runtime>(
     count_secrets(&store, &cfg)
         .await
         .map_err(|e| format!("Failed to count secrets: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::{Deserialize, Serialize};
+
+    /// Mirrors the `api_save_model_config` parameter signature so we can
+    /// prove the frontend JSON payload deserializes into the exact types
+    /// Tauri will pass to the command.
+    #[derive(Debug, Serialize, Deserialize)]
+    struct SaveModelConfigArgs {
+        provider: String,
+        model: String,
+        #[serde(rename = "whisperModel")]
+        whisper_model: Option<String>,
+        #[serde(rename = "apiKey")]
+        api_key: Option<String>,
+        #[serde(rename = "ollamaEndpoint")]
+        ollama_endpoint: Option<String>,
+        #[serde(rename = "authToken")]
+        auth_token: Option<String>,
+    }
+
+    /// Regression test: the frontend sends `api_save_model_config` with
+    /// `provider`, `model`, `apiKey`, `ollamaEndpoint` but omits
+    /// `whisperModel` and `authToken`.  When the command used
+    /// `_whisper_model: String` (required), deserialization failed,
+    /// causing "Failed to save summary settings" for the Local provider.
+    ///
+    /// With `whisper_model: Option<String>` the missing field becomes None
+    /// and the command succeeds.
+    #[test]
+    fn save_model_config_args_deserialize_frontend_payload_without_whisper_model() {
+        let payload = serde_json::json!({
+            "provider": "local",
+            "model": "test-model",
+            "apiKey": null,
+            "ollamaEndpoint": null,
+        });
+
+        let args: SaveModelConfigArgs = serde_json::from_value(payload)
+            .expect("SaveModelConfigArgs must deserialize from frontend payload");
+
+        assert_eq!(args.provider, "local");
+        assert_eq!(args.model, "test-model");
+        assert_eq!(args.api_key, None);
+        assert_eq!(args.ollama_endpoint, None);
+        assert_eq!(args.whisper_model, None);
+        assert_eq!(args.auth_token, None);
+    }
+
+    /// Backward compatibility: when the frontend *does* send every field,
+    /// all values parse correctly.
+    #[test]
+    fn save_model_config_args_deserialize_full_payload() {
+        let payload = serde_json::json!({
+            "provider": "ollama",
+            "model": "llama3",
+            "whisperModel": "base",
+            "apiKey": "sk-test",
+            "ollamaEndpoint": "http://localhost:11434",
+            "authToken": "token-123",
+        });
+
+        let args: SaveModelConfigArgs = serde_json::from_value(payload)
+            .expect("SaveModelConfigArgs must deserialize full payload");
+
+        assert_eq!(args.provider, "ollama");
+        assert_eq!(args.model, "llama3");
+        assert_eq!(args.whisper_model, Some("base".to_string()));
+        assert_eq!(args.api_key, Some("sk-test".to_string()));
+        assert_eq!(
+            args.ollama_endpoint,
+            Some("http://localhost:11434".to_string())
+        );
+        assert_eq!(args.auth_token, Some("token-123".to_string()));
+    }
 }

@@ -196,13 +196,12 @@ pub async fn initialize_fresh_database(app: AppHandle) -> Result<(), String> {
         .load()
         .map_err(|e| format!("Failed to load default config: {}", e))?;
 
-    // Default Summary Model: Built-in AI (Qwen recommendation for this system)
-    cfg.summary.provider_id = "builtin-ai".to_string();
+    // Default Summary Model: Local LLM (Qwen recommendation for this system)
+    cfg.summary.provider_id = "local".to_string();
     cfg.summary.model = default_summary_model.to_string();
-    cfg.summary.whisper_model = "large-v3".to_string();
 
     // Default Transcription Model: Parakeet
-    cfg.transcript.provider = "parakeet".to_string();
+    cfg.transcript.provider = "local".to_string();
     cfg.transcript.model = crate::config::DEFAULT_PARAKEET_MODEL.to_string();
 
     if let Err(e) = config_repo.save_atomic(&cfg) {

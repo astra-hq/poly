@@ -33,15 +33,19 @@ import {
   EyeOff,
   Lock,
   Unlock,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { configService } from '@/services/configService';
 import type { ProviderConfig, ProviderType } from '@/types/providers';
 import { PROVIDER_TYPE_LABELS, PROVIDER_DEFAULT_URLS, PROVIDER_DEFAULT_MODELS } from '@/types/providers';
+import { LocalModelManager } from '@/components/LocalModelManager';
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
 const PROVIDER_TYPES: ProviderType[] = [
+  'local',
   'open_a_i',
   'anthropic',
   'groq',
@@ -130,6 +134,8 @@ export function ProviderSettings() {
   // "confirm" the key prevents save.  When no key existed, the lock should
   // not suppress the outgoing key — the user just typed it and locked it.
   const [originalKeyPresent, setOriginalKeyPresent] = useState(false);
+
+  const [localExpanded, setLocalExpanded] = useState(false);
 
   // ── Load providers ────────────────────────────────────────────────
 
@@ -224,9 +230,9 @@ export function ProviderSettings() {
     } else if (!/^[a-z0-9_-]+$/.test(formState.id.trim())) {
       errors.id = 'ID must contain only lowercase letters, numbers, hyphens, and underscores';
     }
-    if (!formState.base_url.trim()) {
+    if (!formState.base_url.trim() && formState.type !== 'local') {
       errors.base_url = 'Base URL is required';
-    } else {
+    } else if (formState.type !== 'local') {
       try {
         new URL(formState.base_url.trim());
       } catch {
@@ -354,8 +360,8 @@ export function ProviderSettings() {
           <Server className="w-16 h-16 text-gray-300 mb-4" />
           <h4 className="text-lg font-semibold text-gray-900 mb-2">No Providers Configured</h4>
           <p className="text-sm text-gray-500 mb-6 max-w-md">
-            Add an AI provider to start using summarization and knowledge graph features.
-            Supported providers include OpenAI, Anthropic, Groq, Ollama, OpenRouter, and any OpenAI-compatible endpoint.
+            Add cloud providers like OpenAI, Anthropic, Groq, OpenRouter, or any
+            OpenAI-compatible endpoint for summarization and knowledge graph features.
           </p>
           <Button size="sm" onClick={openAddDialog}>
             <Plus className="w-4 h-4 mr-2" />
@@ -367,61 +373,129 @@ export function ProviderSettings() {
       {/* Provider list */}
       {hasProviders && (
         <div className="space-y-3">
-          {providers.map((provider) => (
-            <div
-              key={provider.id}
-              className="border rounded-lg p-4 bg-white border-gray-200"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  {provider.type === 'ollama' ? (
-                    <Server className="w-4 h-4 text-gray-500 shrink-0" />
-                  ) : (
-                    <Globe className="w-4 h-4 text-gray-500 shrink-0" />
-                  )}
-                  <span className="font-medium truncate">{provider.name}</span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
-                    {PROVIDER_TYPE_LABELS[provider.type]}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => openEditDialog(provider)}
-                    aria-label={`Edit ${provider.name}`}
-                    title="Edit provider"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setDeleteTarget(provider)}
-                    aria-label={`Delete ${provider.name}`}
-                    title="Delete provider"
-                    className="text-red-500 hover:text-red-600"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
+          {(() => {
+            const localProvider = providers.find((p) => p.id === 'local' || p.type === 'local');
+            const otherProviders = providers.filter((p) => p.id !== 'local' && p.type !== 'local');
 
-              <div className="mt-2 space-y-1 text-sm text-gray-600">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400 font-mono">{provider.id}</span>
-                </div>
-                <div className="truncate" title={provider.base_url}>
-                  {provider.base_url}
-                </div>
-                {provider.default_model && (
-                  <div className="text-xs text-gray-500">
-                    Default model: {provider.default_model}
+            return (
+              <>
+                {/* Special Local provider card */}
+                {localProvider && (
+                  <div className="border rounded-lg p-4 bg-white border-blue-200 ring-1 ring-blue-100">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <Server className="w-4 h-4 text-blue-500 shrink-0" />
+                        <span className="font-medium truncate">{localProvider.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 shrink-0">
+                          {PROVIDER_TYPE_LABELS[localProvider.type]}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setLocalExpanded((v) => !v)}
+                          aria-expanded={localExpanded}
+                          aria-label={localExpanded ? 'Collapse local models' : 'Expand local models'}
+                          title={localExpanded ? 'Collapse local models' : 'Expand local models'}
+                          className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                        >
+                          {localExpanded ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteTarget(localProvider)}
+                          aria-label={`Delete ${localProvider.name}`}
+                          title="Delete provider"
+                          className="text-red-500 hover:text-red-600"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 space-y-1 text-sm text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 font-mono">{localProvider.id}</span>
+                      </div>
+                    </div>
+
+                    {localExpanded && (
+                      <div className="mt-4 border-t pt-3">
+                        <LocalModelManager
+                          selectedModel=""
+                          onModelSelect={() => {}}
+                          layout="inline"
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            </div>
-          ))}
+
+                {/* Other providers */}
+                {otherProviders.map((provider) => (
+                  <div
+                    key={provider.id}
+                    className="border rounded-lg p-4 bg-white border-gray-200"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        {provider.type === 'ollama' ? (
+                          <Server className="w-4 h-4 text-gray-500 shrink-0" />
+                        ) : (
+                          <Globe className="w-4 h-4 text-gray-500 shrink-0" />
+                        )}
+                        <span className="font-medium truncate">{provider.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 shrink-0">
+                          {PROVIDER_TYPE_LABELS[provider.type]}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openEditDialog(provider)}
+                          aria-label={`Edit ${provider.name}`}
+                          title="Edit provider"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeleteTarget(provider)}
+                          aria-label={`Delete ${provider.name}`}
+                          title="Delete provider"
+                          className="text-red-500 hover:text-red-600"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-2 space-y-1 text-sm text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 font-mono">{provider.id}</span>
+                      </div>
+                      <div className="truncate" title={provider.base_url}>
+                        {provider.base_url}
+                      </div>
+                      {provider.default_model && (
+                        <div className="text-xs text-gray-500">
+                          Default model: {provider.default_model}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -541,7 +615,7 @@ export function ProviderSettings() {
             </div>
 
             {/* API Key */}
-            {formState.type !== 'ollama' && (
+            {formState.type !== 'ollama' && formState.type !== 'local' && (
               <div>
                 <Label htmlFor="provider-api-key">API Key</Label>
                 <div className="flex gap-2 mt-1">

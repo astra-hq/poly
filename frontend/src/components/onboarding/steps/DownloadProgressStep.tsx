@@ -125,12 +125,12 @@ export function DownloadProgressStep() {
     }));
 
     try {
-      // Call download command directly (no retry command exists for built-in AI)
+      // Call download command directly (no retry command exists for local AI)
       const modelName = selectedSummaryModel;
       if (!modelName) {
         throw new Error('Summary model recommendation is not ready yet');
       }
-      await invoke('builtin_ai_download_model', { modelName });
+      await invoke('local_ai_download_model', { modelName });
     } catch (error) {
       console.error('[DownloadProgressStep] Summary retry failed:', error);
       setSummaryState((prev) => ({
@@ -250,7 +250,7 @@ export function DownloadProgressStep() {
     };
   }, []);
 
-  // Listen to Summary Model download progress (always downloading for builtin-ai)
+  // Listen to Summary Model download progress (always downloading for local AI)
   useEffect(() => {
     const unlisten = listen<{
       model: string;
@@ -260,7 +260,7 @@ export function DownloadProgressStep() {
       speed_mbps?: number;
       status: string;
       error?: string;
-    }>('builtin-ai-download-progress', (event) => {
+    }>('local-ai-download-progress', (event) => {
       const { model, progress, downloaded_mb, total_mb, speed_mbps, status, error } = event.payload;
       if (selectedSummaryModel && model === selectedSummaryModel) {
         setSummaryState((prev) => ({
@@ -364,27 +364,8 @@ export function DownloadProgressStep() {
       });
     }
 
-    if (isMac) {
-      // macOS: Go to Permissions step (will complete after permissions granted)
-      goNext();
-    } else {
-      // Non-macOS: Complete onboarding immediately (downloads continue in background)
-      setIsCompleting(true);
-      try {
-        await completeOnboarding();
-
-        // Small delay to ensure state is saved before reload
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        window.location.reload();
-      } catch (error) {
-        console.error('Failed to complete onboarding:', error);
-        toast.error('Failed to complete setup', {
-          description: 'Please try again.',
-        });
-        setIsCompleting(false);
-      }
-    }
+    // Go to next step (Permissions on macOS, Optional KG on non-macOS)
+    goNext();
   };
 
   const renderDownloadCard = (
@@ -474,7 +455,7 @@ export function DownloadProgressStep() {
   return (
     <OnboardingContainer
       title="Getting things ready"
-      description="You can start using Poly after downloading the Transcription Engine."
+      description="Parakeet is required to transcribe meetings. Local AI summary engine downloads in the background."
       step={3}
       totalSteps={isMac ? 4 : 3}
     >

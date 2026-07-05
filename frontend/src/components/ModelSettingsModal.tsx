@@ -1,9 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
-import { useSidebar } from './Sidebar/SidebarProvider';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { Button } from '@/components/ui/button';
-import { useOllamaDownload } from '@/contexts/OllamaDownloadContext';
-import { BuiltInModelManager } from '@/components/BuiltInModelManager';
+import { LocalModelManager } from '@/components/LocalModelManager';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useConfig } from '@/contexts/ConfigContext';
@@ -14,10 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Switch } from '@/components/ui/switch';
-import { Lock, Unlock, Eye, EyeOff, RefreshCw, CheckCircle2, XCircle, ChevronDown, ChevronUp, Download, ExternalLink, Check, ChevronsUpDown } from 'lucide-react';
+import { Lock, Unlock, Eye, EyeOff, RefreshCw, Check, ChevronsUpDown } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   Command,
@@ -27,23 +22,12 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import { cn, isOllamaNotInstalledError } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-
-export interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openai' | 'openrouter' | 'builtin-ai';
-  model: string;
-  whisperModel: string;
-  apiKey?: string | null;
-  ollamaEndpoint?: string | null;
-}
-
-interface OllamaModel {
-  name: string;
-  id: string;
-  size: string;
-  modified: string;
-}
+import type { ModelConfig as SharedModelConfig } from '@/services/configService';
+import { configService } from '@/services/configService';
+import type { ProviderConfig, ProviderModel } from '@/types/providers';
+import { LocalModelInfo } from '@/lib/local-ai';
 
 interface OpenRouterModel {
   id: string;
@@ -67,32 +51,7 @@ interface GroqModel {
   owned_by?: string;
 }
 
-// Fallback models for when API fetch fails or no API key provided
-const OPENAI_FALLBACK_MODELS = [
-  'gpt-4o',
-  'gpt-4o-mini',
-  'gpt-4-turbo',
-  'gpt-4',
-  'gpt-3.5-turbo',
-  'o1',
-  'o1-mini',
-  'o3',
-  'o3-mini',
-];
-
-const CLAUDE_FALLBACK_MODELS = [
-  'claude-sonnet-4-5-20250929',
-  'claude-haiku-4-5-20251001',
-  'claude-opus-4-5-20251101',
-  'claude-3-5-sonnet-latest',
-];
-
-const GROQ_FALLBACK_MODELS = [
-  'llama-3.3-70b-versatile',
-  'llama-3.1-70b-versatile',
-  'mixtral-8x7b-32768',
-  'gemma2-9b-it',
-];
+export type ModelConfig = SharedModelConfig;
 
 interface ModelSettingsModalProps {
   modelConfig: ModelConfig;
@@ -118,27 +77,12 @@ export function ModelSettingsModal({
   const providerApiKeys = configContext?.providerApiKeys;
   const updateProviderApiKey = configContext?.updateProviderApiKey;
 
-  const [models, setModels] = useState<OllamaModel[]>([]);
-  const [error, setError] = useState<string>('');
   const [apiKey, setApiKey] = useState<string | null>(modelConfig.apiKey || null);
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [isApiKeyLocked, setIsApiKeyLocked] = useState<boolean>(!!modelConfig.apiKey?.trim());
   const [isLockButtonVibrating, setIsLockButtonVibrating] = useState<boolean>(false);
-  const { serverAddress } = useSidebar();
   const [openRouterModels, setOpenRouterModels] = useState<OpenRouterModel[]>([]);
-  const [openRouterError, setOpenRouterError] = useState<string>('');
   const [isLoadingOpenRouter, setIsLoadingOpenRouter] = useState<boolean>(false);
-  const [ollamaEndpoint, setOllamaEndpoint] = useState<string>(modelConfig.ollamaEndpoint || '');
-  const [isLoadingOllama, setIsLoadingOllama] = useState<boolean>(false);
-  const [lastFetchedEndpoint, setLastFetchedEndpoint] = useState<string>(modelConfig.ollamaEndpoint || '');
-  const [endpointValidationState, setEndpointValidationState] = useState<'valid' | 'invalid' | 'none'>('none');
-  const [hasAutoFetched, setHasAutoFetched] = useState<boolean>(false);
-  const hasSyncedFromParent = useRef<boolean>(false);
-  const hasLoadedInitialConfig = useRef<boolean>(false);
-  const [autoGenerateEnabled, setAutoGenerateEnabled] = useState<boolean>(true); // Default to true
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [isEndpointSectionCollapsed, setIsEndpointSectionCollapsed] = useState<boolean>(true); // Collapsed by default
-  const [ollamaNotInstalled, setOllamaNotInstalled] = useState<boolean>(false); // Track if Ollama is not installed
 
   // Combobox state
   const [modelComboboxOpen, setModelComboboxOpen] = useState<boolean>(false);
@@ -151,54 +95,14 @@ export function ModelSettingsModal({
   const [isLoadingClaude, setIsLoadingClaude] = useState<boolean>(false);
   const [isLoadingGroq, setIsLoadingGroq] = useState<boolean>(false);
 
-  // Use global download context instead of local state
-  const { isDownloading, getProgress, downloadingModels } = useOllamaDownload();
+  // Local AI models state
+  const [builtinAiModels, setBuiltinAiModels] = useState<LocalModelInfo[]>([]);
 
-  // Built-in AI models state
-  const [builtinAiModels, setBuiltinAiModels] = useState<any[]>([]);
-
-  // Cache models by endpoint to avoid refetching when reverting endpoint changes
-  const modelsCache = useRef<Map<string, OllamaModel[]>>(new Map());
-
-  // URL validation helper
-  const validateOllamaEndpoint = (url: string): boolean => {
-    if (!url.trim()) return true; // Empty is valid (uses default)
-    try {
-      const parsed = new URL(url);
-      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-      return false;
-    }
-  };
-
-  // Debounced URL validation with visual feedback
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const trimmed = ollamaEndpoint.trim();
-
-      if (!trimmed) {
-        setEndpointValidationState('none');
-      } else if (validateOllamaEndpoint(trimmed)) {
-        setEndpointValidationState('valid');
-      } else {
-        setEndpointValidationState('invalid');
-      }
-    }, 500); // 500ms debounce
-
-    return () => clearTimeout(timer);
-  }, [ollamaEndpoint]);
-
-  const fetchApiKey = async (provider: string) => {
-    try {
-      const data = (await invoke('api_get_api_key', {
-        provider,
-      })) as string;
-      setApiKey(data || '');
-    } catch (err) {
-      console.error('Error fetching API key:', err);
-      setApiKey(null);
-    }
-  };
+  // Provider list from config
+  const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  // Dynamic models for generic providers (fetched via api_get_provider_models)
+  const [providerModels, setProviderModels] = useState<ProviderModel[]>([]);
+  const [isLoadingProviderModels, setIsLoadingProviderModels] = useState(false);
 
   // Auto-unlock when API key becomes empty, 
   useEffect(() => {
@@ -208,34 +112,49 @@ export function ModelSettingsModal({
     }
   }, [apiKey]);
 
-  const modelOptions: Record<string, string[]> = {
-    ollama: models.map((model) => model.name),
-    claude: claudeModels.length > 0 ? claudeModels : CLAUDE_FALLBACK_MODELS,
-    groq: groqModels.length > 0 ? groqModels : GROQ_FALLBACK_MODELS,
-    openai: openaiModels.length > 0 ? openaiModels : OPENAI_FALLBACK_MODELS,
-    openrouter: openRouterModels.map((m) => m.id),
-    'builtin-ai': builtinAiModels.map((m) => m.name),
+  // Load providers from config
+  useEffect(() => {
+    configService.getProviders().then(setProviders).catch(() => {});
+  }, []);
+
+  // Fetch models for a non-hardcoded provider via the provider system
+  const loadProviderModels = async (providerId: string) => {
+    setIsLoadingProviderModels(true);
+    try {
+      const models = await configService.getProviderModels(providerId);
+      setProviderModels(models);
+      return models;
+    } catch {
+      setProviderModels([]);
+      return [];
+    } finally {
+      setIsLoadingProviderModels(false);
+    }
   };
 
+  const modelOptions: Record<string, string[]> = {
+    claude: claudeModels,
+    groq: groqModels,
+    openai: openaiModels,
+    openrouter: openRouterModels.map((m) => m.id),
+    'local': builtinAiModels.map((m) => m.name),
+    _provider: providerModels.map((m) => m.id),
+  };
+
+  const selectedProvider = providers.find((p) => p.id === modelConfig.provider);
   const requiresApiKey =
     modelConfig.provider === 'claude' ||
     modelConfig.provider === 'groq' ||
     modelConfig.provider === 'openai' ||
-    modelConfig.provider === 'openrouter';
-
-  // Check if Ollama endpoint has changed but models haven't been fetched yet
-  const ollamaEndpointChanged = modelConfig.provider === 'ollama' &&
-    ollamaEndpoint.trim() !== lastFetchedEndpoint.trim();
+    modelConfig.provider === 'openrouter' ||
+    (!!selectedProvider && selectedProvider.type !== 'ollama' && selectedProvider.type !== 'local');
 
   const isDoneDisabled =
-    (requiresApiKey && (!apiKey || (typeof apiKey === 'string' && !apiKey.trim()))) ||
-    (modelConfig.provider === 'ollama' && ollamaEndpointChanged);
+    requiresApiKey && (!apiKey || (typeof apiKey === 'string' && !apiKey.trim()));
 
-  useEffect(() => {
-    const fetchModelConfig = async () => {
+  const fetchModelConfig = async () => {
       // If parent component manages config, skip fetch and just mark as loaded
       if (skipInitialFetch) {
-        hasLoadedInitialConfig.current = true;
         return;
       }
 
@@ -245,7 +164,7 @@ export function ModelSettingsModal({
           setModelConfig(data);
 
           // Fetch API key if not included in response and provider requires it
-          if (data.provider !== 'ollama' && !data.apiKey) {
+          if (data.provider !== 'local' && !data.apiKey) {
             try {
               const apiKeyData = await invoke('api_get_api_key', {
                 provider: data.provider
@@ -256,83 +175,15 @@ export function ModelSettingsModal({
               console.error('Failed to fetch API key:', err);
             }
           }
-
-          // Sync ollamaEndpoint state with fetched config
-          if (data.ollamaEndpoint) {
-            setOllamaEndpoint(data.ollamaEndpoint);
-            // Don't set lastFetchedEndpoint here - it will be set after successful model fetch
-          }
-          hasLoadedInitialConfig.current = true; // Mark that initial config is loaded
         }
       } catch (error) {
         console.error('Failed to fetch model config:', error);
-        hasLoadedInitialConfig.current = true; // Mark as loaded even on error
       }
     };
 
+  useEffect(() => {
     fetchModelConfig();
   }, [skipInitialFetch]);
-
-  // Fetch auto-generate setting on mount
-  useEffect(() => {
-    const fetchAutoGenerateSetting = async () => {
-      try {
-        const enabled = (await invoke('api_get_auto_generate_setting')) as boolean;
-        setAutoGenerateEnabled(enabled);
-        console.log('Auto-generate setting loaded:', enabled);
-      } catch (err) {
-        console.error('Failed to fetch auto-generate setting:', err);
-        // Keep default value (true) on error
-      }
-    };
-
-    fetchAutoGenerateSetting();
-  }, []);
-
-  // Sync ollamaEndpoint state when modelConfig.ollamaEndpoint changes from parent
-  useEffect(() => {
-    const endpoint = modelConfig.ollamaEndpoint || '';
-    if (endpoint !== ollamaEndpoint) {
-      setOllamaEndpoint(endpoint);
-      // Don't set lastFetchedEndpoint here - only after successful model fetch
-    }
-    // Only mark as synced if we have a valid provider (prevents race conditions during init)
-    if (modelConfig.provider) {
-      hasSyncedFromParent.current = true; // Mark that we've received prop value
-    }
-  }, [modelConfig.ollamaEndpoint, modelConfig.provider]);
-
-  // Reset hasAutoFetched flag and clear models when switching away from Ollama
-  useEffect(() => {
-    if (modelConfig.provider !== 'ollama') {
-      setHasAutoFetched(false); // Reset flag so it can auto-fetch again if user switches back
-      setModels([]); // Clear models list
-      setError(''); // Clear any error state
-      setOllamaNotInstalled(false); // Reset installation status
-    }
-  }, [modelConfig.provider]);
-
-  // Handle endpoint changes - restore cached models or clear
-  useEffect(() => {
-    if (modelConfig.provider === 'ollama' &&
-      ollamaEndpoint.trim() !== lastFetchedEndpoint.trim()) {
-
-      // Check if we have cached models for this endpoint (including empty endpoint = default)
-      const cachedModels = modelsCache.current.get(ollamaEndpoint.trim());
-
-      if (cachedModels && cachedModels.length > 0) {
-        // Restore cached models and update tracking
-        setModels(cachedModels);
-        setLastFetchedEndpoint(ollamaEndpoint.trim());
-        setError('');
-      } else {
-        // No cache - clear models and allow refetch
-        setHasAutoFetched(false);
-        setModels([]);
-        setError('');
-      }
-    }
-  }, [ollamaEndpoint, lastFetchedEndpoint, modelConfig.provider]);
 
   // Sync local apiKey state when provider changes
   useEffect(() => {
@@ -345,114 +196,31 @@ export function ModelSettingsModal({
     }
   }, [modelConfig.provider, providerApiKeys, requiresApiKey]);
 
-  // Manual fetch function for Ollama models
-  const fetchOllamaModels = async (silent = false) => {
-    const trimmedEndpoint = ollamaEndpoint.trim();
-
-    // Validate URL if provided
-    if (trimmedEndpoint && !validateOllamaEndpoint(trimmedEndpoint)) {
-      const errorMsg = 'Invalid Ollama endpoint URL. Must start with http:// or https://';
-      setError(errorMsg);
-      if (!silent) {
-        toast.error(errorMsg);
-      }
-      return;
-    }
-
-    setIsLoadingOllama(true);
-    setError(''); // Clear previous errors
-
-    try {
-      const endpoint = trimmedEndpoint || null;
-      const modelList = (await invoke('get_ollama_models', { endpoint })) as OllamaModel[];
-      setModels(modelList);
-      setLastFetchedEndpoint(trimmedEndpoint); // Track successful fetch
-
-      // Cache the fetched models for this endpoint
-      modelsCache.current.set(trimmedEndpoint, modelList);
-
-      // Successfully fetched models, Ollama is installed
-      setOllamaNotInstalled(false);
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to load Ollama models';
-      setError(errorMsg);
-
-      // Check if error indicates Ollama is not installed
-      if (isOllamaNotInstalledError(errorMsg)) {
-        setOllamaNotInstalled(true);
-      } else {
-        setOllamaNotInstalled(false);
-      }
-
-      if (!silent) {
-        toast.error(errorMsg);
-      }
-      console.error('Error loading models:', err);
-    } finally {
-      setIsLoadingOllama(false);
-    }
-  };
-
-  // Auto-fetch models on initial load only (not on endpoint changes)
-  useEffect(() => {
-    let mounted = true;
-
-    const initialLoad = async () => {
-      // Only auto-fetch on initial load if:
-      // 1. Provider is ollama
-      // 2. Haven't fetched yet
-      // 3. Component is still mounted
-      // If skipInitialFetch is true, fetch silently (no error toasts)
-      if (modelConfig.provider === 'ollama' &&
-        !hasAutoFetched &&
-        mounted) {
-        await fetchOllamaModels(skipInitialFetch); // Silent if skipInitialFetch=true
-        setHasAutoFetched(true);
-      }
-    };
-
-    initialLoad();
-
-    return () => {
-      mounted = false;
-    };
-  }, [modelConfig.provider]); // Only depend on provider, NOT endpoint
-
   const loadOpenRouterModels = async () => {
     if (openRouterModels.length > 0) return; // Already loaded
 
     try {
       setIsLoadingOpenRouter(true);
-      setOpenRouterError('');
       const data = (await invoke('get_openrouter_models')) as OpenRouterModel[];
       setOpenRouterModels(data);
     } catch (err) {
       console.error('Error loading OpenRouter models:', err);
-      setOpenRouterError(
-        err instanceof Error ? err.message : 'Failed to load OpenRouter models'
-      );
     } finally {
       setIsLoadingOpenRouter(false);
     }
   };
 
   const loadBuiltinAiModels = async () => {
-    if (builtinAiModels.length > 0) return; // Already loaded
-
     try {
-      const data = (await invoke('builtin_ai_list_models')) as any[];
-      setBuiltinAiModels(data);
-
-      // Auto-select first available model if none selected
-      if (data.length > 0 && !modelConfig.model) {
-        const firstAvailable = data.find((m: any) => m.status?.type === 'available');
-        if (firstAvailable) {
-          setModelConfig((prev: ModelConfig) => ({ ...prev, model: firstAvailable.name }));
-        }
-      }
+      const data = (await invoke('local_ai_list_models')) as LocalModelInfo[];
+      // Only include downloaded/available summary models as selectable options
+      const availableSummaryModels = data.filter(
+        (m) => m.status?.type === 'available' && m.model_type === 'summary'
+      );
+      setBuiltinAiModels(availableSummaryModels);
     } catch (err) {
-      console.error('Error loading Built-in AI models:', err);
-      toast.error('Failed to load Built-in AI models');
+      console.error('Error loading local AI models:', err);
+      toast.error('Failed to load local AI models');
     }
   };
 
@@ -531,29 +299,48 @@ export function ModelSettingsModal({
     }
   }, [modelConfig.provider, apiKey]);
 
+  // Auto-fetch local models when provider is local (on mount and on provider change)
+  useEffect(() => {
+    if (modelConfig.provider === 'local') {
+      loadBuiltinAiModels();
+    }
+  }, [modelConfig.provider]);
+
   // Restore cached model when async model lists become available
   useEffect(() => {
     const providerModels = modelOptions[modelConfig.provider];
+
+    if (modelConfig.model && providerModels?.includes(modelConfig.model)) return;
+
+    if (modelConfig.provider === 'local') {
+      if (!providerModels || providerModels.length === 0) {
+        if (modelConfig.model) {
+          setModelConfig((prev: ModelConfig) => ({ ...prev, model: '' }));
+        }
+        return;
+      }
+      const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
+      const cachedModel = map[modelConfig.provider];
+      const targetModel = cachedModel && providerModels.includes(cachedModel)
+        ? cachedModel
+        : providerModels[0];
+      setModelConfig((prev: ModelConfig) => ({ ...prev, model: targetModel }));
+      return;
+    }
+
     if (!providerModels || providerModels.length === 0) return;
 
-    // If current model is already valid, nothing to do
-    if (modelConfig.model && providerModels.includes(modelConfig.model)) return;
-
-    // Try to restore from localStorage cache
     const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
     const cachedModel = map[modelConfig.provider];
     if (cachedModel && providerModels.includes(cachedModel)) {
       setModelConfig((prev: ModelConfig) => ({ ...prev, model: cachedModel }));
     }
-  }, [models, openRouterModels, builtinAiModels, openaiModels, claudeModels, groqModels, modelConfig.provider]);
+  }, [openRouterModels, builtinAiModels, openaiModels, claudeModels, groqModels, modelConfig.provider]);
 
   const handleSave = async () => {
     const updatedConfig = {
       ...modelConfig,
       apiKey: typeof apiKey === 'string' ? apiKey.trim() || null : null,
-      ollamaEndpoint: modelConfig.provider === 'ollama'
-        ? (ollamaEndpoint.trim() || null)
-        : (modelConfig.ollamaEndpoint || null),
     };
     setModelConfig(updatedConfig);
     console.log('ModelSettingsModal - handleSave - Updated ModelConfig:', updatedConfig);
@@ -584,109 +371,6 @@ export function ModelSettingsModal({
     }
   };
 
-  // Function to download recommended model
-  const downloadRecommendedModel = async () => {
-    const recommendedModel = 'gemma3:1b';
-
-    // Prevent duplicate downloads (defense in depth - backend also checks)
-    if (isDownloading(recommendedModel)) {
-      toast.info(`${recommendedModel} is already downloading`, {
-        description: `Progress: ${Math.round(getProgress(recommendedModel) || 0)}%`
-      });
-      return;
-    }
-
-    try {
-      const endpoint = ollamaEndpoint.trim() || null;
-
-      // The download will be tracked by the global context via events
-      // Progress toasts are shown automatically by OllamaDownloadContext
-      await invoke('pull_ollama_model', {
-        modelName: recommendedModel,
-        endpoint
-      });
-
-      // Refresh the models list after successful download
-      await fetchOllamaModels(true);
-
-      // Note: Model is NOT auto-selected - user must explicitly choose it
-      // This respects the database as the single source of truth
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to download model';
-      console.error('Error downloading model:', err);
-
-      // Check if Ollama is not installed and show appropriate error
-      if (isOllamaNotInstalledError(errorMsg)) {
-        toast.error('Ollama is not installed', {
-          description: 'Please download and install Ollama before downloading models.',
-          duration: 7000,
-          action: {
-            label: 'Download',
-            onClick: () => invoke('open_external_url', { url: 'https://ollama.com/download' })
-          }
-        });
-        // Update the installation status flag
-        setOllamaNotInstalled(true);
-      }
-      // Other errors are handled by the context
-    }
-  };
-
-  // Function to delete Ollama model
-  const deleteOllamaModel = async (modelName: string) => {
-    try {
-      const endpoint = ollamaEndpoint.trim() || null;
-      await invoke('delete_ollama_model', {
-        modelName,
-        endpoint
-      });
-
-      toast.success(`Model ${modelName} deleted`);
-      await fetchOllamaModels(true); // Refresh list
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to delete model';
-      toast.error(errorMsg);
-      console.error('Error deleting model:', err);
-    }
-  };
-
-  // Track previous downloading models to detect completions
-  const previousDownloadingRef = useRef<Set<string>>(new Set());
-
-  // Refresh models list when download completes
-  useEffect(() => {
-    const current = downloadingModels;
-    const previous = previousDownloadingRef.current;
-
-    // Check if any downloads completed (were in previous, not in current)
-    for (const modelName of previous) {
-      if (!current.has(modelName)) {
-        // Download completed, refresh models list
-        console.log(`[ModelSettingsModal] Download completed for ${modelName}, refreshing list`);
-        fetchOllamaModels(true);
-        break; // Only refresh once even if multiple completed
-      }
-    }
-
-    // Update ref for next comparison
-    previousDownloadingRef.current = new Set(current);
-  }, [downloadingModels]);
-
-  // Filter Ollama models based on search query
-  const filteredModels = models.filter((model) => {
-    if (!searchQuery.trim()) return true;
-
-    const query = searchQuery.toLowerCase();
-    const isLoaded = modelConfig.model === model.name;
-    const loadedText = isLoaded ? 'loaded' : '';
-
-    return (
-      model.name.toLowerCase().includes(query) ||
-      model.size.toLowerCase().includes(query) ||
-      loadedText.includes(query)
-    );
-  });
-
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
@@ -702,9 +386,6 @@ export function ModelSettingsModal({
               onValueChange={(value) => {
                 const provider = value as ModelConfig['provider'];
 
-                // Clear error state when switching providers
-                setError('');
-
                 // Save current provider's model to localStorage before switching
                 const map = JSON.parse(localStorage.getItem('providerModelMap') || '{}');
                 if (modelConfig.model) {
@@ -714,11 +395,11 @@ export function ModelSettingsModal({
 
                 // Try to restore cached model for the new provider
                 const savedModel = map[provider];
-                const providerModels = modelOptions[provider];
-                const defaultModel = providerModels && providerModels.length > 0
-                  ? providerModels[0]
+                const hardcodedModels = modelOptions[provider as keyof typeof modelOptions];
+                const defaultModel = hardcodedModels && hardcodedModels.length > 0
+                  ? hardcodedModels[0]
                   : '';
-                const model = (savedModel && providerModels?.includes(savedModel))
+                const model = (savedModel && hardcodedModels?.includes(savedModel))
                   ? savedModel
                   : defaultModel;
 
@@ -727,16 +408,12 @@ export function ModelSettingsModal({
                   provider,
                   model,
                 });
-                // API key is now synced automatically via useEffect watching providerApiKeys
 
-                // Load OpenRouter models only when OpenRouter is selected
-                if (provider === 'openrouter') {
+                const knownProviders = ['claude', 'groq', 'openai', 'openrouter', 'local', 'ollama'];
+                if (!knownProviders.includes(provider)) {
+                  loadProviderModels(provider);
+                } else if (provider === 'openrouter') {
                   loadOpenRouterModels();
-                }
-
-                // Load Built-in AI models when selected
-                if (provider === 'builtin-ai') {
-                  loadBuiltinAiModels();
                 }
               }}
             >
@@ -744,16 +421,37 @@ export function ModelSettingsModal({
                 <SelectValue placeholder="Select provider" />
               </SelectTrigger>
               <SelectContent className="max-h-64 overflow-y-auto">
-                <SelectItem value="builtin-ai">Built-in AI (Offline, No API needed)</SelectItem>
-                <SelectItem value="claude">Claude</SelectItem>
-                <SelectItem value="groq">Groq</SelectItem>
-                <SelectItem value="ollama">Ollama</SelectItem>
-                <SelectItem value="openai">OpenAI</SelectItem>
-                <SelectItem value="openrouter">OpenRouter</SelectItem>
+                {providers.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                    {p.type === 'local' ? ' (On-device)' : ''}
+                  </SelectItem>
+                ))}
+                {providers.length === 0 && (
+                  <>
+                    <SelectItem value="local">Local (Offline, No API needed)</SelectItem>
+                    <SelectItem value="claude">Claude</SelectItem>
+                    <SelectItem value="groq">Groq</SelectItem>
+                    <SelectItem value="openai">OpenAI</SelectItem>
+                    <SelectItem value="openrouter">OpenRouter</SelectItem>
+                  </>
+                )}
               </SelectContent>
             </Select>
 
-            {modelConfig.provider !== 'builtin-ai' && (
+            {modelConfig.provider !== 'local' && (
+              (() => {
+                const hardcodedModels = modelOptions[modelConfig.provider];
+                const dynamicModels = modelOptions._provider;
+                const mergedModels = hardcodedModels && hardcodedModels.length > 0
+                  ? hardcodedModels
+                  : dynamicModels && dynamicModels.length > 0
+                    ? dynamicModels
+                    : modelConfig.model
+                      ? [modelConfig.model]
+                      : [];
+
+                return (
               <Popover open={modelComboboxOpen} onOpenChange={setModelComboboxOpen} modal={true}>
                 <PopoverTrigger asChild>
                   <Button
@@ -775,7 +473,8 @@ export function ModelSettingsModal({
                       {(modelConfig.provider === 'openrouter' && isLoadingOpenRouter) ||
                        (modelConfig.provider === 'openai' && isLoadingOpenAI) ||
                        (modelConfig.provider === 'claude' && isLoadingClaude) ||
-                       (modelConfig.provider === 'groq' && isLoadingGroq) ? (
+                       (modelConfig.provider === 'groq' && isLoadingGroq) ||
+                       isLoadingProviderModels ? (
                         <div className="py-6 text-center text-sm text-muted-foreground">
                           <RefreshCw className="mx-auto h-4 w-4 animate-spin mb-2" />
                           Loading models...
@@ -784,7 +483,7 @@ export function ModelSettingsModal({
                         <>
                           <CommandEmpty>No models found.</CommandEmpty>
                           <CommandGroup>
-                            {modelOptions[modelConfig.provider]?.map((model) => (
+                            {mergedModels.map((model) => (
                               <CommandItem
                                 key={model}
                                 value={model}
@@ -809,6 +508,8 @@ export function ModelSettingsModal({
                   </Command>
                 </PopoverContent>
               </Popover>
+              );
+              })()
             )}
           </div>
         </div>
@@ -857,254 +558,10 @@ export function ModelSettingsModal({
           </div>
         )}
 
-        {modelConfig.provider === 'ollama' && (
-          <div>
-            <div
-              className="flex items-center justify-between cursor-pointer py-2"
-              onClick={() => setIsEndpointSectionCollapsed(!isEndpointSectionCollapsed)}
-            >
-              <Label className="cursor-pointer">Custom Endpoint (optional)</Label>
-              {isEndpointSectionCollapsed ? (
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <ChevronUp className="h-4 w-4 text-muted-foreground" />
-              )}
-            </div>
-
-            {!isEndpointSectionCollapsed && (
-              <>
-                <p className="text-sm text-muted-foreground mt-1 mb-2">
-                  Leave empty or enter a custom endpoint (e.g., http://x.yy.zz:11434)
-                </p>
-                <div className="flex gap-2 mt-1">
-                  <div className="relative flex-1">
-                    <Input
-                      type="url"
-                      value={ollamaEndpoint}
-                      onChange={(e) => {
-                        setOllamaEndpoint(e.target.value);
-                        // Clear models and errors when endpoint changes to avoid showing stale data
-                        if (e.target.value.trim() !== lastFetchedEndpoint.trim()) {
-                          setModels([]);
-                          setError(''); // Clear error state
-                        }
-                      }}
-                      placeholder="http://localhost:11434"
-                      className={cn(
-                        "pr-10",
-                        endpointValidationState === 'invalid' && "border-red-500"
-                      )}
-                    />
-                    {endpointValidationState === 'valid' && (
-                      <CheckCircle2 className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-green-500" />
-                    )}
-                    {endpointValidationState === 'invalid' && (
-                      <XCircle className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-red-500" />
-                    )}
-                  </div>
-                  <Button
-                    type="button"
-                    size={'sm'}
-                    onClick={() => fetchOllamaModels()}
-                    disabled={isLoadingOllama}
-                    variant="outline"
-                    className="whitespace-nowrap"
-                  >
-                    {isLoadingOllama ? (
-                      <>
-                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                        Fetching...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="mr-2 h-4 w-4" />
-                        Fetch Models
-                      </>
-                    )}
-                  </Button>
-                </div>
-                {ollamaEndpointChanged && !error && (
-                  <Alert className="mt-3 border-yellow-500 bg-yellow-50">
-                    <AlertDescription className="text-yellow-800">
-                      Endpoint changed. Please click "Fetch Models" to load models from the new endpoint before saving.
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </>
-            )}
-          </div>
-        )}
-
-        {modelConfig.provider === 'ollama' && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-sm font-bold">Available Ollama Models</h4>
-              {lastFetchedEndpoint && models.length > 0 && (
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Using:</span>
-                  <code className="px-2 py-1 bg-muted rounded text-xs">
-                    {lastFetchedEndpoint || 'http://localhost:11434'}
-                  </code>
-                </div>
-              )}
-            </div>
-            {models.length > 0 && (
-              <div className="mb-4">
-                <Input
-                  placeholder="Search models..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full"
-                />
-              </div>
-            )}
-            {isLoadingOllama ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <RefreshCw className="mx-auto h-8 w-8 animate-spin mb-2" />
-                Loading models...
-              </div>
-            ) : models.length === 0 ? (
-              <div className="space-y-3">
-                {ollamaNotInstalled ? (
-                  /* Show Ollama download link when not installed */
-                  <div className="space-y-4">
-                    <Alert className="border-orange-500 bg-orange-50">
-                      <AlertDescription className="text-orange-800">
-                        Ollama is not installed or not running. Please download and install Ollama to use local models.
-                      </AlertDescription>
-                    </Alert>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onClick={() => invoke('open_external_url', { url: 'https://ollama.com/download' })}
-                      className="w-full bg-blue-600 hover:bg-blue-700"
-                    >
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      Download Ollama
-                    </Button>
-                    <div className="text-sm text-muted-foreground text-center">
-                      After installing Ollama, restart this application and click "Fetch Models" to continue.
-                    </div>
-                  </div>
-                ) : (
-                  /* Show model download option when Ollama is installed but no models */
-                  <>
-                    <Alert className="mb-4">
-                      <AlertDescription>
-                        {ollamaEndpointChanged
-                          ? 'Endpoint changed. Click "Fetch Models" to load models from the new endpoint.'
-                          : 'No models found. Download a recommended model or click "Fetch Models" to load available Ollama models.'}
-                      </AlertDescription>
-                    </Alert>
-                    {!ollamaEndpointChanged && (
-                      <div className="space-y-3">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={downloadRecommendedModel}
-                          disabled={isDownloading('gemma3:1b')}
-                          className="w-full"
-                        >
-                          {isDownloading('gemma3:1b') ? (
-                            <>
-                              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                              Downloading gemma3:1b...
-                            </>
-                          ) : (
-                            <>
-                              <Download className="mr-2 h-4 w-4" />
-                              Download gemma3:1b (Recommended, ~800MB)
-                            </>
-                          )}
-                        </Button>
-
-                        {/* Show progress for gemma3:1b download */}
-                        {isDownloading('gemma3:1b') && getProgress('gemma3:1b') !== undefined && (
-                          <div className="bg-white rounded-md border p-3">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm font-medium text-blue-600">Downloading gemma3:1b</span>
-                              <span className="text-sm font-semibold text-blue-600">
-                                {Math.round(getProgress('gemma3:1b')!)}%
-                              </span>
-                            </div>
-                            <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
-                                style={{ width: `${getProgress('gemma3:1b')}%` }}
-                              />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            ) : !ollamaEndpointChanged && (
-              <ScrollArea className="max-h-[calc(100vh-450px)] overflow-y-auto pr-4">
-                {filteredModels.length === 0 ? (
-                  <Alert>
-                    <AlertDescription>
-                      No models found matching "{searchQuery}". Try a different search term.
-                    </AlertDescription>
-                  </Alert>
-                ) : (
-                  <div className="grid gap-4">
-                    {filteredModels.map((model) => {
-                      const progress = getProgress(model.name);
-                      const modelIsDownloading = isDownloading(model.name);
-
-                      return (
-                        <div
-                          key={model.id}
-                          className={cn(
-                            'bg-card p-2 m-0 rounded-md border transition-colors',
-                            modelConfig.model === model.name
-                              ? 'ring-1 ring-blue-500 border-blue-500 background-blue-100'
-                              : 'hover:bg-muted/50',
-                            !modelIsDownloading && 'cursor-pointer'
-                          )}
-                          onClick={() => {
-                            if (!modelIsDownloading) {
-                              setModelConfig((prev: ModelConfig) => ({ ...prev, model: model.name }))
-                            }
-                          }}
-                        >
-                          <div>
-                            <b className="font-bold">{model.name}&nbsp;</b>
-                            <span className="text-muted-foreground">with a size of </span>
-                            <span className="font-mono font-bold text-sm">{model.size}</span>
-                          </div>
-
-                          {/* Progress bar for downloading models */}
-                          {modelIsDownloading && progress !== undefined && (
-                            <div className="mt-3 pt-3 border-t border-gray-200">
-                              <div className="flex items-center justify-between mb-2">
-                                <span className="text-sm font-medium text-blue-600">Downloading...</span>
-                                <span className="text-sm font-semibold text-blue-600">{Math.round(progress)}%</span>
-                              </div>
-                              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                                <div
-                                  className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
-                                  style={{ width: `${progress}%` }}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </ScrollArea>
-            )}
-          </div>
-        )}
-
-        {/* Built-in AI Models Section */}
-        {modelConfig.provider === 'builtin-ai' && (
+        {/* Local AI Models Section */}
+        {modelConfig.provider === 'local' && (
           <div className="mt-6">
-            <BuiltInModelManager
+            <LocalModelManager
               selectedModel={modelConfig.model}
               layout={layout}
               onModelSelect={(model) =>
@@ -1114,25 +571,6 @@ export function ModelSettingsModal({
           </div>
         )}
       </div>
-
-      {/* Auto-generate summaries toggle */}
-      {/* <div className="mt-6 pt-6 border-t border-gray-200">
-        <div className="flex items-center justify-between">
-          <div className="flex-1">
-            <Label htmlFor="auto-generate" className="text-base font-medium">
-              Auto-generate summaries
-            </Label>
-            <p className="text-sm text-muted-foreground mt-1">
-              Automatically generate summary when opening meetings without one
-            </p>
-          </div>
-          <Switch
-            id="auto-generate"
-            checked={autoGenerateEnabled}
-            onCheckedChange={setAutoGenerateEnabled}
-          />
-        </div>
-      </div> */}
 
       <div className="mt-6 flex justify-end">
         <Button

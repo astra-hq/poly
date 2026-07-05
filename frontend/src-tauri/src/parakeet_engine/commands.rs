@@ -264,7 +264,7 @@ pub async fn parakeet_validate_model_ready_with_config<R: tauri::Runtime>(
                     config.provider,
                     config.model
                 );
-                if config.provider == "parakeet" && !config.model.is_empty() {
+                if (config.provider == "parakeet" || config.provider == "local") && !config.model.is_empty() {
                     log::info!("Using user's configured Parakeet model: {}", config.model);
                     Some(config.model)
                 } else {

@@ -44,6 +44,7 @@ pub mod console_utils;
 pub mod database;
 pub mod groq;
 pub mod knowledge_graph;
+pub mod local_bridge;
 pub mod notifications;
 pub mod ollama;
 pub mod onboarding;
@@ -58,7 +59,6 @@ pub mod state;
 pub mod summary;
 pub mod tray;
 pub mod utils;
-pub mod whisper_engine;
 
 use audio::{list_audio_devices, trigger_audio_permission, AudioDevice};
 use log::{error as log_error, info as log_info};
@@ -278,8 +278,6 @@ async fn is_audio_level_monitoring() -> bool {
 
 // Analytics commands are now handled by analytics::commands module
 
-// Whisper commands are now handled by whisper_engine::commands module
-
 #[tauri::command]
 async fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
     list_audio_devices()
@@ -416,7 +414,6 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
-        .manage(whisper_engine::parallel_commands::ParallelProcessorState::new())
         .manage(Arc::new(RwLock::new(
             None::<notifications::manager::NotificationManager<tauri::Wry>>,
         )) as NotificationManagerState<tauri::Wry>)
@@ -462,16 +459,6 @@ pub fn run() {
                 }
             });
 
-            // Set models directory to use app_data_dir (unified storage location)
-            whisper_engine::commands::set_models_directory(&_app.handle());
-
-            // Initialize Whisper engine on startup
-            tauri::async_runtime::spawn(async {
-                if let Err(e) = whisper_engine::commands::whisper_init().await {
-                    log::error!("Failed to initialize Whisper engine on startup: {}", e);
-                }
-            });
-
             // Set Parakeet models directory
             parakeet_engine::commands::set_models_directory(&_app.handle());
 
@@ -495,6 +482,10 @@ pub fn run() {
                         log::warn!("Failed to initialize ModelManager at startup: {}", e);
                         log::warn!("ModelManager will be lazy-initialized on first use");
                     }
+                }
+
+                if let Ok(app_data_dir) = app_handle_for_model_manager.path().app_data_dir() {
+                    summary::summary_engine::models::refresh_custom_registry_cache(&app_data_dir);
                 }
             });
 
@@ -525,6 +516,16 @@ pub fn run() {
                 summary::templates::set_bundled_templates_dir(templates_dir);
             } else {
                 log::warn!("Failed to resolve resource directory for templates");
+            }
+
+            // Start the local bridge for Docker → llama-helper communication
+            if let Ok(app_data_dir) = _app.handle().path().app_data_dir() {
+                log::info!("Starting local bridge...");
+                if let Err(e) = local_bridge::start_bridge(app_data_dir) {
+                    log::warn!("Failed to start local bridge: {}. Bridge will be available on next request.", e);
+                }
+            } else {
+                log::warn!("Could not resolve app data dir; local bridge not started");
             }
 
             Ok(())
@@ -573,18 +574,7 @@ pub fn run() {
             analytics::commands::track_analytics_enabled,
             analytics::commands::track_analytics_disabled,
             analytics::commands::track_analytics_transparency_viewed,
-            whisper_engine::commands::whisper_init,
-            whisper_engine::commands::whisper_get_available_models,
-            whisper_engine::commands::whisper_load_model,
-            whisper_engine::commands::whisper_get_current_model,
-            whisper_engine::commands::whisper_is_model_loaded,
-            whisper_engine::commands::whisper_has_available_models,
-            whisper_engine::commands::whisper_validate_model_ready,
-            whisper_engine::commands::whisper_transcribe_audio,
-            whisper_engine::commands::whisper_get_models_directory,
-            whisper_engine::commands::whisper_download_model,
-            whisper_engine::commands::whisper_cancel_download,
-            whisper_engine::commands::whisper_delete_corrupted_model,
+            get_audio_devices,
             // Parakeet engine commands
             parakeet_engine::commands::parakeet_init,
             parakeet_engine::commands::parakeet_get_available_models,
@@ -600,19 +590,7 @@ pub fn run() {
             parakeet_engine::commands::parakeet_cancel_download,
             parakeet_engine::commands::parakeet_delete_corrupted_model,
             parakeet_engine::commands::open_parakeet_models_folder,
-            // Parallel processing commands
-            whisper_engine::parallel_commands::initialize_parallel_processor,
-            whisper_engine::parallel_commands::start_parallel_processing,
-            whisper_engine::parallel_commands::pause_parallel_processing,
-            whisper_engine::parallel_commands::resume_parallel_processing,
-            whisper_engine::parallel_commands::stop_parallel_processing,
-            whisper_engine::parallel_commands::get_parallel_processing_status,
-            whisper_engine::parallel_commands::get_system_resources,
-            whisper_engine::parallel_commands::check_resource_constraints,
-            whisper_engine::parallel_commands::calculate_optimal_workers,
-            whisper_engine::parallel_commands::prepare_audio_chunks,
-            whisper_engine::parallel_commands::test_parallel_processing_setup,
-            get_audio_devices,
+            // Parakeet engine commands
             trigger_microphone_permission,
             start_recording_with_devices,
             start_recording_with_devices_and_meeting,
@@ -695,15 +673,17 @@ pub fn run() {
             summary::template_commands::api_list_templates,
             summary::template_commands::api_get_template_details,
             summary::template_commands::api_validate_template,
-            // Built-in AI commands
-            summary::summary_engine::commands::builtin_ai_list_models,
-            summary::summary_engine::commands::builtin_ai_get_model_info,
-            summary::summary_engine::commands::builtin_ai_download_model,
-            summary::summary_engine::commands::builtin_ai_cancel_download,
-            summary::summary_engine::commands::builtin_ai_delete_model,
-            summary::summary_engine::commands::builtin_ai_is_model_ready,
-            summary::summary_engine::commands::builtin_ai_get_available_summary_model,
-            summary::summary_engine::commands::builtin_ai_get_recommended_model,
+            // Local AI commands
+            summary::summary_engine::commands::local_ai_list_models,
+            summary::summary_engine::commands::local_ai_get_model_info,
+            summary::summary_engine::commands::local_ai_download_model,
+            summary::summary_engine::commands::local_ai_cancel_download,
+            summary::summary_engine::commands::local_ai_delete_model,
+            summary::summary_engine::commands::local_ai_is_model_ready,
+            summary::summary_engine::commands::local_ai_get_available_summary_model,
+            summary::summary_engine::commands::local_ai_get_recommended_model,
+            summary::summary_engine::commands::verify_hf_repo,
+            summary::summary_engine::commands::add_custom_model,
             openrouter::get_openrouter_models,
             audio::recording_preferences::get_recording_preferences,
             audio::recording_preferences::set_recording_preferences,
@@ -753,7 +733,6 @@ pub fn run() {
             // Database and Models path commands
             database::commands::get_database_directory,
             database::commands::open_database_folder,
-            whisper_engine::commands::open_models_folder,
             // Onboarding commands
             onboarding::get_onboarding_status,
             onboarding::save_onboarding_status_cmd,
@@ -781,7 +760,6 @@ pub fn run() {
             knowledge_graph::settings_commands::api_test_knowledge_graph_profile,
             knowledge_graph::settings_commands::api_setup_local_knowledge_graph,
             knowledge_graph::settings_commands::api_setup_kg_check_deps,
-            knowledge_graph::settings_commands::api_setup_kg_pull_model,
             knowledge_graph::settings_commands::api_update_knowledge_graph_env,
             // Knowledge graph meeting selection
             knowledge_graph::selection_commands::api_get_meeting_knowledge_graph_selection,
@@ -825,6 +803,11 @@ pub fn run() {
                             log::error!("Failed to force shutdown sidecar: {}", e);
                         }
                     });
+                    // Stop the local bridge (synchronous via block_on -> sync stop_bridge)
+                    log::info!("Stopping local bridge...");
+                    if let Err(e) = local_bridge::stop_bridge() {
+                        log::error!("Failed to stop local bridge: {}", e);
+                    }
                     log::info!("Application cleanup complete");
                 }
                 _ => {}

@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { PermissionStatus, OnboardingPermissions } from '@/types/onboarding';
 import { resolveOnboardingSummaryModelStatus } from '@/lib/onboarding-summary-model';
+import { LocalAIAPI, BGE_M3_MODEL_NAME } from '@/lib/local-ai';
 
 const PARAKEET_MODEL = 'parakeet-tdt-0.6b-v3-int8';
 
@@ -109,12 +110,12 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
   const initializeSummaryModelSelection = async (preferredModel = selectedSummaryModel) => {
     try {
-      const recommendedModel = await invoke<string>('builtin_ai_get_recommended_model');
+      const recommendedModel = await invoke<string>('local_ai_get_recommended_model');
       setRecommendedSummaryModel(recommendedModel);
       const modelToCheck = preferredModel || recommendedModel;
       setSelectedSummaryModel(modelToCheck);
 
-      const selectedModelReady = await invoke<boolean>('builtin_ai_is_model_ready', {
+      const selectedModelReady = await invoke<boolean>('local_ai_is_model_ready', {
         modelName: modelToCheck,
         refresh: true,
       });
@@ -137,7 +138,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
   const requestSummaryModelDownload = (modelName: string) => {
     console.log('[OnboardingContext] Starting Summary Model download');
-    invoke('builtin_ai_download_model', { modelName })
+    invoke('local_ai_download_model', { modelName })
       .catch(err => {
         if (String(err).includes('Download already in progress')) {
           return;
@@ -295,7 +296,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
     };
   }, []);
 
-  // Listen to summary model (Built-in AI) download progress
+  // Listen to summary model download progress
   useEffect(() => {
     const unlisten = listen<{
       model: string;
@@ -305,7 +306,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
       speed_mbps?: number;
       status: string;
     }>(
-      'builtin-ai-download-progress',
+      'local-ai-download-progress',
       (event) => {
         const { model, progress, downloaded_mb, total_mb, speed_mbps, status } = event.payload;
         if (selectedSummaryModel && model === selectedSummaryModel) {
@@ -398,11 +399,11 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
     // Verify the selected/recommended Summary model exists on disk.
     try {
-      const recommendedModel = await invoke<string>('builtin_ai_get_recommended_model');
+      const recommendedModel = await invoke<string>('local_ai_get_recommended_model');
       setRecommendedSummaryModel(recommendedModel);
       const savedSelectedModel = savedStatus.model_status.selected_summary_model || '';
       const modelToCheck = savedSelectedModel || recommendedModel;
-      const selectedModelReady = await invoke<boolean>('builtin_ai_is_model_ready', {
+      const selectedModelReady = await invoke<boolean>('local_ai_is_model_ready', {
         modelName: modelToCheck,
         refresh: true,
       });
@@ -481,11 +482,11 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
 
       let modelToSave = selectedSummaryModel;
       if (!modelToSave) {
-        modelToSave = await invoke<string>('builtin_ai_get_recommended_model');
+        modelToSave = await invoke<string>('local_ai_get_recommended_model');
         setSelectedSummaryModel(modelToSave);
       }
 
-      const selectedModelReady = await invoke<boolean>('builtin_ai_is_model_ready', {
+      const selectedModelReady = await invoke<boolean>('local_ai_is_model_ready', {
         modelName: modelToSave,
         refresh: true,
       });
@@ -494,11 +495,27 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         requestSummaryModelDownload(modelToSave);
       }
 
-      // Onboarding always uses builtin-ai with selected model
+      // Onboarding always uses local AI with selected model
       await invoke('complete_onboarding', {
         model: modelToSave,
       });
       setCompleted(true);
+
+      // Ensure BAAI/bge-m3 is downloaded for local KG embedding support
+      try {
+        const bgeReady = await invoke<boolean>('local_ai_is_model_ready', {
+          modelName: BGE_M3_MODEL_NAME,
+          refresh: true,
+        });
+        if (!bgeReady) {
+          console.log('[OnboardingContext] Starting BAAI/bge-m3 download for KG embeddings');
+          invoke('local_ai_download_model', { modelName: BGE_M3_MODEL_NAME })
+            .catch(err => console.warn('[OnboardingContext] BAAI/bge-m3 download failed:', err));
+        }
+      } catch (err) {
+        console.warn('[OnboardingContext] BAAI/bge-m3 check failed:', err);
+      }
+
       console.log('[OnboardingContext] Onboarding completed with model:', modelToSave);
 
       // Reset the flag so subsequent state updates can be saved
@@ -564,7 +581,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         setIsBackgroundDownloading(true);
       }
       
-      // Also check for Built-in AI downloads if possible (though less critical as Parakeet is the main blocker)
+      // Also check for local AI downloads if possible (though less critical as Parakeet is the main blocker)
       
     } catch (error) {
       console.warn('[OnboardingContext] Failed to check active downloads:', error);
@@ -589,14 +606,14 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const goToStep = useCallback((step: number) => {
-    setCurrentStep(Math.max(1, Math.min(step, 4)));
+    setCurrentStep(Math.max(1, Math.min(step, 5)));
   }, []);
 
   const goNext = useCallback(() => {
     setCurrentStep((prev: number) => {
       const next = prev + 1;
-      // Don't go past step 4
-      return Math.min(next, 4);
+      // Don't go past step 5
+      return Math.min(next, 5);
     });
   }, []);
 

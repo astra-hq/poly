@@ -300,7 +300,7 @@ export function useDownloadProgressToast() {
     };
   }, [updateDownload, cleanupDownload]);
 
-  // Listen to Built-in AI summary model download events
+  // Listen to local AI summary model download events
   useEffect(() => {
     const unlisten = listen<{
       model: string;
@@ -310,7 +310,7 @@ export function useDownloadProgressToast() {
       speed_mbps?: number;
       status: string;
       error?: string;
-    }>('builtin-ai-download-progress', (event) => {
+    }>('local-ai-download-progress', (event) => {
       const { model, progress, downloaded_mb, total_mb, speed_mbps, status, error } = event.payload;
 
       const downloadData: DownloadProgress = {

@@ -69,7 +69,7 @@ interface ConfigContextType {
 
   // Ollama models
   models: OllamaModel[];
-  modelOptions: Record<ModelConfig['provider'], string[]>;
+  modelOptions: Record<string, string[]>;
   error: string;
 
   // Summary configuration
@@ -101,7 +101,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'ollama',
     model: 'llama3.2:latest',
-    whisperModel: 'large-v3',
     ollamaEndpoint: null
   });
 
@@ -229,7 +228,6 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
             ...prev,
             provider: data.provider,
             model: data.model || prev.model,
-            whisperModel: data.whisperModel || prev.whisperModel,
             ollamaEndpoint: data.ollamaEndpoint,
           }));
 
@@ -318,13 +316,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // Calculate model options based on available models
-  const modelOptions: Record<ModelConfig['provider'], string[]> = {
+  const modelOptions: Record<string, string[]> = {
     ollama: models.map(model => model.name),
     claude: ['claude-3-5-sonnet-latest'],
     groq: ['llama-3.3-70b-versatile'],
     openrouter: [],
     openai: ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'],
-    'builtin-ai': [],
+    'local': [],
   };
 
   // Toggle confidence indicator with localStorage persistence
@@ -394,7 +392,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       // Load storage locations
       const [dbDir, modelsDir, recordingsDir] = await Promise.all([
         invoke<string>('get_database_directory'),
-        invoke<string>('whisper_get_models_directory'),
+        invoke<string>('parakeet_get_models_directory'),
         invoke<string>('get_default_recordings_folder_path')
       ]);
 

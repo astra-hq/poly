@@ -249,33 +249,23 @@ export class KnowledgeGraphService {
   /**
    * Phase 1: Check system dependencies for local knowledge graph setup.
    * Backend: `api_setup_kg_check_deps()`
-   * Returns dependency info for Docker, Ollama, and platform.
+   * Returns dependency info for Docker and platform.
    */
   async checkDeps(): Promise<{
     docker: { installed: boolean; version: string | null };
-    ollama: { installed: boolean; version: string | null };
     platform: string;
   }> {
     return invoke('api_setup_kg_check_deps');
   }
 
   /**
-   * Phase 2: Pull an Ollama model for local knowledge graph use.
-   * Backend: `api_setup_kg_pull_model(model: String)`
-   * Progress is streamed via `setup-progress` events (stage: pull-model).
-   */
-  async pullModel(model: string): Promise<void> {
-    return invoke('api_setup_kg_pull_model', { model });
-  }
-
-  /**
-   * Phase 3: Start the knowledge graph docker compose stack.
+   * Phase 2: Start the knowledge graph docker compose stack.
    * Backend: `api_setup_local_knowledge_graph()`
    * Progress is streamed via `setup-progress` events.
    * Returns a status message on success.
    */
-  async startStack(): Promise<string> {
-    return invoke<string>('api_setup_local_knowledge_graph');
+  async startStack(llmModel: string, llmProviderId?: string): Promise<string> {
+    return invoke<string>('api_setup_local_knowledge_graph', { llmModel, llmProviderId: llmProviderId ?? null });
   }
 
   /**

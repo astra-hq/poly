@@ -30,12 +30,12 @@ export function SetupOverviewStep() {
     {
       number: 1,
       type: 'transcription',
-      title: 'Download Transcription Engine',
+      title: 'Download Parakeet Transcription Engine',
     },
     {
       number: 2,
       type: 'summarization',
-      title: 'Download Summarization Engine',
+      title: 'Download Local AI Summary Engine',
     },
   ];
 
@@ -46,7 +46,7 @@ export function SetupOverviewStep() {
   return (
     <OnboardingContainer
       title="Setup Overview"
-      description="Poly requires that you download the Transcription & Summarization AI models for the software to work."
+      description="Poly uses Local AI (on-device) for summaries and Parakeet for transcription. Download the required models to get started."
       step={2}
       totalSteps={isMac ? 4 : 3}
     >
@@ -74,7 +74,7 @@ export function SetupOverviewStep() {
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-xs text-sm">
                                 You can also select external AI providers like OpenAI, Claude, or
-                                Ollama for summary generation in settings.
+                                Groq for summary generation in settings.
                                 </TooltipContent>
                             </Tooltip>
                             </TooltipProvider>

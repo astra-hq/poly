@@ -60,10 +60,8 @@ pub fn legacy_app_data_candidates() -> Vec<PathBuf> {
     // 4. Homebrew paths (macOS)
     #[cfg(target_os = "macos")]
     {
-        let homebrew_apple_silicon =
-            PathBuf::from("/opt/homebrew/var/meetily");
-        let homebrew_intel =
-            PathBuf::from("/usr/local/var/meetily");
+        let homebrew_apple_silicon = PathBuf::from("/opt/homebrew/var/meetily");
+        let homebrew_intel = PathBuf::from("/usr/local/var/meetily");
         candidates.push(homebrew_apple_silicon);
         candidates.push(homebrew_intel);
     }

@@ -334,7 +334,10 @@ impl SummaryService {
         // ── Resolve LLMProvider from the configured providers list ─────────
         // First try: look up the provider in the global providers list
         let provider = if let Some(pc) = cfg.find_provider(&model_provider) {
-            Ok(Self::provider_type_to_llm_provider(&pc.provider_type, &model_name))
+            Ok(Self::provider_type_to_llm_provider(
+                &pc.provider_type,
+                &model_name,
+            ))
         } else {
             // Fallback: parse the old hardcoded provider names (backward compat)
             LLMProvider::from_str(&model_provider)
@@ -362,14 +365,17 @@ impl SummaryService {
         let provider_config = match cfg.find_provider(&cfg.summary.provider_id) {
             Some(p) => p.clone(),
             None => {
-                let err_msg = format!("Provider '{}' not found in config. Please add it in Settings.", cfg.summary.provider_id);
+                let err_msg = format!(
+                    "Provider '{}' not found in config. Please add it in Settings.",
+                    cfg.summary.provider_id
+                );
                 Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
                 return;
             }
         };
 
         // ── Resolve API key using provider config ──────────────────────────
-        // Ollama and BuiltInAI don't need API keys; all others look up via provider_id.
+        // Ollama and Local don't need API keys; all others look up via provider_id.
         let api_key = if provider_config.provider_type == crate::providers::ProviderType::Ollama
             || provider == LLMProvider::BuiltInAI
         {
@@ -385,8 +391,10 @@ impl SummaryService {
                     String::new()
                 }
                 Err(e) => {
-                    let err_msg =
-                        format!("Failed to retrieve API key for {}: {}", cfg.summary.provider_id, e);
+                    let err_msg = format!(
+                        "Failed to retrieve API key for {}: {}",
+                        cfg.summary.provider_id, e
+                    );
                     Self::update_process_failed(&pool, &meeting_id, &err_msg).await;
                     return;
                 }
@@ -396,11 +404,12 @@ impl SummaryService {
         // ── Derive legacy parameters from provider config ──────────────────
         // Bridge: convert the new provider config into the parameters
         // expected by the existing processor/llm_client call chain.
-        let ollama_endpoint = if provider_config.provider_type == crate::providers::ProviderType::Ollama {
-            Some(provider_config.base_url.clone())
-        } else {
-            None
-        };
+        let ollama_endpoint =
+            if provider_config.provider_type == crate::providers::ProviderType::Ollama {
+                Some(provider_config.base_url.clone())
+            } else {
+                None
+            };
         let custom_openai_endpoint = Some(provider_config.base_url.clone());
         let custom_openai_max_tokens: Option<u32> = None;
         let custom_openai_temperature: Option<f32> = None;
@@ -412,55 +421,56 @@ impl SummaryService {
         let ollama_base_url = ollama_endpoint.clone();
 
         // Dynamically fetch context size based on provider and model
-        let token_threshold = if provider_config.provider_type == crate::providers::ProviderType::Ollama {
-            match METADATA_CACHE
-                .get_or_fetch(&model_name, ollama_base_url.as_deref())
-                .await
-            {
-                Ok(metadata) => {
-                    // Reserve 300 tokens for prompt overhead
-                    let optimal = metadata.context_size.saturating_sub(300);
-                    info!(
-                        "✓ Using dynamic context for {}: {} tokens (chunk size: {})",
-                        model_name, metadata.context_size, optimal
-                    );
-                    optimal
+        let token_threshold =
+            if provider_config.provider_type == crate::providers::ProviderType::Ollama {
+                match METADATA_CACHE
+                    .get_or_fetch(&model_name, ollama_base_url.as_deref())
+                    .await
+                {
+                    Ok(metadata) => {
+                        // Reserve 300 tokens for prompt overhead
+                        let optimal = metadata.context_size.saturating_sub(300);
+                        info!(
+                            "✓ Using dynamic context for {}: {} tokens (chunk size: {})",
+                            model_name, metadata.context_size, optimal
+                        );
+                        optimal
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to fetch context for {}: {}. Using default 4000",
+                            model_name, e
+                        );
+                        4000 // Fallback to safe default
+                    }
                 }
-                Err(e) => {
-                    warn!(
-                        "Failed to fetch context for {}: {}. Using default 4000",
-                        model_name, e
-                    );
-                    4000 // Fallback to safe default
-                }
-            }
-        } else if provider == LLMProvider::BuiltInAI {
-            // Get model's context size from registry
-            use crate::summary::summary_engine::models;
-            let model = models::get_model_by_name(&model_name)
-                .ok_or_else(|| format!("Unknown model: {}", model_name));
+            } else if provider == LLMProvider::BuiltInAI {
+                // Get model's context size from registry
+                use crate::summary::summary_engine::models;
+                let model = models::get_model_by_name(&model_name)
+                    .ok_or_else(|| format!("Unknown model: {}", model_name));
 
-            match model {
-                Ok(model_def) => {
-                    // Reserve 300 tokens for prompt overhead
-                    let optimal = model_def.context_size.saturating_sub(300) as usize;
-                    info!(
-                        "✓ Using BuiltInAI context size: {} tokens (chunk size: {})",
-                        model_def.context_size, optimal
-                    );
-                    optimal
+                match model {
+                    Ok(model_def) => {
+                        // Reserve 300 tokens for prompt overhead
+                        let optimal = model_def.context_size.saturating_sub(300) as usize;
+                        info!(
+                            "✓ Using local AI context size: {} tokens (chunk size: {})",
+                            model_def.context_size, optimal
+                        );
+                        optimal
+                    }
+                    Err(e) => {
+                        warn!("{}, using default 2048", e);
+                        1748 // 2048 - 300 for overhead
+                    }
                 }
-                Err(e) => {
-                    warn!("{}, using default 2048", e);
-                    1748 // 2048 - 300 for overhead
-                }
-            }
-        } else {
-            // Cloud providers (OpenAI, Claude, Groq, CustomOpenAI) handle large contexts automatically
-            100000 // Effectively unlimited for single-pass processing
-        };
+            } else {
+                // Cloud providers (OpenAI, Claude, Groq, CustomOpenAI) handle large contexts automatically
+                100000 // Effectively unlimited for single-pass processing
+            };
 
-        // Get app data directory for BuiltInAI provider
+        // Get app data directory for local AI provider
         let app_data_dir = _app.path().app_data_dir().ok();
 
         if let Some(code) = &summary_language {
@@ -653,6 +663,7 @@ impl SummaryService {
             ProviderType::Ollama => LLMProvider::Ollama,
             ProviderType::OpenRouter => LLMProvider::OpenRouter,
             ProviderType::Custom => LLMProvider::CustomOpenAI,
+            ProviderType::Local => LLMProvider::BuiltInAI,
         }
     }
 }
@@ -1070,11 +1081,13 @@ summary:
             .filter(|p| p.provider_type == ProviderType::Custom)
             .collect();
         assert_eq!(custom_providers.len(), 1);
-        assert_eq!(custom_providers[0].base_url, "https://custom.example.com/v1");
+        assert_eq!(
+            custom_providers[0].base_url,
+            "https://custom.example.com/v1"
+        );
 
         // ── Assert: SecretStore works without SQLite ────────────────
-        let store =
-            KeyringFirstSecretStore::new("com.poly.secrets.test.summary_svc", secrets_path);
+        let store = KeyringFirstSecretStore::new("com.poly.secrets.test.summary_svc", secrets_path);
 
         store
             .set(&refs::summary_provider_key("openai"), "sk-test-key")
@@ -1092,5 +1105,68 @@ summary:
             .unwrap();
         let custom_key = store.get(&refs::custom_openai_key()).await.unwrap();
         assert_eq!(custom_key.as_deref(), Some("sk-custom-key"));
+    }
+
+    // ── Provider routing: local ↔ llama-helper, legacy migration tests ──
+
+    const LEGACY_ID: &str = "builtin-ai";
+
+    #[test]
+    fn legacy_provider_id_rejected_from_str() {
+        // After migration: the legacy ID string is NOT accepted.
+        assert!(LLMProvider::from_str(LEGACY_ID).is_err());
+        assert!(LLMProvider::from_str("Builtin-AI").is_err());
+    }
+
+    #[test]
+    fn local_string_routes_to_local_provider() {
+        // "local" maps to BuiltInAI (local llama-helper sidecar).
+        assert_eq!(
+            LLMProvider::from_str("local").unwrap(),
+            LLMProvider::BuiltInAI
+        );
+        // Case-insensitive
+        assert_eq!(
+            LLMProvider::from_str("LOCAL").unwrap(),
+            LLMProvider::BuiltInAI
+        );
+    }
+
+    #[test]
+    fn provider_type_local_maps_to_local_provider() {
+        // The primary code path: ProviderType::Local → LLMProvider::BuiltInAI
+        assert_eq!(
+            SummaryService::provider_type_to_llm_provider(&ProviderType::Local, ""),
+            LLMProvider::BuiltInAI
+        );
+    }
+
+    #[test]
+    fn external_provider_routing_unchanged() {
+        // External providers remain intact
+        assert_eq!(
+            SummaryService::provider_type_to_llm_provider(&ProviderType::OpenAI, ""),
+            LLMProvider::OpenAI
+        );
+        assert_eq!(
+            SummaryService::provider_type_to_llm_provider(&ProviderType::Anthropic, ""),
+            LLMProvider::Claude
+        );
+        assert_eq!(
+            SummaryService::provider_type_to_llm_provider(&ProviderType::Groq, ""),
+            LLMProvider::Groq
+        );
+        assert_eq!(
+            SummaryService::provider_type_to_llm_provider(&ProviderType::Ollama, ""),
+            LLMProvider::Ollama
+        );
+        assert_eq!(
+            SummaryService::provider_type_to_llm_provider(&ProviderType::OpenRouter, ""),
+            LLMProvider::OpenRouter
+        );
+        assert_eq!(
+            SummaryService::provider_type_to_llm_provider(&ProviderType::Custom, ""),
+            LLMProvider::CustomOpenAI
+        );
     }
 }

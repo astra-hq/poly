@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Key Technology Stack
 - **Desktop App**: Tauri 2.x (Rust) + Next.js 14 + React 18
 - **Audio Processing**: Rust (cpal, whisper-rs, professional audio mixing)
-- **Transcription**: Whisper.cpp / whisper-rs and Parakeet paths in the Tauri app
+- **Transcription**: Parakeet for transcription in the Tauri app
 - **App API Surface**: Tauri commands and events, not a separate FastAPI service
 - **LLM Integration**: Ollama (local), Claude, Groq, OpenRouter
 
@@ -138,7 +138,7 @@ The app separates configuration, secrets, and runtime data into three distinct b
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Frontend (Tauri Desktop App)                  │
 │  ┌──────────────────┐  ┌─────────────────┐  ┌────────────────┐ │
-│  │   Next.js UI     │  │  Rust Backend   │  │ Whisper Engine │ │
+│  │   Next.js UI     │  │  Rust Backend   │  │ Parakeet Engine │ │
 │  │  (React/TS)      │←→│  (Audio + IPC)  │←→│  (Local STT)   │ │
 │  └──────────────────┘  └─────────────────┘  └────────────────┘ │
 │         ↑ Tauri Events           ↑ Audio Pipeline               │
@@ -164,10 +164,10 @@ Raw Audio (Mic + System)
     │ (Pre-mixed)     │        │ (VAD-filtered)      │
     └─────────────────┘        └─────────────────────┘
               ↓                          ↓
-    RecordingSaver.save()      WhisperEngine.transcribe()
+    RecordingSaver.save()      ParakeetEngine.transcribe()
 ```
 
-**Key Insight**: The pipeline performs **professional audio mixing** (RMS-based ducking, clipping prevention) for recording, while simultaneously applying **Voice Activity Detection (VAD)** to send only speech segments to Whisper for transcription.
+**Key Insight**: The pipeline performs **professional audio mixing** (RMS-based ducking, clipping prevention) for recording, while simultaneously applying **Voice Activity Detection (VAD)** to send only speech segments to the transcription engine.
 
 ### Audio Device Modularization (Recently Completed)
 
@@ -243,7 +243,7 @@ await listen<TranscriptUpdate>('transcript-update', (event) => {
 });
 ```
 
-### Whisper Model Management
+### Model Management
 
 **Model Storage Locations**:
 - **Development**: `frontend/models/`
@@ -420,9 +420,9 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 - Use `perf_debug!()` / `perf_trace!()` for hot-path logging (zero cost in release)
 - Batch audio metrics using `AudioMetricsBatcher` (pipeline.rs)
 - Pre-allocate buffers with `AudioBufferPool` (buffer_pool.rs)
-- VAD filtering reduces Whisper load by ~70% (only processes speech)
+- VAD filtering reduces transcription engine load by ~70% (only processes speech)
 
-### Whisper Transcription
+### Transcription
 - **Model Selection**: Balance accuracy vs speed
   - Development: `base` or `small` (fast iteration)
   - Production: `medium` or `large-v3` (best quality)
@@ -443,7 +443,7 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
    - Windows: WASAPI exclusive mode can conflict with other apps
    - System audio requires virtual device (BlackHole on macOS, WASAPI loopback on Windows)
 
-3. **Whisper Model Loading**: Models are loaded once and cached. Changing models requires app restart or manual unload/reload.
+3. **Model Loading**: Models are loaded once and cached. Changing models requires app restart or manual unload/reload.
 
 4. **No Separate Backend Dependency**: Meeting persistence, transcription, and LLM features are handled by the Tauri app. Do not reintroduce the archived FastAPI backend as a supported requirement.
 
@@ -480,5 +480,5 @@ $env:RUST_LOG="debug"; ./clean_run_windows.bat
 - [frontend/src/app/page.tsx](frontend/src/app/page.tsx) - Main recording interface
 - [frontend/src/components/Sidebar/SidebarProvider.tsx](frontend/src/components/Sidebar/SidebarProvider.tsx) - Global state management
 
-**Whisper Integration**:
-- [frontend/src-tauri/src/whisper_engine/whisper_engine.rs](frontend/src-tauri/src/whisper_engine/whisper_engine.rs) - Whisper model management and transcription
+**Transcription Integration**:
+- [frontend/src-tauri/src/whisper_engine/whisper_engine.rs](frontend/src-tauri/src/whisper_engine/whisper_engine.rs) - Parakeet model management and transcription

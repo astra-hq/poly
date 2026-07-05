@@ -69,7 +69,6 @@ const Sidebar: React.FC = () => {
   const [modelConfig, setModelConfig] = useState<ModelConfig>({
     provider: 'ollama',
     model: '',
-    whisperModel: '',
     apiKey: null,
     ollamaEndpoint: null
   });
@@ -200,7 +199,6 @@ const Sidebar: React.FC = () => {
       await invoke('api_save_model_config', {
         provider: config.provider,
         model: config.model,
-        whisperModel: config.whisperModel,
         apiKey: config.apiKey,
         ollamaEndpoint: config.ollamaEndpoint,
       });

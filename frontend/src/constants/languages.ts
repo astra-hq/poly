@@ -1,4 +1,4 @@
-// ISO 639-1 language codes supported by Whisper
+// ISO 639-1 language codes supported by the transcription engine
 export const LANGUAGES = [
   { code: 'auto', name: 'Auto Detect (Original Language)' },
   { code: 'auto-translate', name: 'Auto Detect (Translate to English)' },

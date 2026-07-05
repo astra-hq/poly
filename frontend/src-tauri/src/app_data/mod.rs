@@ -8,8 +8,8 @@
 pub mod migration;
 pub mod paths;
 
+pub use migration::migrate_if_needed;
 pub use paths::{
     legacy_app_data_candidates, legacy_media_dir, legacy_meetily_app_data_dir,
     legacy_meetily_data_dir, poly_media_dir,
 };
-pub use migration::migrate_if_needed;

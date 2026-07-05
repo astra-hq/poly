@@ -45,7 +45,7 @@ export interface EmbeddingConfig {
 }
 
 export const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
-  provider: 'mlx',
+  provider: 'local',
   model: 'BAAI/bge-m3',
   dimensions: 1024,
 };

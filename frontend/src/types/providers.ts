@@ -12,7 +12,8 @@ export type ProviderType =
   | 'groq'
   | 'ollama'
   | 'open_router'
-  | 'custom';
+  | 'custom'
+  | 'local';
 
 /** Display label for each provider type — matches Rust `ProviderType::label()`. */
 export const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
@@ -22,6 +23,7 @@ export const PROVIDER_TYPE_LABELS: Record<ProviderType, string> = {
   ollama: 'Ollama',
   open_router: 'OpenRouter',
   custom: 'Custom',
+  local: 'Local',
 };
 
 /** Default base URL for each provider type. */
@@ -32,6 +34,7 @@ export const PROVIDER_DEFAULT_URLS: Record<ProviderType, string> = {
   ollama: 'http://localhost:11434',
   open_router: 'https://openrouter.ai/api/v1',
   custom: '',
+  local: '',
 };
 
 /** Default model for each provider type. */

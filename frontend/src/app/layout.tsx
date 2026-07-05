@@ -13,7 +13,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { RecordingStateProvider } from '@/contexts/RecordingStateContext'
-import { OllamaDownloadProvider } from '@/contexts/OllamaDownloadContext'
+
 import { TranscriptProvider } from '@/contexts/TranscriptContext'
 import { ConfigProvider, useConfig } from '@/contexts/ConfigContext'
 import { OnboardingProvider } from '@/contexts/OnboardingContext'
@@ -237,7 +237,6 @@ export default function RootLayout({
           <RecordingStateProvider>
             <TranscriptProvider>
               <ConfigProvider>
-                <OllamaDownloadProvider>
                   <OnboardingProvider>
                     <UpdateCheckProvider>
                       <SidebarProvider>
@@ -269,8 +268,6 @@ export default function RootLayout({
                       </SidebarProvider>
                     </UpdateCheckProvider>
                   </OnboardingProvider>
-
-                </OllamaDownloadProvider>
               </ConfigProvider>
             </TranscriptProvider>
           </RecordingStateProvider>

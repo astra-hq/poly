@@ -5,12 +5,11 @@ import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Eye, EyeOff, Lock, Unlock } from 'lucide-react';
-import { ModelManager } from './WhisperModelManager';
 import { ParakeetModelManager } from './ParakeetModelManager';
 
 
 export interface TranscriptModelProps {
-    provider: 'localWhisper' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
+    provider: 'local' | 'parakeet' | 'deepgram' | 'elevenLabs' | 'groq' | 'openai';
     model: string;
     apiKey?: string | null;
 }
@@ -34,7 +33,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
     }, [transcriptModelConfig.provider]);
 
     useEffect(() => {
-        if (transcriptModelConfig.provider === 'localWhisper' || transcriptModelConfig.provider === 'parakeet') {
+        if (transcriptModelConfig.provider === 'parakeet' || transcriptModelConfig.provider === 'local') {
             setApiKey(null);
         }
     }, [transcriptModelConfig.provider]);
@@ -51,7 +50,6 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         }
     };
     const modelOptions = {
-        localWhisper: [], // Model selection handled by ModelManager component
         parakeet: [], // Model selection handled by ParakeetModelManager component
         deepgram: ['nova-2-phonecall'],
         elevenLabs: ['eleven_multilingual_v2'],
@@ -67,26 +65,12 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
         }
     };
 
-    const handleWhisperModelSelect = (modelName: string) => {
-        // Always update config when model is selected, regardless of current provider
-        // This ensures the model is set when user switches back
-        setTranscriptModelConfig({
-            ...transcriptModelConfig,
-            provider: 'localWhisper', // Ensure provider is set correctly
-            model: modelName
-        });
-        // Close modal after selection
-        if (onModelSelect) {
-            onModelSelect();
-        }
-    };
-
     const handleParakeetModelSelect = (modelName: string) => {
         // Always update config when model is selected, regardless of current provider
         // This ensures the model is set when user switches back
         setTranscriptModelConfig({
             ...transcriptModelConfig,
-            provider: 'parakeet', // Ensure provider is set correctly
+            provider: 'local', // Ensure provider is set correctly
             model: modelName
         });
         // Close modal after selection
@@ -112,7 +96,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                 onValueChange={(value) => {
                                     const provider = value as TranscriptModelProps['provider'];
                                     setUiProvider(provider);
-                                    if (provider !== 'localWhisper' && provider !== 'parakeet') {
+                                    if (provider !== 'parakeet' && provider !== 'local') {
                                         fetchApiKey(provider);
                                     }
                                 }}
@@ -121,8 +105,8 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                     <SelectValue placeholder="Select provider" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="parakeet">⚡ Parakeet (Recommended - Real-time / Accurate)</SelectItem>
-                                    <SelectItem value="localWhisper">🏠 Local Whisper (High Accuracy)</SelectItem>
+                                    <SelectItem value="local">⚡ Local (Recommended - Real-time / Accurate)</SelectItem>
+                                    <SelectItem value="parakeet">⚡ Parakeet (legacy alias)</SelectItem>
                                     {/* <SelectItem value="deepgram">☁️ Deepgram (Backup)</SelectItem>
                                     <SelectItem value="elevenLabs">☁️ ElevenLabs</SelectItem>
                                     <SelectItem value="groq">☁️ Groq</SelectItem>
@@ -130,7 +114,7 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                                 </SelectContent>
                             </Select>
 
-                            {uiProvider !== 'localWhisper' && uiProvider !== 'parakeet' && (
+                            {uiProvider !== 'parakeet' && uiProvider !== 'local' && (
                                 <Select
                                     value={transcriptModelConfig.model}
                                     onValueChange={(value) => {
@@ -152,20 +136,10 @@ export function TranscriptSettings({ transcriptModelConfig, setTranscriptModelCo
                         </div>
                     </div>
 
-                    {uiProvider === 'localWhisper' && (
-                        <div className="mt-6">
-                            <ModelManager
-                                selectedModel={transcriptModelConfig.provider === 'localWhisper' ? transcriptModelConfig.model : undefined}
-                                onModelSelect={handleWhisperModelSelect}
-                                autoSave={true}
-                            />
-                        </div>
-                    )}
-
-                    {uiProvider === 'parakeet' && (
+                    {(uiProvider === 'parakeet' || uiProvider === 'local') && (
                         <div className="mt-6">
                             <ParakeetModelManager
-                                selectedModel={transcriptModelConfig.provider === 'parakeet' ? transcriptModelConfig.model : undefined}
+                                selectedModel={(transcriptModelConfig.provider === 'parakeet' || transcriptModelConfig.provider === 'local') ? transcriptModelConfig.model : undefined}
                                 onModelSelect={handleParakeetModelSelect}
                                 autoSave={true}
                             />

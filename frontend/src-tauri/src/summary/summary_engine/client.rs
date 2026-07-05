@@ -143,11 +143,11 @@ pub async fn generate_with_builtin(
         }
     }
 
-    log::info!("Built-in AI generation request");
+    log::info!("Local AI generation request");
     log::info!("Model: {}", model_name);
 
     // Get model definition
-    let model_def = models::get_model_by_name(model_name)
+    let model_def = models::get_model_by_name_any(model_name)
         .ok_or_else(|| anyhow!("Unknown model: {}", model_name))?;
 
     // Resolve model path with caching (avoids repeated filesystem I/O)

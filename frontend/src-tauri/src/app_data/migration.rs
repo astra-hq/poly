@@ -84,7 +84,11 @@ pub fn migrate_if_needed(poly_app_data_dir: &Path) -> bool {
                 result.items_copied
             );
         }
-        if result.items_copied.iter().any(|s| s.contains("meeting_minutes")) {
+        if result
+            .items_copied
+            .iter()
+            .any(|s| s.contains("meeting_minutes"))
+        {
             db_copied = true;
         }
         for err in &result.errors {
@@ -107,16 +111,17 @@ fn migrate_from_dir(legacy_dir: &Path, poly_dir: &Path) -> MigrationResult {
     };
 
     // --- Database files ---
-    for db_name in &[
-        "meeting_minutes.sqlite",
-        "meeting_minutes.db",
-    ] {
+    for db_name in &["meeting_minutes.sqlite", "meeting_minutes.db"] {
         let src = legacy_dir.join(db_name);
         let dst = poly_dir.join(db_name);
         if src.exists() && !dst.exists() {
             match try_copy(&src, &dst) {
                 Ok(_) => result.items_copied.push(db_name.to_string()),
-                Err(e) => result.errors.push(format!("copy {} ({}) : {}", db_name, src.display(), e)),
+                Err(e) => {
+                    result
+                        .errors
+                        .push(format!("copy {} ({}) : {}", db_name, src.display(), e))
+                }
             }
         }
     }
@@ -152,7 +157,9 @@ fn migrate_from_dir(legacy_dir: &Path, poly_dir: &Path) -> MigrationResult {
         match copy_dir_recursive(&src_models, &dst_models) {
             Ok(files) => {
                 let count = files.len();
-                result.items_copied.push(format!("models/ ({} files)", count));
+                result
+                    .items_copied
+                    .push(format!("models/ ({} files)", count));
             }
             Err(e) => result.errors.push(format!("copy models: {}", e)),
         }
@@ -165,7 +172,9 @@ fn migrate_from_dir(legacy_dir: &Path, poly_dir: &Path) -> MigrationResult {
         match copy_dir_recursive(&src_templates, &dst_templates) {
             Ok(files) => {
                 let count = files.len();
-                result.items_copied.push(format!("templates/ ({} files)", count));
+                result
+                    .items_copied
+                    .push(format!("templates/ ({} files)", count));
             }
             Err(e) => result.errors.push(format!("copy templates: {}", e)),
         }
@@ -210,8 +219,7 @@ fn migrate_legacy_media() {
 /// Copy a single file, creating parent directories as needed.
 fn try_copy(src: &Path, dst: &Path) -> Result<(), String> {
     if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir parent {:?}: {}", parent, e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir parent {:?}: {}", parent, e))?;
     }
     fs::copy(src, dst).map_err(|e| format!("fs::copy {:?} -> {:?}: {}", src, dst, e))?;
     Ok(())
@@ -224,15 +232,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<Vec<PathBuf>, String> {
     }
 
     let mut copied = Vec::new();
-    fs::create_dir_all(dst)
-        .map_err(|e| format!("mkdir {:?}: {}", dst, e))?;
+    fs::create_dir_all(dst).map_err(|e| format!("mkdir {:?}: {}", dst, e))?;
 
-    let entries =
-        fs::read_dir(src).map_err(|e| format!("read_dir {:?}: {}", src, e))?;
+    let entries = fs::read_dir(src).map_err(|e| format!("read_dir {:?}: {}", src, e))?;
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| format!("dir entry error: {}", e))?;
+        let entry = entry.map_err(|e| format!("dir entry error: {}", e))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
@@ -240,9 +245,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<Vec<PathBuf>, String> {
             let sub = copy_dir_recursive(&src_path, &dst_path)?;
             copied.extend(sub);
         } else {
-            fs::copy(&src_path, &dst_path).map_err(|e| {
-                format!("copy {:?} -> {:?}: {}", src_path, dst_path, e)
-            })?;
+            fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("copy {:?} -> {:?}: {}", src_path, dst_path, e))?;
             copied.push(dst_path);
         }
     }
@@ -276,7 +280,9 @@ mod tests {
         fs::write(&db_path, b"legacy data").unwrap();
 
         let result = migrate_from_dir(legacy.path(), poly.path());
-        assert!(result.items_copied.contains(&"meeting_minutes.db".to_string()));
+        assert!(result
+            .items_copied
+            .contains(&"meeting_minutes.db".to_string()));
         let poly_db = poly.path().join("meeting_minutes.db");
         assert!(poly_db.exists());
         assert_eq!(fs::read_to_string(&poly_db).unwrap(), "legacy data");
@@ -291,7 +297,9 @@ mod tests {
         fs::write(&db_path, b"sqlite data").unwrap();
 
         let result = migrate_from_dir(legacy.path(), poly.path());
-        assert!(result.items_copied.contains(&"meeting_minutes.sqlite".to_string()));
+        assert!(result
+            .items_copied
+            .contains(&"meeting_minutes.sqlite".to_string()));
         assert!(poly.path().join("meeting_minutes.sqlite").exists());
         assert!(db_path.exists()); // legacy preserved
     }
@@ -303,7 +311,9 @@ mod tests {
         fs::write(&pref_path, r#"{"auto_save":true}"#).unwrap();
 
         let result = migrate_from_dir(legacy.path(), poly.path());
-        assert!(result.items_copied.contains(&"recording_preferences.json".to_string()));
+        assert!(result
+            .items_copied
+            .contains(&"recording_preferences.json".to_string()));
         assert!(poly.path().join("recording_preferences.json").exists());
         assert!(pref_path.exists()); // legacy preserved
     }
@@ -316,12 +326,18 @@ mod tests {
         fs::write(models_dir.join("model.bin"), b"model data").unwrap();
 
         let result = migrate_from_dir(legacy.path(), poly.path());
-        let has_models = result
-            .items_copied
-            .iter()
-            .any(|s| s.starts_with("models/"));
-        assert!(has_models, "models should be copied, got: {:?}", result.items_copied);
-        assert!(poly.path().join("models").join("whisper").join("model.bin").exists());
+        let has_models = result.items_copied.iter().any(|s| s.starts_with("models/"));
+        assert!(
+            has_models,
+            "models should be copied, got: {:?}",
+            result.items_copied
+        );
+        assert!(poly
+            .path()
+            .join("models")
+            .join("whisper")
+            .join("model.bin")
+            .exists());
         assert!(models_dir.join("model.bin").exists()); // legacy preserved
     }
 
@@ -330,7 +346,11 @@ mod tests {
         let (legacy, poly) = setup_dirs();
         let templates_dir = legacy.path().join("templates");
         fs::create_dir_all(&templates_dir).unwrap();
-        fs::write(templates_dir.join("daily_standup.json"), r#"{"name":"standup"}"#).unwrap();
+        fs::write(
+            templates_dir.join("daily_standup.json"),
+            r#"{"name":"standup"}"#,
+        )
+        .unwrap();
 
         let result = migrate_from_dir(legacy.path(), poly.path());
         let has_templates = result
@@ -338,7 +358,11 @@ mod tests {
             .iter()
             .any(|s| s.starts_with("templates/"));
         assert!(has_templates, "templates should be copied");
-        assert!(poly.path().join("templates").join("daily_standup.json").exists());
+        assert!(poly
+            .path()
+            .join("templates")
+            .join("daily_standup.json")
+            .exists());
         assert!(templates_dir.join("daily_standup.json").exists()); // legacy preserved
     }
 
@@ -353,7 +377,10 @@ mod tests {
         fs::write(poly.path().join("meeting_minutes.db"), b"NEW POLY").unwrap();
 
         let result = migrate_from_dir(legacy.path(), poly.path());
-        assert!(result.items_copied.is_empty(), "should not overwrite existing Poly data");
+        assert!(
+            result.items_copied.is_empty(),
+            "should not overwrite existing Poly data"
+        );
         assert_eq!(
             fs::read_to_string(poly.path().join("meeting_minutes.db")).unwrap(),
             "NEW POLY"

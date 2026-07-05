@@ -70,19 +70,17 @@ export function TranscriptPanel({
                     </span>
                   </Button>
                 )}
-                {transcriptModelConfig.provider === "localWhisper" &&
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => showModal('languageSettings')}
-                    title="Language"
-                  >
-                    <GlobeIcon />
-                    <span className='hidden md:inline'>
-                      Language
-                    </span>
-                  </Button>
-                }
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => showModal('languageSettings')}
+                  title="Language"
+                >
+                  <GlobeIcon />
+                  <span className='hidden md:inline'>
+                    Language
+                  </span>
+                </Button>
               </ButtonGroup>
             </div>
           </div>

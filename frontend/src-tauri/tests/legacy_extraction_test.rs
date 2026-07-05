@@ -154,7 +154,10 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
     // Summary config
     assert_eq!(loaded_cfg.summary.provider_id, "ollama");
     assert_eq!(loaded_cfg.summary.model, "llama3.2:latest");
-    assert_eq!(loaded_cfg.summary.whisper_model, "large-v3-turbo");
+    assert_eq!(
+        loaded_cfg.summary._whisper_model,
+        None
+    );
 
     // Transcript config
     assert_eq!(loaded_cfg.transcript.provider, "parakeet");
@@ -433,7 +436,10 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
     let loaded_cfg = config_repo.load().unwrap();
     assert_eq!(loaded_cfg.summary.provider_id, "ollama");
     assert_eq!(loaded_cfg.summary.model, "llama3.2:latest");
-    assert_eq!(loaded_cfg.summary.whisper_model, "large-v3-turbo");
+    assert_eq!(
+        loaded_cfg.summary._whisper_model,
+        None
+    );
     assert_eq!(loaded_cfg.transcript.provider, "parakeet");
     assert_eq!(loaded_cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
 
@@ -599,7 +605,7 @@ async fn poly_config_loads_extracted_data_after_extraction() {
 
     assert_eq!(loaded.summary.provider_id, "ollama");
     assert_eq!(loaded.summary.model, "llama3.2:latest");
-    assert_eq!(loaded.summary.whisper_model, "large-v3-turbo");
+    assert_eq!(loaded.summary._whisper_model, None);
     assert_eq!(loaded.transcript.provider, "parakeet");
     assert_eq!(loaded.transcript.model, "parakeet-tdt-0.6b-v3-int8");
 
@@ -623,7 +629,7 @@ async fn existing_poly_config_is_not_overwritten_by_load_or_create_default() {
         summary: SummaryConfig {
             provider_id: "openai".to_string(),
             model: "my-model".to_string(),
-            whisper_model: "medium".to_string(),
+            ..Default::default()
         },
         ..PolyConfig::default()
     };
@@ -635,6 +641,6 @@ async fn existing_poly_config_is_not_overwritten_by_load_or_create_default() {
 
     assert_eq!(loaded.summary.provider_id, "openai");
     assert_eq!(loaded.summary.model, "my-model");
-    assert_eq!(loaded.summary.whisper_model, "medium");
+    assert_eq!(loaded.summary._whisper_model, None);
     assert_eq!(loaded, custom_cfg);
 }

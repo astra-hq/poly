@@ -1,4 +1,4 @@
-// Tauri commands for built-in AI model management
+// Tauri commands for local AI model management
 // Exposes model download, status, and management functionality to frontend
 
 use std::sync::Arc;
@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::sync::Mutex;
 
 use super::model_manager::{DownloadProgress, ModelInfo, ModelManager};
+use super::models::{self, HfRepoVerification};
 
 const QWEN35_4B_RECOMMENDED_RAM_GB: u64 = 14;
 
@@ -50,16 +51,16 @@ pub struct ModelManagerState(pub Arc<Mutex<Option<Arc<ModelManager>>>>);
 
 /// Initialize the model manager
 pub async fn init_model_manager<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
-    let models_dir = app.path().app_data_dir()?.join("models").join("summary");
+    let models_dir = app.path().app_data_dir()?.join("models");
 
-    let manager = ModelManager::new_with_models_dir(Some(models_dir))?;
+    let manager = ModelManager::new_with_models_dir(models_dir)?;
     manager.init().await?;
 
     let state: State<ModelManagerState> = app.state();
     let mut manager_lock = state.0.lock().await;
     *manager_lock = Some(Arc::new(manager));
 
-    log::info!("Built-in AI model manager initialized");
+    log::info!("Local AI model manager initialized");
     Ok(())
 }
 
@@ -69,7 +70,7 @@ pub async fn init_model_manager<R: Runtime>(app: &AppHandle<R>) -> anyhow::Resul
 
 /// List all available built-in AI models with their status
 #[tauri::command]
-pub async fn builtin_ai_list_models<R: Runtime>(
+pub async fn local_ai_list_models<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
 ) -> Result<Vec<ModelInfo>, String> {
@@ -98,7 +99,7 @@ pub async fn builtin_ai_list_models<R: Runtime>(
 
 /// Get information about a specific model
 #[tauri::command]
-pub async fn builtin_ai_get_model_info<R: Runtime>(
+pub async fn local_ai_get_model_info<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
     model_name: String,
@@ -128,7 +129,7 @@ pub async fn builtin_ai_get_model_info<R: Runtime>(
 
 /// Download a built-in AI model with progress updates
 #[tauri::command]
-pub async fn builtin_ai_download_model<R: Runtime>(
+pub async fn local_ai_download_model<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
     model_name: String,
@@ -157,7 +158,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
     let model_name_clone = model_name.clone();
     let progress_callback = Box::new(move |progress: DownloadProgress| {
         let _ = app_clone.emit(
-            "builtin-ai-download-progress",
+            "local-ai-download-progress",
             serde_json::json!({
                 "model": model_name_clone,
                 "progress": progress.percent,
@@ -176,7 +177,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
         Ok(_) => {
             // Download task completed successfully (validation passed, status set to Available)
             let _ = app.emit(
-                "builtin-ai-download-progress",
+                "local-ai-download-progress",
                 serde_json::json!({
                     "model": model_name,
                     "progress": 100,
@@ -196,7 +197,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
             if !error_msg.starts_with("CANCELLED:") {
                 // Emit error via progress event for frontend to display (only for real errors)
                 let _ = app.emit(
-                    "builtin-ai-download-progress",
+                    "local-ai-download-progress",
                     serde_json::json!({
                         "model": model_name,
                         "progress": 0,
@@ -215,7 +216,7 @@ pub async fn builtin_ai_download_model<R: Runtime>(
 
 /// Cancel an ongoing model download
 #[tauri::command]
-pub async fn builtin_ai_cancel_download<R: Runtime>(
+pub async fn local_ai_cancel_download<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
     model_name: String,
@@ -234,7 +235,7 @@ pub async fn builtin_ai_cancel_download<R: Runtime>(
         .map_err(|e| e.to_string())?;
 
     let _ = app.emit(
-        "builtin-ai-download-progress",
+        "local-ai-download-progress",
         serde_json::json!({
             "model": model_name,
             "progress": 0,
@@ -247,7 +248,7 @@ pub async fn builtin_ai_cancel_download<R: Runtime>(
 
 /// Delete a corrupted or available model file
 #[tauri::command]
-pub async fn builtin_ai_delete_model(
+pub async fn local_ai_delete_model(
     state: State<'_, ModelManagerState>,
     model_name: String,
 ) -> Result<(), String> {
@@ -267,7 +268,7 @@ pub async fn builtin_ai_delete_model(
 
 /// Check if a model is ready to use
 #[tauri::command]
-pub async fn builtin_ai_is_model_ready<R: Runtime>(
+pub async fn local_ai_is_model_ready<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
     model_name: String,
@@ -308,7 +309,7 @@ pub async fn builtin_ai_is_model_ready<R: Runtime>(
 /// Check if any summary model is available (for onboarding)
 /// Returns the first available model name by priority, or None if no models exist
 #[tauri::command]
-pub async fn builtin_ai_get_available_summary_model<R: Runtime>(
+pub async fn local_ai_get_available_summary_model<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ModelManagerState>,
 ) -> Result<Option<String>, String> {
@@ -365,10 +366,9 @@ pub async fn init_model_manager_at_startup<R: Runtime>(app: &AppHandle<R>) -> Re
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to get app data dir: {}", e))?
-        .join("models")
-        .join("summary");
+        .join("models");
 
-    let manager = ModelManager::new_with_models_dir(Some(models_dir))
+    let manager = ModelManager::new_with_models_dir(models_dir)
         .map_err(|e| format!("Failed to create ModelManager: {}", e))?;
 
     manager
@@ -389,11 +389,68 @@ pub async fn init_model_manager_at_startup<R: Runtime>(app: &AppHandle<R>) -> Re
 /// non-macOS + <8GB RAM → qwen3.5:2b
 /// non-macOS + >=8GB RAM → qwen3.5:4b
 #[tauri::command]
-pub async fn builtin_ai_get_recommended_model() -> Result<String, String> {
+pub async fn local_ai_get_recommended_model() -> Result<String, String> {
     let recommended = get_recommended_summary_model_for_current_system()?;
 
     log::info!("Recommended summary model: {}", recommended);
     Ok(recommended.to_string())
+}
+
+/// Verify a HuggingFace repo for GGUF models.
+/// Returns structured metadata: available GGUF files with sizes and a default selection.
+#[tauri::command]
+pub async fn verify_hf_repo(repo_id: String) -> Result<HfRepoVerification, String> {
+    log::info!("Verifying HF repo: {}", repo_id);
+    models::verify_hf_repo(&repo_id)
+        .await
+        .map_err(|e| format!("HF repo verification failed: {}", e))
+}
+
+/// Add a verified custom model to the persisted registry.
+#[tauri::command]
+pub async fn add_custom_model<R: Runtime>(
+    app: AppHandle<R>,
+    repo_id: String,
+    filename: String,
+    template: String,
+    context_size: u32,
+    size_bytes: u64,
+) -> Result<(), String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+
+    match template.as_str() {
+        "gemma3" | "gemma4" | "qwen3.5_nonthinking" => {}
+        other => {
+            return Err(format!(
+                "Unsupported template '{}'. Supported templates: gemma3, gemma4, qwen3.5_nonthinking",
+                other
+            ));
+        }
+    }
+
+    log::info!(
+        "Adding custom model: {}/{} with template {}",
+        repo_id,
+        filename,
+        template
+    );
+
+    models::add_to_custom_registry(
+        &app_data_dir,
+        &repo_id,
+        &filename,
+        &template,
+        context_size,
+        size_bytes,
+    )
+    .map_err(|e| format!("Failed to add custom model: {}", e))?;
+
+    models::refresh_custom_registry_cache(&app_data_dir);
+
+    Ok(())
 }
 
 /// Get total system RAM in gigabytes

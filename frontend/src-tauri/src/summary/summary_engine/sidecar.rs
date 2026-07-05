@@ -106,203 +106,132 @@ impl SidecarManager {
 
     /// Resolve the path to llama-helper binary
     fn resolve_helper_binary() -> Result<PathBuf> {
-        // 1. Check environment variable (dev mode or manual override)
-        if let Ok(env_path) = std::env::var("MEETILY_LLAMA_HELPER") {
-            if !env_path.is_empty() {
-                let path = PathBuf::from(env_path);
-                if path.exists() {
-                    log::info!(
-                        "Using llama-helper from MEETILY_LLAMA_HELPER: {}",
-                        path.display()
-                    );
-                    return Ok(path);
-                }
-            }
-        }
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let resource_dir = std::env::var("RESOURCE_DIR").ok().map(PathBuf::from);
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from);
 
-        // In production, Tauri bundles the binary with target triple suffix
-        // 2. Check relative to current executable (most reliable for AppImage/bundled apps)
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
+        resolve_helper_binary_with_dirs(exe_dir, resource_dir, manifest_dir)
+    }
+
+    /// Get the compile-time target triple, falling back to the TARGET env var.
+    pub fn get_target_triple() -> String {
+        std::env::var("TARGET").unwrap_or_else(|_| get_default_target_triple())
+    }
+}
+
+fn get_default_target_triple() -> String {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "x86_64-unknown-linux-gnu".to_string()
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "aarch64-unknown-linux-gnu".to_string()
+    } else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        "x86_64-apple-darwin".to_string()
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        "aarch64-apple-darwin".to_string()
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "x86_64-pc-windows-msvc".to_string()
+    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        "aarch64-pc-windows-msvc".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
+/// Resolve the llama-helper binary given explicit search directories (testable).
+///
+/// Resolution order:
+/// 1. MEETILY_LLAMA_HELPER env var (manual override)
+/// 2. Executable directory (packaged app — Tauri places sidecars alongside the exe)
+/// 3. RESOURCE_DIR (Tauri-provided resource path — packaged app fallback)
+/// 4. CARGO_MANIFEST_DIR relative paths (dev workspace)
+fn resolve_helper_binary_with_dirs(
+    exe_dir: Option<PathBuf>,
+    resource_dir: Option<PathBuf>,
+    manifest_dir: Option<PathBuf>,
+) -> Result<PathBuf> {
+    // 1. Check environment variable (dev mode or manual override)
+    if let Ok(env_path) = std::env::var("MEETILY_LLAMA_HELPER") {
+        if !env_path.is_empty() {
+            let path = PathBuf::from(env_path);
+            if path.exists() {
                 log::info!(
-                    "Searching for llama-helper relative to executable: {}",
-                    exe_dir.display()
+                    "Using llama-helper from MEETILY_LLAMA_HELPER: {}",
+                    path.display()
                 );
+                return Ok(path);
+            }
+        }
+    }
 
-                // Get the target triple (same logic as before)
-                let target_triple = std::env::var("TARGET").unwrap_or_else(|_| {
-                    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                    {
-                        "x86_64-unknown-linux-gnu".to_string()
-                    }
-                    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-                    {
-                        "aarch64-unknown-linux-gnu".to_string()
-                    }
-                    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-                    {
-                        "x86_64-apple-darwin".to_string()
-                    }
-                    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                    {
-                        "aarch64-apple-darwin".to_string()
-                    }
-                    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-                    {
-                        "x86_64-pc-windows-msvc".to_string()
-                    }
-                    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-                    {
-                        "aarch64-pc-windows-msvc".to_string()
-                    }
-                    #[cfg(not(any(
-                        all(
-                            target_os = "linux",
-                            any(target_arch = "x86_64", target_arch = "aarch64")
-                        ),
-                        all(
-                            target_os = "macos",
-                            any(target_arch = "x86_64", target_arch = "aarch64")
-                        ),
-                        all(
-                            target_os = "windows",
-                            any(target_arch = "x86_64", target_arch = "aarch64")
-                        )
-                    )))]
-                    {
-                        "unknown".to_string()
-                    }
-                });
+    let target_triple = SidecarManager::get_target_triple();
+    let binary_name = if cfg!(windows) {
+        format!("llama-helper-{}.exe", target_triple)
+    } else {
+        format!("llama-helper-{}", target_triple)
+    };
 
-                let binary_name = if cfg!(windows) {
-                    format!("llama-helper-{}.exe", target_triple)
-                } else {
-                    format!("llama-helper-{}", target_triple)
-                };
+    // Helper: search a directory for llama-helper (exact + fuzzy match)
+    fn search_dir(dir: &PathBuf, binary_name: &str, label: &str) -> Option<PathBuf> {
+        log::info!("Searching for llama-helper in {}: {}", label, dir.display());
 
-                // Try exact match in exe dir
-                let bundled = exe_dir.join(&binary_name);
-                if bundled.exists() {
-                    log::info!(
-                        "Found exact match next to executable: {}",
-                        bundled.display()
-                    );
-                    return Ok(bundled);
-                }
+        // Exact match
+        let exact = dir.join(binary_name);
+        if exact.exists() {
+            log::info!("Found exact match in {}: {}", label, exact.display());
+            return Some(exact);
+        }
 
-                // Fuzzy match in exe dir
-                log::info!("Attempting fuzzy match in exe dir: {}", exe_dir.display());
-                if let Ok(entries) = std::fs::read_dir(exe_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                            if name.starts_with("llama-helper") && !name.ends_with(".d") {
-                                log::info!(
-                                    "Found fuzzy match next to executable: {}",
-                                    path.display()
-                                );
-                                return Ok(path);
-                            }
-                        }
+        // Fuzzy match
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with("llama-helper") && !name.ends_with(".d") {
+                        log::info!("Found fuzzy match in {}: {}", label, path.display());
+                        return Some(path);
                     }
                 }
             }
         }
 
-        // 3. Check bundled resources (RESOURCE_DIR) - Fallback
-        if let Ok(resource_dir) = std::env::var("RESOURCE_DIR") {
-            log::info!(
-                "Searching for llama-helper in RESOURCE_DIR: {}",
-                resource_dir
-            );
-            let resource_path = PathBuf::from(&resource_dir);
-            // Get the target triple again (or we could have shared it, but code duplication is safer for this tool usage)
-            let target_triple = std::env::var("TARGET").unwrap_or_else(|_| {
-                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                {
-                    "x86_64-unknown-linux-gnu".to_string()
-                }
-                // ... (abbreviated for brevity in thought, but must be full in tool)
-                #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-                {
-                    "aarch64-unknown-linux-gnu".to_string()
-                }
-                #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-                {
-                    "x86_64-apple-darwin".to_string()
-                }
-                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                {
-                    "aarch64-apple-darwin".to_string()
-                }
-                #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-                {
-                    "x86_64-pc-windows-msvc".to_string()
-                }
-                #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-                {
-                    "aarch64-pc-windows-msvc".to_string()
-                }
-                #[cfg(not(any(
-                    all(
-                        target_os = "linux",
-                        any(target_arch = "x86_64", target_arch = "aarch64")
-                    ),
-                    all(
-                        target_os = "macos",
-                        any(target_arch = "x86_64", target_arch = "aarch64")
-                    ),
-                    all(
-                        target_os = "windows",
-                        any(target_arch = "x86_64", target_arch = "aarch64")
-                    )
-                )))]
-                {
-                    "unknown".to_string()
-                }
-            });
+        None
+    }
 
-            let binary_name = if cfg!(windows) {
-                format!("llama-helper-{}.exe", target_triple)
-            } else {
-                format!("llama-helper-{}", target_triple)
-            };
-
-            let bundled = resource_path.join(&binary_name);
-            if bundled.exists() {
-                log::info!("Found exact match in RESOURCE_DIR: {}", bundled.display());
-                return Ok(bundled);
-            }
-
-            // Fuzzy match in RESOURCE_DIR
-            if let Ok(entries) = std::fs::read_dir(&resource_path) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name.starts_with("llama-helper") && !name.ends_with(".d") {
-                            log::info!("Found fuzzy match in RESOURCE_DIR: {}", path.display());
-                            return Ok(path);
-                        }
-                    }
-                }
-            }
-        } else {
-            log::warn!("RESOURCE_DIR environment variable not set");
+    // 2. Check relative to current executable (most reliable for AppImage/bundled apps)
+    if let Some(ref exe) = exe_dir {
+        if let Some(found) = search_dir(exe, &binary_name, "exe directory") {
+            return Ok(found);
         }
+    }
 
-        // 3. Fallback for dev: try relative paths from workspace (no target triple in dev builds)
-        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
-            let project_root = PathBuf::from(&manifest_dir)
-                .parent()
-                .and_then(|p| p.parent())
-                .ok_or_else(|| anyhow!("Failed to determine project root"))?
-                .to_path_buf();
+    // 3. Check bundled resources (RESOURCE_DIR) — Tauri-provided fallback
+    if let Some(ref res) = resource_dir {
+        log::info!(
+            "Searching for llama-helper in RESOURCE_DIR: {}",
+            res.display()
+        );
+        if let Some(found) = search_dir(res, &binary_name, "RESOURCE_DIR") {
+            return Ok(found);
+        }
+    } else {
+        log::warn!("RESOURCE_DIR environment variable not set");
+    }
 
+    // 4. Fallback for dev: try relative paths from workspace (no target triple in dev)
+    if let Some(ref manifest) = manifest_dir {
+        let project_root = manifest
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf());
+
+        if let Some(root) = project_root {
             let candidates = vec![
-                project_root.join("target/release/llama-helper"),
-                project_root.join("target/debug/llama-helper"),
-                project_root.join("target/release/llama-helper.exe"),
-                project_root.join("target/debug/llama-helper.exe"),
+                root.join("target/release/llama-helper"),
+                root.join("target/debug/llama-helper"),
+                root.join("target/release/llama-helper.exe"),
+                root.join("target/debug/llama-helper.exe"),
             ];
 
             for candidate in candidates {
@@ -312,12 +241,14 @@ impl SidecarManager {
                 }
             }
         }
-
-        Err(anyhow!(
-            "llama-helper binary not found. Build with 'cd llama-helper && cargo build --release' or set MEETILY_LLAMA_HELPER env var."
-        ))
     }
 
+    Err(anyhow!(
+        "llama-helper binary not found. Build with 'cd llama-helper && cargo build --release' or set MEETILY_LLAMA_HELPER env var."
+    ))
+}
+
+impl SidecarManager {
     /// Ensure sidecar is running, spawn if needed
     pub async fn ensure_running(&self, model_path: PathBuf) -> Result<()> {
         // Check if already running with correct model
@@ -738,5 +669,234 @@ impl Drop for SidecarManager {
         // Note: Actual cleanup happens in shutdown() method
         // We can't do async work in Drop, so this is best-effort
         log::debug!("SidecarManager dropped");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Baseline: get_target_triple returns the expected triple for this platform.
+    /// On macOS aarch64 this must be "aarch64-apple-darwin".
+    #[test]
+    fn baseline_target_triple_matches_compile_target() {
+        let triple = SidecarManager::get_target_triple();
+        assert!(!triple.is_empty(), "target triple must not be empty");
+        assert_ne!(
+            triple, "unknown",
+            "target triple must be known on this platform"
+        );
+
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(triple, "aarch64-apple-darwin");
+
+        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+        assert_eq!(triple, "x86_64-apple-darwin");
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        assert_eq!(triple, "x86_64-unknown-linux-gnu");
+
+        #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+        assert_eq!(triple, "aarch64-unknown-linux-gnu");
+    }
+
+    /// Baseline: verify the current resolution logic still works in dev mode
+    /// when CARGO_MANIFEST_DIR is available (the workspace test finds the binary
+    /// or produces a clear error).
+    #[test]
+    fn baseline_resolution_uses_hardcoded_env_vars() {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let resource_dir = std::env::var("RESOURCE_DIR").ok().map(PathBuf::from);
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok().map(PathBuf::from);
+
+        let result = resolve_helper_binary_with_dirs(exe_dir, resource_dir, manifest_dir);
+
+        match result {
+            Ok(path) => {
+                assert!(
+                    path.exists(),
+                    "resolved path must exist: {}",
+                    path.display()
+                );
+                let name = path.file_name().unwrap().to_string_lossy();
+                assert!(
+                    name.contains("llama-helper"),
+                    "must resolve to llama-helper binary"
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("llama-helper") && msg.contains("not found"),
+                    "error must mention llama-helper and not found: {}",
+                    msg
+                );
+            }
+        }
+    }
+
+    /// Failing-first proof: resolution with a mocked packaged exe directory
+    /// finds the correctly-named sidecar binary.
+    #[test]
+    fn resolution_finds_binary_in_mocked_packaged_exe_dir() {
+        let tmp = std::env::temp_dir().join("poly_sidecar_test_exe");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let triple = SidecarManager::get_target_triple();
+        let binary_name = if cfg!(windows) {
+            format!("llama-helper-{}.exe", triple)
+        } else {
+            format!("llama-helper-{}", triple)
+        };
+
+        // Create a mock binary file
+        let mock_binary = tmp.join(&binary_name);
+        std::fs::write(&mock_binary, b"mock").unwrap();
+
+        let result = resolve_helper_binary_with_dirs(Some(tmp.clone()), None, None);
+
+        assert!(
+            result.is_ok(),
+            "must find binary in exe dir: {:?}",
+            result.err()
+        );
+        let found = result.unwrap();
+        assert_eq!(
+            found, mock_binary,
+            "must resolve to the exact mock binary path"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Failing-first proof: resolution with a mocked RESOURCE_DIR finds
+    /// the binary when exe_dir doesn't have it.
+    #[test]
+    fn resolution_finds_binary_in_mocked_resource_dir() {
+        let exe_tmp = std::env::temp_dir().join("poly_sidecar_test_exe2");
+        let res_tmp = std::env::temp_dir().join("poly_sidecar_test_res2");
+        let _ = std::fs::remove_dir_all(&exe_tmp);
+        let _ = std::fs::remove_dir_all(&res_tmp);
+        std::fs::create_dir_all(&exe_tmp).unwrap();
+        std::fs::create_dir_all(&res_tmp).unwrap();
+
+        let triple = SidecarManager::get_target_triple();
+        let binary_name = if cfg!(windows) {
+            format!("llama-helper-{}.exe", triple)
+        } else {
+            format!("llama-helper-{}", triple)
+        };
+
+        // Binary in resource dir, NOT in exe dir
+        let mock_binary = res_tmp.join(&binary_name);
+        std::fs::write(&mock_binary, b"mock").unwrap();
+
+        let result =
+            resolve_helper_binary_with_dirs(Some(exe_tmp.clone()), Some(res_tmp.clone()), None);
+
+        assert!(
+            result.is_ok(),
+            "must find binary in RESOURCE_DIR: {:?}",
+            result.err()
+        );
+        let found = result.unwrap();
+        assert_eq!(
+            found, mock_binary,
+            "must resolve to the resource dir binary path"
+        );
+
+        let _ = std::fs::remove_dir_all(&exe_tmp);
+        let _ = std::fs::remove_dir_all(&res_tmp);
+    }
+
+    /// Failing-first proof: fuzzy match finds the binary when the exact
+    /// target-triple file name doesn't match but llama-helper prefix does.
+    #[test]
+    fn resolution_fuzzy_matches_binary() {
+        let tmp = std::env::temp_dir().join("poly_sidecar_test_fuzzy");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Binary with a different suffix (simulating a mismatched triple)
+        let fuzzy_binary = tmp.join("llama-helper-custom-build");
+        std::fs::write(&fuzzy_binary, b"mock").unwrap();
+
+        let result = resolve_helper_binary_with_dirs(Some(tmp.clone()), None, None);
+
+        assert!(
+            result.is_ok(),
+            "must fuzzy-match binary: {:?}",
+            result.err()
+        );
+        let found = result.unwrap();
+        assert_eq!(found, fuzzy_binary);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Missing asset reports an actionable error referencing llama-helper.
+    #[test]
+    fn missing_binary_reports_actionable_error() {
+        let empty = std::env::temp_dir().join("poly_sidecar_test_empty");
+        let _ = std::fs::remove_dir_all(&empty);
+        std::fs::create_dir_all(&empty).unwrap();
+
+        let result = resolve_helper_binary_with_dirs(Some(empty.clone()), None, None);
+
+        assert!(result.is_err(), "must fail when no binary exists");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("llama-helper") && msg.contains("not found"),
+            "error must mention llama-helper: {}",
+            msg
+        );
+        assert!(
+            msg.contains("MEETILY_LLAMA_HELPER") || msg.contains("cargo build"),
+            "error must suggest actionable fix: {}",
+            msg
+        );
+
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    /// Verify that the MEETILY_LLAMA_HELPER env var override takes priority
+    /// over all other search paths.
+    #[test]
+    fn env_var_override_takes_priority() {
+        let exe_tmp = std::env::temp_dir().join("poly_sidecar_test_env_exe");
+        let env_bin = std::env::temp_dir().join("poly_sidecar_test_env_bin");
+        let _ = std::fs::remove_dir_all(&exe_tmp);
+        let _ = std::fs::remove_file(&env_bin);
+        std::fs::create_dir_all(&exe_tmp).unwrap();
+        std::fs::write(&env_bin, b"mock").unwrap();
+
+        // Put a different binary in exe_dir — env var should win
+        let triple = SidecarManager::get_target_triple();
+        let binary_name = if cfg!(windows) {
+            format!("llama-helper-{}.exe", triple)
+        } else {
+            format!("llama-helper-{}", triple)
+        };
+        std::fs::write(exe_tmp.join(&binary_name), b"wrong").unwrap();
+
+        std::env::set_var("MEETILY_LLAMA_HELPER", env_bin.to_string_lossy().as_ref());
+
+        let result = resolve_helper_binary_with_dirs(Some(exe_tmp.clone()), None, None);
+
+        std::env::remove_var("MEETILY_LLAMA_HELPER");
+
+        assert!(
+            result.is_ok(),
+            "env var override must work: {:?}",
+            result.err()
+        );
+        assert_eq!(result.unwrap(), env_bin, "must use env var path");
+
+        let _ = std::fs::remove_dir_all(&exe_tmp);
+        let _ = std::fs::remove_file(&env_bin);
     }
 }

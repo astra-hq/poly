@@ -208,9 +208,13 @@ async fn get_models_via_http_async(endpoint: Option<&str>) -> Result<Vec<OllamaM
 }
 
 fn get_models_via_cli() -> Result<Vec<OllamaModel>, String> {
-    let output = process_path::command("ollama").arg("list").output().map_err(|e| {
-        OllamaError::NetworkError(format!("Ollama CLI not found or not in PATH: {}", e)).to_string()
-    })?;
+    let output = process_path::command("ollama")
+        .arg("list")
+        .output()
+        .map_err(|e| {
+            OllamaError::NetworkError(format!("Ollama CLI not found or not in PATH: {}", e))
+                .to_string()
+        })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

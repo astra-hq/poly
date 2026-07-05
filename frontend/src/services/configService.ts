@@ -11,9 +11,8 @@ import { TranscriptModelProps } from '@/components/TranscriptSettings';
 import type { ProviderConfig, ProviderModel } from '@/types/providers';
 
 export interface ModelConfig {
-  provider: 'ollama' | 'groq' | 'claude' | 'openrouter' | 'openai' | 'builtin-ai';
+  provider: string;
   model: string;
-  whisperModel: string;
   /**
    * @deprecated Use providerApiKeys from ConfigContext instead.
    * This field may contain stale data when provider changes without saving.
@@ -42,7 +41,7 @@ export class ConfigService {
 
   /**
    * Get saved summary model configuration
-   * @returns Promise with { provider, model, whisperModel }
+   * @returns Promise with { provider, model }
    */
   async getModelConfig(): Promise<ModelConfig> {
     return invoke<ModelConfig>('api_get_model_config');

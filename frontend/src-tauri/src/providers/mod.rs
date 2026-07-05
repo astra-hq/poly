@@ -28,6 +28,8 @@ pub enum ProviderType {
     OpenRouter,
     /// OpenAI-compatible (vLLM, Together, etc.)
     Custom,
+    /// Local LLM via llama-helper sidecar — not an HTTP endpoint.
+    Local,
 }
 
 // ── URL / auth helpers ──────────────────────────────────────────────
@@ -76,6 +78,7 @@ impl ProviderType {
             ProviderType::Ollama => "Ollama",
             ProviderType::OpenRouter => "OpenRouter",
             ProviderType::Custom => "Custom (OpenAI-compatible)",
+            ProviderType::Local => "Local",
         }
     }
 }
@@ -246,8 +249,15 @@ async fn parse_anthropic_models(response: reqwest::Response) -> Vec<ProviderMode
 fn fallback_models(provider: &ProviderConfig) -> Vec<ProviderModel> {
     let ids: &[&str] = match provider.provider_type {
         ProviderType::OpenAI => &[
-            "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo",
-            "o1", "o1-mini", "o3", "o3-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-4",
+            "gpt-3.5-turbo",
+            "o1",
+            "o1-mini",
+            "o3",
+            "o3-mini",
         ],
         ProviderType::Anthropic => &[
             "claude-sonnet-4-5-20250929",
@@ -263,6 +273,7 @@ fn fallback_models(provider: &ProviderConfig) -> Vec<ProviderModel> {
         ProviderType::Ollama => &[],
         ProviderType::OpenRouter => &[],
         ProviderType::Custom => &[&provider.default_model],
+        ProviderType::Local => &[],
     };
     ids.iter()
         .filter(|id| !id.is_empty())
@@ -272,5 +283,3 @@ fn fallback_models(provider: &ProviderConfig) -> Vec<ProviderModel> {
         })
         .collect()
 }
-
-

@@ -14,18 +14,18 @@ export function WelcomeStep() {
     },
     {
       icon: Sparkles,
-      title: 'Intelligent summaries & insights',
+      title: 'Local AI summaries & insights',
     },
     {
       icon: Cpu,
-      title: 'Works offline, no cloud required',
+      title: 'Parakeet transcription, fully offline',
     },
   ];
 
   return (
     <OnboardingContainer
       title="Welcome to Poly"
-      description="Record. Transcribe. Summarize. All on your device."
+      description="Record. Transcribe. Summarize. All on-device with Local AI and Parakeet."
       step={1}
       hideProgress={true}
     >

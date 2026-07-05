@@ -89,7 +89,6 @@ export default function PageContent({
       await invoke('api_save_model_config', {
         provider: config.provider,
         model: config.model,
-        whisperModel: config.whisperModel,
         apiKey: config.apiKey ?? null,
         ollamaEndpoint: config.ollamaEndpoint ?? null,
       });

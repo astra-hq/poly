@@ -1,5 +1,5 @@
 import React from 'react';
-import { ModelStatus } from '../lib/whisper';
+import { ModelStatus } from '../lib/parakeet';
 import { Button } from './ui/button';
 
 interface ModelDownloadProgressProps {

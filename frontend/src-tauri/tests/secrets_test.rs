@@ -217,7 +217,11 @@ fn secret_ref_serde_roundtrip_integration() {
 
 fn temp_migration_store(
     legacy_file_path: std::path::PathBuf,
-) -> (KeyringFirstSecretStore, std::path::PathBuf, tempfile::TempDir) {
+) -> (
+    KeyringFirstSecretStore,
+    std::path::PathBuf,
+    tempfile::TempDir,
+) {
     let dir = tempfile::tempdir().unwrap();
     let poly_path = dir.path().join("poly_secrets.yml");
     let store = KeyringFirstSecretStore::with_legacy(
@@ -235,7 +239,10 @@ async fn migration_store_reads_from_legacy_file_fallback() {
     let legacy_path = legacy_dir.path().join("secrets.yml");
     let legacy_store = FileSecretStore::new(legacy_path.clone());
     let key = SecretRef::new("integration/migration/fallback-key").unwrap();
-    legacy_store.set(&key, "legacy-integration-value").await.unwrap();
+    legacy_store
+        .set(&key, "legacy-integration-value")
+        .await
+        .unwrap();
 
     let (store, _poly_path, _dir) = temp_migration_store(legacy_path.clone());
 
@@ -249,7 +256,10 @@ async fn migration_store_copies_legacy_forward_to_poly_primary() {
     let legacy_path = legacy_dir.path().join("secrets.yml");
     let legacy_store = FileSecretStore::new(legacy_path.clone());
     let key = SecretRef::new("integration/migration/copy-forward-int").unwrap();
-    legacy_store.set(&key, "pre-migration-int-value").await.unwrap();
+    legacy_store
+        .set(&key, "pre-migration-int-value")
+        .await
+        .unwrap();
 
     let (store, poly_path, _dir) = temp_migration_store(legacy_path.clone());
 
