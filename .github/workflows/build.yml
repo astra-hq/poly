@@ -283,6 +283,21 @@ jobs:
 
           echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
 
+      - name: Determine Tauri build args
+        id: tauri-args
+        shell: bash
+        run: |
+          ARGS="${{ inputs.build-args }}"
+          # Only append --target if caller didn't already include it in build-args
+          if [[ -n "${{ inputs.target }}" && ! "$ARGS" =~ --target ]]; then
+            ARGS="$ARGS --target ${{ inputs.target }}"
+          fi
+          if [[ -n "${{ steps.build-features.outputs.features }}" ]]; then
+            ARGS="$ARGS ${{ steps.build-features.outputs.features }}"
+          fi
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          echo "Tauri build args: $ARGS"
+
       - name: Build llama-helper sidecar
         shell: bash
         run: |
@@ -359,7 +374,7 @@ jobs:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
-          args: ${{ inputs.build-args }} --target ${{ inputs.target }} ${{ steps.build-features.outputs.features }}
+          args: ${{ steps.tauri-args.outputs.args }}
 
       # Unsigned build — passes signing key for updater but no code signing
       # Also used as fallback on macOS when APPLE_CERTIFICATE is not set
@@ -375,7 +390,7 @@ jobs:
           tagName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseName: ${{ inputs.release-id && format('v{0}', steps.get-version.outputs.version) || '' }}
           releaseId: ${{ inputs.release-id }}
-          args: ${{ inputs.build-args }} --target ${{ inputs.target }} ${{ steps.build-features.outputs.features }}
+          args: ${{ steps.tauri-args.outputs.args }}
 
       - name: Upload artifacts (macOS)
         if: inputs.upload-artifacts && contains(inputs.platform, 'macos')
