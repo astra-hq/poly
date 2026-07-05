@@ -23,10 +23,7 @@ use crate::{
     },
     state::AppState,
     summary::summary_engine::{
-        init_model_manager,
-        model_manager::ModelStatus,
-        models::ModelType,
-        ModelManagerState,
+        init_model_manager, model_manager::ModelStatus, models::ModelType, ModelManagerState,
     },
 };
 
@@ -90,19 +87,6 @@ pub struct ModelConfig {
     /// API key status (never the raw key). Use `api_get_api_key` to fetch the raw key.
     #[serde(rename = "apiKeyStatus", skip_serializing_if = "Option::is_none")]
     pub api_key_status: Option<ApiKeyStatus>,
-    #[serde(rename = "ollamaEndpoint")]
-    pub ollama_endpoint: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SaveModelConfigRequest {
-    pub provider: String,
-    pub model: String,
-    /// Deprecated: no longer stored in config. Accepted but ignored.
-    #[serde(rename = "whisperModel", default)]
-    pub whisper_model: String,
-    #[serde(rename = "apiKey")]
-    pub api_key: Option<String>,
     #[serde(rename = "ollamaEndpoint")]
     pub ollama_endpoint: Option<String>,
 }
@@ -521,10 +505,17 @@ pub async fn api_save_model_config<R: Runtime>(
     state: tauri::State<'_, AppState>,
     provider: String,
     model: String,
-    _whisper_model: String,
+    whisper_model: Option<String>,
     api_key: Option<String>,
-    _auth_token: Option<String>,
+    ollama_endpoint: Option<String>,
+    auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    // Silence unused-parameter warnings for fields the frontend may send but
+    // that this command intentionally ignores.
+    let _ = whisper_model;
+    let _ = ollama_endpoint;
+    let _ = auth_token;
+
     log_info!(
         "api_save_model_config called (native): provider_id='{}', model='{}'",
         &provider,
@@ -638,10 +629,7 @@ async fn get_local_models<R: Runtime>(
         })
         .collect();
 
-    log_info!(
-        "Local provider: {} available summary models",
-        result.len()
-    );
+    log_info!("Local provider: {} available summary models", result.len());
 
     Ok(result)
 }
@@ -1518,4 +1506,81 @@ pub async fn api_get_secret_storage_status<R: Runtime>(
     count_secrets(&store, &cfg)
         .await
         .map_err(|e| format!("Failed to count secrets: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::{Deserialize, Serialize};
+
+    /// Mirrors the `api_save_model_config` parameter signature so we can
+    /// prove the frontend JSON payload deserializes into the exact types
+    /// Tauri will pass to the command.
+    #[derive(Debug, Serialize, Deserialize)]
+    struct SaveModelConfigArgs {
+        provider: String,
+        model: String,
+        #[serde(rename = "whisperModel")]
+        whisper_model: Option<String>,
+        #[serde(rename = "apiKey")]
+        api_key: Option<String>,
+        #[serde(rename = "ollamaEndpoint")]
+        ollama_endpoint: Option<String>,
+        #[serde(rename = "authToken")]
+        auth_token: Option<String>,
+    }
+
+    /// Regression test: the frontend sends `api_save_model_config` with
+    /// `provider`, `model`, `apiKey`, `ollamaEndpoint` but omits
+    /// `whisperModel` and `authToken`.  When the command used
+    /// `_whisper_model: String` (required), deserialization failed,
+    /// causing "Failed to save summary settings" for the Local provider.
+    ///
+    /// With `whisper_model: Option<String>` the missing field becomes None
+    /// and the command succeeds.
+    #[test]
+    fn save_model_config_args_deserialize_frontend_payload_without_whisper_model() {
+        let payload = serde_json::json!({
+            "provider": "local",
+            "model": "test-model",
+            "apiKey": null,
+            "ollamaEndpoint": null,
+        });
+
+        let args: SaveModelConfigArgs = serde_json::from_value(payload)
+            .expect("SaveModelConfigArgs must deserialize from frontend payload");
+
+        assert_eq!(args.provider, "local");
+        assert_eq!(args.model, "test-model");
+        assert_eq!(args.api_key, None);
+        assert_eq!(args.ollama_endpoint, None);
+        assert_eq!(args.whisper_model, None);
+        assert_eq!(args.auth_token, None);
+    }
+
+    /// Backward compatibility: when the frontend *does* send every field,
+    /// all values parse correctly.
+    #[test]
+    fn save_model_config_args_deserialize_full_payload() {
+        let payload = serde_json::json!({
+            "provider": "ollama",
+            "model": "llama3",
+            "whisperModel": "base",
+            "apiKey": "sk-test",
+            "ollamaEndpoint": "http://localhost:11434",
+            "authToken": "token-123",
+        });
+
+        let args: SaveModelConfigArgs = serde_json::from_value(payload)
+            .expect("SaveModelConfigArgs must deserialize full payload");
+
+        assert_eq!(args.provider, "ollama");
+        assert_eq!(args.model, "llama3");
+        assert_eq!(args.whisper_model, Some("base".to_string()));
+        assert_eq!(args.api_key, Some("sk-test".to_string()));
+        assert_eq!(
+            args.ollama_endpoint,
+            Some("http://localhost:11434".to_string())
+        );
+        assert_eq!(args.auth_token, Some("token-123".to_string()));
+    }
 }
