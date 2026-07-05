@@ -156,7 +156,7 @@ async fn legacy_sqlite_config_extraction_writes_yaml_and_secrets() {
     assert_eq!(loaded_cfg.summary.model, "llama3.2:latest");
     assert_eq!(
         loaded_cfg.summary._whisper_model,
-        Some("large-v3-turbo".to_string())
+        None
     );
 
     // Transcript config
@@ -438,7 +438,7 @@ async fn legacy_import_extracts_config_before_runtime_commands() {
     assert_eq!(loaded_cfg.summary.model, "llama3.2:latest");
     assert_eq!(
         loaded_cfg.summary._whisper_model,
-        Some("large-v3-turbo".to_string())
+        None
     );
     assert_eq!(loaded_cfg.transcript.provider, "parakeet");
     assert_eq!(loaded_cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");

@@ -20,6 +20,14 @@ default = ["updater"]
 # Auto-updater plugin (disabled for unsigned CI builds to avoid signing key requirement)
 updater = ["dep:tauri-plugin-updater"]
 
+# GPU / BLAS acceleration flags (no-op in the Tauri app itself; used by build.rs for info messages)
+coreml = []
+metal = []
+cuda = []
+vulkan = []
+openblas = []
+hipblas = []
+
 [build-dependencies]
 tauri-build = { version = "2.3.0", features = [] }
 reqwest = { version = "0.11", features = ["blocking", "multipart", "json", "stream"] }

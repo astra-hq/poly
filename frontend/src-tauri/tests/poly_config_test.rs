@@ -138,7 +138,7 @@ preferences:
     // Defaulted fields
     assert_eq!(
         cfg.summary._whisper_model,
-        Some("large-v3-turbo".to_string())
+        None
     ); // default
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8"); // default
     assert!(cfg.providers.is_empty());
@@ -157,13 +157,13 @@ fn empty_yaml_produces_all_defaults() {
     let yaml = "{}";
     let cfg: PolyConfig = serde_yaml::from_str(yaml).unwrap();
 
-    assert_eq!(cfg.summary.provider_id, "openai");
+    assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(
         cfg.summary._whisper_model,
-        Some("large-v3-turbo".to_string())
+        None
     );
-    assert_eq!(cfg.transcript.provider, "parakeet");
+    assert_eq!(cfg.transcript.provider, "local");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert!(cfg.providers.is_empty());
     assert!(cfg.knowledge_graph.profiles.is_empty());
@@ -248,7 +248,7 @@ fn save_and_load_roundtrip_via_file() {
     assert_eq!(restored.providers[0].base_url, "http://192.168.1.100:11434");
     assert_eq!(restored.summary.provider_id, "ollama");
     assert_eq!(restored.summary.model, "llama3.1:8b");
-    assert_eq!(restored.summary._whisper_model, Some("medium".to_string()));
+    assert_eq!(restored.summary._whisper_model, None);
     assert_eq!(restored.transcript.provider, "localWhisper");
     assert_eq!(restored.transcript.model, "large-v3");
     assert!(restored.knowledge_graph.profiles.is_empty());
@@ -302,7 +302,7 @@ fn kg_profile_without_secrets_excludes_api_key() {
 #[test]
 fn load_default_returns_default_config() {
     let cfg = PolyConfig::load_default();
-    assert_eq!(cfg.summary.provider_id, "openai");
+    assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.preferences.language, "auto-translate");
 }
 
@@ -311,7 +311,7 @@ fn load_from_file_missing_returns_default() {
     let cfg = PolyConfig::load_from_path(&std::path::PathBuf::from("/nonexistent/path/poly.yml"));
     assert!(cfg.is_ok(), "Missing file should return default, not error");
     let cfg = cfg.unwrap();
-    assert_eq!(cfg.summary.provider_id, "openai");
+    assert_eq!(cfg.summary.provider_id, "local");
 }
 
 // ─── Default implementations ───────────────────────────────────────────────
@@ -322,7 +322,7 @@ fn default_poly_config_has_sensible_values() {
     assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(cfg.summary._whisper_model, None);
-    assert_eq!(cfg.transcript.provider, "parakeet");
+    assert_eq!(cfg.transcript.provider, "local");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert_eq!(cfg.preferences.language, "auto-translate");
 }
@@ -428,25 +428,25 @@ fn startup_creates_default_poly_yaml_without_config_tables() {
     );
 
     // Returned config has correct defaults
-    assert_eq!(cfg.summary.provider_id, "openai");
+    assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
     assert_eq!(
         cfg.summary._whisper_model,
-        Some("large-v3-turbo".to_string())
+        None
     );
-    assert_eq!(cfg.transcript.provider, "parakeet");
+    assert_eq!(cfg.transcript.provider, "local");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert_eq!(cfg.preferences.language, "auto-translate");
 
     // Verify actual file contents
     let contents = fs::read_to_string(&file_path).unwrap();
     assert!(
-        contents.contains("openai"),
+        contents.contains("local"),
         "YAML must contain default summary provider"
     );
     assert!(
-        contents.contains("parakeet"),
-        "YAML must contain transcript provider"
+        contents.contains("parakeet-tdt-0.6b-v3-int8"),
+        "YAML must contain transcript model"
     );
     assert!(
         contents.contains("auto-translate"),
@@ -506,7 +506,7 @@ preferences:
     // Legacy values were loaded and migrated.
     assert_eq!(cfg.summary.provider_id, "ollama");
     assert_eq!(cfg.summary.model, "llama3.1:8b");
-    assert_eq!(cfg.summary._whisper_model, Some("medium".to_string()));
+    assert_eq!(cfg.summary._whisper_model, None);
     assert_eq!(cfg.transcript.provider, "localWhisper");
     assert_eq!(cfg.transcript.model, "large-v3");
     assert_eq!(cfg.preferences.language, "de");

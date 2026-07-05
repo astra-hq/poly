@@ -49,7 +49,7 @@ async fn model_config_roundtrip_via_yaml_and_secret_store() {
     assert_eq!(loaded.summary.model, "gpt-4o");
     assert_eq!(
         loaded.summary._whisper_model,
-        Some("large-v3-turbo".to_string())
+        None
     );
 
     let api_key_status = build_api_key_status(&store, &secret_ref).await.unwrap();
@@ -149,7 +149,7 @@ async fn secret_write_failure_does_not_update_yaml() {
     repo.save_atomic(&original_cfg).unwrap();
 
     let original_loaded = repo.load().unwrap();
-    assert_eq!(original_loaded.summary.provider_id, "openai");
+    assert_eq!(original_loaded.summary.provider_id, "local");
 
     // When: attempting to change provider but the YAML save itself fails
     // (simulated by using a path that isn't writable isn't easy in all envs;
@@ -215,9 +215,9 @@ fn config_defaults_work_without_any_sqlite_tables() {
     let cfg = repo.load().unwrap();
 
     // Then: defaults are returned (no SQLite tables needed)
-    assert_eq!(cfg.summary.provider_id, "openai");
+    assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
-    assert_eq!(cfg.transcript.provider, "parakeet");
+    assert_eq!(cfg.transcript.provider, "local");
 }
 
 // ─── Secret diagnostics: counts KG profile secrets from YAML ────────────────

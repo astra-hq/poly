@@ -91,6 +91,13 @@ mod tests {
     static TEST_LOCK: once_cell::sync::Lazy<StdMutex<()>> =
         once_cell::sync::Lazy::new(|| StdMutex::new(()));
 
+    static TEST_PORT_INIT: std::sync::Once = std::sync::Once::new();
+    fn init_test_port() {
+        TEST_PORT_INIT.call_once(|| {
+            std::env::set_var("POLY_BRIDGE_PORT", "11338");
+        });
+    }
+
     /// Wait for the bridge to become healthy, polling every 100ms up to a
     /// timeout.  Returns true once `bridge_health()` succeeds.
     fn wait_for_bridge(timeout_ms: u64) -> bool {
@@ -107,7 +114,7 @@ mod tests {
     /// HTTP helper with retry — handles rare cases where the bridge is still
     /// initialising its accept loop after `tiny_http::Server::http()` binds.
     fn http_get(request: &str) -> String {
-        let addr = format!("127.0.0.1:{}", DEFAULT_PORT);
+        let addr = format!("127.0.0.1:{}", get_bridge_port());
         let addr: std::net::SocketAddr = addr.parse().unwrap();
         let mut last_err = None;
         for attempt in 0..5 {
@@ -134,15 +141,20 @@ mod tests {
         );
     }
 
-    /// Baseline: no bridge server running on the default port on unchanged code.
+    /// Baseline: no bridge server running on the test port.
     #[test]
     fn baseline_no_bridge_running_on_default_port() {
-        let addr = format!("127.0.0.1:{}", DEFAULT_PORT);
+        init_test_port();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = stop_bridge();
+        std::thread::sleep(Duration::from_millis(50));
+        let port = get_bridge_port();
+        let addr = format!("127.0.0.1:{}", port);
         let result = TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(200));
         assert!(
             result.is_err(),
             "Port {} should be free before bridge is started; found a listener",
-            DEFAULT_PORT
+            port
         );
     }
 
@@ -150,7 +162,8 @@ mod tests {
     /// The endpoint must now exist and return 200 with valid embedding JSON.
     #[test]
     fn baseline_embeddings_endpoint_was_absent() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        init_test_port();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // This test documents that /v1/embeddings used to return 404.
         // After implementation, it returns 200.
         let _ = stop_bridge();
@@ -174,7 +187,7 @@ mod tests {
              Connection: close\r\n\
              \r\n\
              {}",
-            DEFAULT_PORT,
+            get_bridge_port(),
             body_str.len(),
             body_str
         );
@@ -197,7 +210,8 @@ mod tests {
     /// This test was written to fail before implementation and now passes.
     #[test]
     fn embeddings_returns_openai_compatible_format() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        init_test_port();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _ = stop_bridge();
         std::thread::sleep(Duration::from_millis(50));
         start_bridge(std::path::PathBuf::from(TEST_APP_DATA)).expect("Failed to start bridge");
@@ -219,7 +233,7 @@ mod tests {
              Connection: close\r\n\
              \r\n\
              {}",
-            DEFAULT_PORT,
+            get_bridge_port(),
             body_str.len(),
             body_str
         );
@@ -265,7 +279,8 @@ mod tests {
     /// and binding tests, then stops.
     #[test]
     fn bridge_integration_suite() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        init_test_port();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Start bridge once
         let _ = stop_bridge();
         std::thread::sleep(Duration::from_millis(50));
@@ -276,7 +291,7 @@ mod tests {
         );
 
         // Test: bridge binds loopback only
-        let loopback_addr = format!("127.0.0.1:{}", DEFAULT_PORT);
+        let loopback_addr = format!("127.0.0.1:{}", get_bridge_port());
         let loopback_result =
             TcpStream::connect_timeout(&loopback_addr.parse().unwrap(), Duration::from_secs(1));
         assert!(
@@ -288,7 +303,7 @@ mod tests {
         {
             let request = format!(
                 "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-                DEFAULT_PORT
+                get_bridge_port()
             );
             let resp = http_get(&request);
             assert!(
@@ -302,7 +317,7 @@ mod tests {
         {
             let request = format!(
                 "GET /v1/models HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-                DEFAULT_PORT
+                get_bridge_port()
             );
             let resp = http_get(&request);
             assert!(
@@ -339,7 +354,7 @@ mod tests {
                  Connection: close\r\n\
                  \r\n\
                  {}",
-                DEFAULT_PORT,
+                get_bridge_port(),
                 body_str.len(),
                 body_str
             );
@@ -374,7 +389,8 @@ mod tests {
 
     #[test]
     fn bridge_starts_with_dev_style_app_data_dir() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        init_test_port();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _ = stop_bridge();
         std::thread::sleep(Duration::from_millis(50));
 
@@ -401,7 +417,8 @@ mod tests {
 
     #[test]
     fn bridge_starts_with_mocked_packaged_app_data_dir() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        init_test_port();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _ = stop_bridge();
         std::thread::sleep(Duration::from_millis(50));
 
@@ -437,7 +454,8 @@ mod tests {
 
     #[test]
     fn bridge_health_endpoint_returns_ok_after_start() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        init_test_port();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let _ = stop_bridge();
         std::thread::sleep(Duration::from_millis(50));
         start_bridge(std::path::PathBuf::from("/tmp/poly-test-bridge-assets"))
@@ -449,7 +467,7 @@ mod tests {
 
         let request = format!(
             "GET /health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-            DEFAULT_PORT
+            get_bridge_port()
         );
         let resp = http_get(&request);
         assert!(
