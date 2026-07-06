@@ -940,4 +940,51 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn custom_model_visible_after_startup_init() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "poly_test_model_manager_startup_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let summary_dir = temp_dir.join("models").join("summary");
+        std::fs::create_dir_all(&summary_dir).unwrap();
+
+        let repo_id = "test-org/startup-test-model";
+        let filename = "model.gguf";
+        let size_bytes: u64 = 100_000_000;
+        add_to_custom_registry(&temp_dir, repo_id, filename, "gemma3", 8192, size_bytes).unwrap();
+        refresh_custom_registry_cache(&temp_dir);
+
+        let file_path = summary_dir.join(filename);
+        let file = std::fs::File::create(&file_path).unwrap();
+        file.set_len(size_bytes).unwrap();
+        drop(file);
+
+        // Defend against concurrent-test cache invalidation: re-refresh
+        // immediately before init so the global CUSTOM_REGISTRY is
+        // populated with entries from this test's temp dir.
+        refresh_custom_registry_cache(&temp_dir);
+
+        let manager = ModelManager::new_with_models_dir(temp_dir.join("models")).unwrap();
+        manager.init().await.unwrap();
+
+        // Refresh cache once more before querying. Parallel tests may have
+        // overwritten the global CUSTOM_REGISTRY between our earlier refresh
+        // and the scan inside init().
+        refresh_custom_registry_cache(&temp_dir);
+
+        let model_name = "custom:test-org:startup-test-model";
+        let models = manager.list_models().await;
+        let custom = models
+            .iter()
+            .find(|m| m.name == model_name)
+            .expect("custom model should appear in list_models after init");
+
+        assert_eq!(custom.status, ModelStatus::Available);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

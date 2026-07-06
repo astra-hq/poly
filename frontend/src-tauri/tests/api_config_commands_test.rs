@@ -139,6 +139,48 @@ async fn custom_provider_config_roundtrip_via_yaml_and_secret_store() {
     assert!(secret_exists, "SecretStore should have the API key");
 }
 
+#[tokio::test]
+async fn provider_config_roundtrip() {
+    let (repo, _repo_dir) = temp_config_repo();
+    let (store, _store_dir) = temp_secret_store();
+
+    let provider = ProviderConfig {
+        id: "test-provider".to_string(),
+        name: "Test".to_string(),
+        provider_type: ProviderType::Custom,
+        base_url: "https://example.com/v1".to_string(),
+        default_model: "model".to_string(),
+    };
+    let secret_ref = refs::summary_provider_key(&provider.id);
+
+    store.set(&secret_ref, "sk-test-provider").await.unwrap();
+
+    let mut cfg = PolyConfig::default();
+    cfg.providers.push(provider.clone());
+    repo.save_atomic(&cfg).unwrap();
+
+    let loaded = repo.load().unwrap();
+    let saved_provider = loaded.find_provider(&provider.id).unwrap();
+    assert_eq!(saved_provider.id, provider.id);
+    assert_eq!(saved_provider.name, provider.name);
+    assert_eq!(saved_provider.provider_type, ProviderType::Custom);
+    assert_eq!(saved_provider.base_url, provider.base_url);
+    assert_eq!(saved_provider.default_model, provider.default_model);
+
+    let secret_exists = store.exists(&secret_ref).await.unwrap();
+    assert!(secret_exists, "provider API key should be stored in SecretStore");
+
+    let mut cfg = loaded;
+    cfg.providers.retain(|p| p.id != provider.id);
+    repo.save_atomic(&cfg).unwrap();
+
+    let reloaded = repo.load().unwrap();
+    assert!(
+        reloaded.find_provider(&provider.id).is_none(),
+        "provider should be removed from config"
+    );
+}
+
 // ─── Fail-fast: API key save failure must not update YAML ────────────────────
 
 #[tokio::test]
