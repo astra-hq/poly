@@ -971,6 +971,11 @@ mod tests {
         let manager = ModelManager::new_with_models_dir(temp_dir.join("models")).unwrap();
         manager.init().await.unwrap();
 
+        // Refresh cache once more before querying. Parallel tests may have
+        // overwritten the global CUSTOM_REGISTRY between our earlier refresh
+        // and the scan inside init().
+        refresh_custom_registry_cache(&temp_dir);
+
         let model_name = "custom:test-org:startup-test-model";
         let models = manager.list_models().await;
         let custom = models
