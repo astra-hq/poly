@@ -952,7 +952,7 @@ mod tests {
         let summary_dir = temp_dir.join("models").join("summary");
         std::fs::create_dir_all(&summary_dir).unwrap();
 
-        let repo_id = "test-org/test-model";
+        let repo_id = "test-org/startup-test-model";
         let filename = "model.gguf";
         let size_bytes: u64 = 100_000_000;
         add_to_custom_registry(&temp_dir, repo_id, filename, "gemma3", 8192, size_bytes).unwrap();
@@ -971,7 +971,7 @@ mod tests {
         let manager = ModelManager::new_with_models_dir(temp_dir.join("models")).unwrap();
         manager.init().await.unwrap();
 
-        let model_name = "custom:test-org:test-model";
+        let model_name = "custom:test-org:startup-test-model";
         let models = manager.list_models().await;
         let custom = models
             .iter()
