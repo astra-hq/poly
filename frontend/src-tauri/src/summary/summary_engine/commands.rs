@@ -362,15 +362,14 @@ pub async fn local_ai_get_available_summary_model<R: Runtime>(
 // ============================================================================
 
 pub async fn init_model_manager_at_startup<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let models_dir = app
+    let app_data_dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?
-        .join("models");
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
 
-    if let Ok(app_data_dir) = app.path().app_data_dir() {
-        models::refresh_custom_registry_cache(&app_data_dir);
-    }
+    models::refresh_custom_registry_cache(&app_data_dir);
+
+    let models_dir = app_data_dir.join("models");
 
     let manager = ModelManager::new_with_models_dir(models_dir)
         .map_err(|e| format!("Failed to create ModelManager: {}", e))?;

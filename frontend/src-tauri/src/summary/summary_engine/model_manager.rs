@@ -959,8 +959,8 @@ mod tests {
         refresh_custom_registry_cache(&temp_dir);
 
         let file_path = summary_dir.join(filename);
-        let mut file = std::fs::File::create(&file_path).unwrap();
-        file.write_all(&vec![0u8; size_bytes as usize]).unwrap();
+        let file = std::fs::File::create(&file_path).unwrap();
+        file.set_len(size_bytes).unwrap();
         drop(file);
 
         // Defend against concurrent-test cache invalidation: re-refresh

@@ -140,7 +140,7 @@ async fn custom_provider_config_roundtrip_via_yaml_and_secret_store() {
 }
 
 #[tokio::test]
-async fn provider_commands_roundtrip() {
+async fn provider_config_roundtrip() {
     let (repo, _repo_dir) = temp_config_repo();
     let (store, _store_dir) = temp_secret_store();
 

@@ -374,7 +374,7 @@ export function ProviderSettings() {
       {hasProviders && (
         <div className="space-y-3">
           {(() => {
-            const localProvider = providers.find((p) => p.id === 'local' || p.type === 'local');
+            const localProvider = providers.find((p) => p.id === 'local');
             const otherProviders = providers.filter((p) => p.id !== 'local');
 
             return (
