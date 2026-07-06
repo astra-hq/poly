@@ -483,10 +483,6 @@ pub fn run() {
                         log::warn!("ModelManager will be lazy-initialized on first use");
                     }
                 }
-
-                if let Ok(app_data_dir) = app_handle_for_model_manager.path().app_data_dir() {
-                    summary::summary_engine::models::refresh_custom_registry_cache(&app_data_dir);
-                }
             });
 
             // Trigger system audio permission request on startup (similar to microphone permission)

@@ -368,6 +368,10 @@ pub async fn init_model_manager_at_startup<R: Runtime>(app: &AppHandle<R>) -> Re
         .map_err(|e| format!("Failed to get app data dir: {}", e))?
         .join("models");
 
+    if let Ok(app_data_dir) = app.path().app_data_dir() {
+        models::refresh_custom_registry_cache(&app_data_dir);
+    }
+
     let manager = ModelManager::new_with_models_dir(models_dir)
         .map_err(|e| format!("Failed to create ModelManager: {}", e))?;
 
