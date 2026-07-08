@@ -27,6 +27,8 @@ use super::{
     RecordingManager,
 };
 
+use crate::calendar::recording_metadata::CalendarRecordingContext;
+
 // Import transcription modules
 use super::transcription::{self, reset_speech_detected_flag};
 
@@ -69,13 +71,14 @@ pub struct TranscriptionStatus {
 
 /// Start recording with default devices
 pub async fn start_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    start_recording_with_meeting_name(app, None).await
+    start_recording_with_meeting_name(app, None, None).await
 }
 
-/// Start recording with default devices and optional meeting name
+/// Start recording with default devices, optional meeting name, and optional calendar context
 pub async fn start_recording_with_meeting_name<R: Runtime>(
     app: AppHandle<R>,
     meeting_name: Option<String>,
+    calendar_context: Option<CalendarRecordingContext>,
 ) -> Result<(), String> {
     info!(
         "Starting recording with default devices, meeting: {:?}",
@@ -255,6 +258,11 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
 
+    // Store calendar context if provided (writes to metadata.json when folder exists)
+    if let Some(ctx) = calendar_context {
+        manager.set_calendar_context(ctx);
+    }
+
     // Store the manager globally to keep it alive
     {
         let mut global_manager = RECORDING_MANAGER.lock().unwrap();
@@ -332,15 +340,17 @@ pub async fn start_recording_with_devices<R: Runtime>(
     mic_device_name: Option<String>,
     system_device_name: Option<String>,
 ) -> Result<(), String> {
-    start_recording_with_devices_and_meeting(app, mic_device_name, system_device_name, None).await
+    start_recording_with_devices_and_meeting(app, mic_device_name, system_device_name, None, None)
+        .await
 }
 
-/// Start recording with specific devices and optional meeting name
+/// Start recording with specific devices, optional meeting name, and optional calendar context
 pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
     app: AppHandle<R>,
     mic_device_name: Option<String>,
     system_device_name: Option<String>,
     meeting_name: Option<String>,
+    calendar_context: Option<CalendarRecordingContext>,
 ) -> Result<(), String> {
     info!(
         "Starting recording with specific devices: mic={:?}, system={:?}, meeting={:?}",
@@ -433,7 +443,12 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         .await
         .map_err(|e| format!("Failed to start recording: {}", e))?;
 
-    // Store the manager globally to keep it alive
+    // Store calendar context if provided (writes to metadata.json when folder exists)
+    if let Some(ctx) = calendar_context {
+        manager.set_calendar_context(ctx);
+    }
+
+    // Store the manager globally to keep it alive (devices_and_meeting variant)
     {
         let mut global_manager = RECORDING_MANAGER.lock().unwrap();
         *global_manager = Some(manager);
@@ -827,12 +842,15 @@ pub async fn stop_recording<R: Runtime>(
     );
 
     // Perform final cleanup with the manager if available
-    let (meeting_folder, meeting_name) = if let Some(mut manager) = manager_for_cleanup {
+    let (meeting_folder, meeting_name, calendar_context) = if let Some(mut manager) =
+        manager_for_cleanup
+    {
         info!("🧹 Performing final cleanup and saving recording data");
 
         // Extract meeting info BEFORE async operations
         let meeting_folder = manager.get_meeting_folder();
         let meeting_name = manager.get_meeting_name();
+        let calendar_context = manager.get_calendar_context().cloned();
 
         match tokio::time::timeout(
             tokio::time::Duration::from_secs(300), // 5 minutes max for file I/O
@@ -856,10 +874,10 @@ pub async fn stop_recording<R: Runtime>(
             }
         }
 
-        (meeting_folder, meeting_name)
+        (meeting_folder, meeting_name, calendar_context)
     } else {
         info!("ℹ️ No recording manager available for cleanup");
-        (None, None)
+        (None, None, None)
     };
 
     // Set recording flag to false
@@ -891,13 +909,14 @@ pub async fn stop_recording<R: Runtime>(
         }),
     );
 
-    // Emit final stop event with folder_path and meeting_name for frontend to save
+    // Emit final stop event with folder_path, meeting_name, and calendar_context for frontend to save
     app.emit(
         "recording-stopped",
         serde_json::json!({
             "message": "Recording stopped - frontend will save after all transcripts received",
             "folder_path": folder_path_str,
-            "meeting_name": meeting_name_str
+            "meeting_name": meeting_name_str,
+            "calendar_context": calendar_context,
         }),
     )
     .map_err(|e| e.to_string())?;
@@ -1042,6 +1061,25 @@ pub async fn get_meeting_folder_path() -> Result<Option<String>, String> {
             .map(|p| p.to_string_lossy().to_string()))
     } else {
         Ok(None)
+    }
+}
+
+/// Attach calendar metadata to the active recording (called by the scheduler).
+pub(crate) fn set_calendar_context_on_active_recording(
+    context: crate::calendar::recording_metadata::CalendarRecordingContext,
+) {
+    match RECORDING_MANAGER.lock() {
+        Ok(mut guard) => {
+            if let Some(manager) = guard.as_mut() {
+                manager.set_calendar_context(context);
+            }
+        }
+        Err(e) => {
+            warn!(
+                "Failed to lock recording manager for calendar context: {}",
+                e
+            );
+        }
     }
 }
 

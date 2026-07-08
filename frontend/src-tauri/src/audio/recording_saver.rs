@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
+
+use crate::calendar::recording_metadata::CalendarRecordingContext;
 
 use super::audio_processing::create_meeting_folder;
 use super::incremental_saver::IncrementalAudioSaver;
@@ -52,6 +54,7 @@ pub struct RecordingSaver {
     meeting_folder: Option<PathBuf>,
     meeting_name: Option<String>,
     metadata: Option<MeetingMetadata>,
+    calendar_context: Option<CalendarRecordingContext>,
     transcript_segments: Arc<Mutex<Vec<TranscriptSegment>>>,
     chunk_receiver: Option<mpsc::UnboundedReceiver<AudioChunk>>,
     is_saving: Arc<Mutex<bool>>,
@@ -64,6 +67,7 @@ impl RecordingSaver {
             meeting_folder: None,
             meeting_name: None,
             metadata: None,
+            calendar_context: None,
             transcript_segments: Arc::new(Mutex::new(Vec::new())),
             chunk_receiver: None,
             is_saving: Arc::new(Mutex::new(false)),
@@ -87,6 +91,26 @@ impl RecordingSaver {
                 if let Err(e) = self.write_metadata(folder, &metadata_clone) {
                     warn!("Failed to update metadata with device info: {}", e);
                 }
+            }
+        }
+    }
+
+    /// Set calendar context for this recording session.
+    ///
+    /// Safe fields only: provider kind, event id, occurrence start/end, event
+    /// title, and metadata status.  No attendees, body, meeting link, or raw
+    /// provider payloads.
+    ///
+    /// If a meeting folder already exists the context is written to disk
+    /// immediately using the atomic preserve-unknown-fields pattern.
+    pub fn set_calendar_context(&mut self, context: CalendarRecordingContext) {
+        self.calendar_context = Some(context.clone());
+
+        if let Some(folder) = &self.meeting_folder {
+            if let Err(e) = crate::calendar::recording_metadata::write_calendar_context_to_metadata(
+                folder, &context,
+            ) {
+                warn!("Failed to write calendar context to metadata: {}", e);
             }
         }
     }
@@ -300,14 +324,57 @@ impl RecordingSaver {
         Ok(())
     }
 
-    /// Write metadata.json to disk (atomic write with temp file)
+    /// Write metadata.json to disk using atomic read-merge-write.
+    ///
+    /// Reads the existing file, merges MeetingMetadata fields on top, and
+    /// preserves every top-level key that MeetingMetadata does not own
+    /// (e.g. calendar_context, summary_language).
     fn write_metadata(&self, folder: &PathBuf, metadata: &MeetingMetadata) -> Result<()> {
         let metadata_path = folder.join("metadata.json");
-        let temp_path = folder.join(".metadata.json.tmp");
+        let temp_path = folder.join(format!(".metadata.json.{}.tmp", uuid::Uuid::new_v4()));
 
-        let json_string = serde_json::to_string_pretty(metadata)?;
+        // Read existing metadata as a generic JSON value to preserve unknown fields
+        let mut value: serde_json::Value = if metadata_path.exists() {
+            let raw = std::fs::read_to_string(&metadata_path)
+                .with_context(|| format!("Failed to read {}", metadata_path.display()))?;
+            serde_json::from_str(&raw)
+                .with_context(|| format!("Failed to parse {}", metadata_path.display()))?
+        } else {
+            serde_json::Value::Object(serde_json::Map::new())
+        };
+
+        if !value.is_object() {
+            warn!("metadata.json is not a JSON object; replacing with fresh metadata");
+            value = serde_json::Value::Object(serde_json::Map::new());
+        }
+
+        // Serialize MeetingMetadata and merge its keys, overwriting same-name keys
+        let meeting_json = serde_json::to_value(metadata)?;
+        if let (Some(dst), Some(src)) = (value.as_object_mut(), meeting_json.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+
+        // If calendar context is set, ensure it's present (prefer existing from
+        // direct write via set_calendar_context, but ensure it's not lost)
+        if let Some(ref cc) = self.calendar_context {
+            let calendar_value = serde_json::json!({
+                "provider_kind": cc.provider_kind,
+                "event_id": cc.event_id,
+                "occurrence_start": cc.occurrence_start,
+                "occurrence_end": cc.occurrence_end,
+                "event_title": cc.event_title,
+                "metadata_status": cc.metadata_status,
+            });
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("calendar_context".to_string(), calendar_value);
+            }
+        }
+
+        let json_string = serde_json::to_string_pretty(&value)?;
         std::fs::write(&temp_path, json_string)?;
-        std::fs::rename(&temp_path, &metadata_path)?; // Atomic
+        std::fs::rename(&temp_path, &metadata_path)?;
 
         Ok(())
     }
@@ -514,6 +581,11 @@ impl RecordingSaver {
     /// Get the meeting folder path (for passing to backend)
     pub fn get_meeting_folder(&self) -> Option<&PathBuf> {
         self.meeting_folder.as_ref()
+    }
+
+    /// Get the calendar context stored for this recording session.
+    pub fn get_calendar_context(&self) -> Option<&CalendarRecordingContext> {
+        self.calendar_context.as_ref()
     }
 
     /// Get accumulated transcript segments (for reload sync)
