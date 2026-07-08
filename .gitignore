@@ -83,3 +83,8 @@ kg.env
 frontend/src-tauri/binaries/
 .omo
 .playwright-mcp
+
+# Playwright test artifacts
+frontend/.playwright-report/
+frontend/.playwright-results/
+frontend/test-results/
