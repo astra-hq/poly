@@ -130,3 +130,24 @@ pub struct TranscriptSetting {
     #[serde(rename = "openaiApiKey")]
     pub openai_api_key: Option<String>,
 }
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct MeetingCalendarMetadata {
+    pub meeting_id: String,
+    pub provider_kind: String,
+    pub provider_event_id: String,
+    pub occurrence_start_utc: String,
+    pub occurrence_end_utc: String,
+    pub event_title: Option<String>,
+    pub organizer_email: Option<String>,
+    pub organizer_display_name: Option<String>,
+    pub attendees_json: Option<String>,
+    pub invite_body: Option<String>,
+    pub meeting_url: Option<String>,
+    pub location: Option<String>,
+    pub source_provider_kind: Option<String>,
+    pub source_calendar_id: Option<String>,
+    pub metadata_status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
