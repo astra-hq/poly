@@ -108,3 +108,20 @@ export interface TranscriptSegmentData {
   text: string;
   confidence?: number;
 }
+
+// Calendar metadata linked to a meeting
+export interface CalendarMetadataRequest {
+  provider_kind: string;
+  provider_event_id: string;
+  occurrence_start_utc: string;
+  occurrence_end_utc: string;
+  event_title?: string;
+  organizer_email?: string;
+  organizer_display_name?: string;
+  attendees_json?: string;
+  invite_body?: string;
+  meeting_url?: string;
+  location?: string;
+  source_provider_kind?: string;
+  source_calendar_id?: string;
+}

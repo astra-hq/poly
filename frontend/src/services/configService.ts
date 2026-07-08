@@ -26,6 +26,58 @@ export interface RecordingPreferences {
   preferred_system_device: string | null;
 }
 
+export type CalendarProvider = 'apple';
+
+export interface CalendarConfig {
+  readonly metadata_pull_enabled: boolean;
+  readonly auto_record_enabled: boolean;
+  readonly provider: CalendarProvider;
+  readonly lookahead_window_minutes: number;
+  readonly start_grace_window_minutes: number;
+  readonly end_grace_window_minutes: number;
+  readonly selected_apple_calendar_identifiers: readonly string[];
+  readonly show_calendar_status: boolean;
+  readonly show_next_meeting_banner: boolean;
+}
+
+export type CalendarPermissionStatus =
+  | 'not_determined'
+  | 'restricted'
+  | 'denied'
+  | 'authorized'
+  | 'full_access'
+  | 'write_only'
+  | 'unsupported_platform'
+  | 'unknown';
+
+export interface CalendarProviderHealth {
+  readonly provider: string;
+  readonly platform_supported: boolean;
+  readonly permission_granted: boolean;
+  readonly permission_status: CalendarPermissionStatus;
+  readonly event_count: number | null;
+  readonly error: string | null;
+}
+
+export interface CalendarCandidate {
+  readonly id: string;
+  readonly occurrence_key: string;
+  readonly title: string;
+  readonly start: string;
+  readonly end: string;
+  readonly calendar_id: string;
+  readonly meeting_link: string | null;
+  readonly is_cancelled: boolean;
+  readonly category: string;
+  readonly response_status: string;
+  readonly eligible: boolean;
+  readonly ineligibility_reason: string | null;
+}
+
+export interface CalendarCandidatesResponse {
+  readonly candidates: CalendarCandidate[];
+}
+
 /**
  * Configuration Service
  * Singleton service for managing app configuration
@@ -53,6 +105,34 @@ export class ConfigService {
    */
   async getRecordingPreferences(): Promise<RecordingPreferences> {
     return invoke<RecordingPreferences>('get_recording_preferences');
+  }
+
+  async getCalendarSettings(): Promise<CalendarConfig> {
+    return invoke<CalendarConfig>('get_calendar_settings');
+  }
+
+  async saveCalendarSettings(settings: CalendarConfig): Promise<CalendarConfig> {
+    return invoke<CalendarConfig>('save_calendar_settings', { settings });
+  }
+
+  async getCalendarPermissionStatus(): Promise<CalendarPermissionStatus> {
+    return invoke<CalendarPermissionStatus>('get_calendar_permission_status');
+  }
+
+  async requestCalendarPermission(): Promise<CalendarPermissionStatus> {
+    return invoke<CalendarPermissionStatus>('request_calendar_permission');
+  }
+
+  async getCalendarProviderHealth(): Promise<CalendarProviderHealth> {
+    return invoke<CalendarProviderHealth>('get_calendar_provider_health');
+  }
+
+  async getUpcomingCalendarCandidates(): Promise<CalendarCandidatesResponse> {
+    return invoke<CalendarCandidatesResponse>('get_upcoming_calendar_candidates');
+  }
+
+  async getSelectedCalendars(): Promise<string[]> {
+    return invoke<string[]>('get_selected_calendars');
   }
 
   /**

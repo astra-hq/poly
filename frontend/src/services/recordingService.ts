@@ -16,10 +16,20 @@ export interface RecordingState {
   active_duration: number | null;
 }
 
+export interface CalendarRecordingContextPayload {
+  provider_kind: string;
+  event_id: string;
+  occurrence_start: string;
+  occurrence_end: string;
+  event_title: string;
+  metadata_status: string;
+}
+
 export interface RecordingStoppedPayload {
   message: string;
   folder_path?: string;
   meeting_name?: string;
+  calendar_context?: CalendarRecordingContextPayload;
 }
 
 /**
