@@ -96,6 +96,7 @@ impl LegacyConfigExtractor {
             transcript,
             knowledge_graph,
             preferences: PreferencesConfig::default(),
+            calendar: Default::default(),
         })
     }
 
