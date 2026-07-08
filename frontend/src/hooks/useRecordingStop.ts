@@ -8,6 +8,8 @@ import { useRecordingState, RecordingStatus } from '@/contexts/RecordingStateCon
 import { storageService } from '@/services/storageService';
 import { transcriptService } from '@/services/transcriptService';
 import { knowledgeGraphService } from '@/services/knowledgeGraphService';
+import type { CalendarRecordingContextPayload } from '@/services/recordingService';
+import type { CalendarMetadataRequest } from '@/types';
 import Analytics from '@/lib/analytics';
 import {
   applyPinnedSummaryLanguageToMeeting,
@@ -15,6 +17,18 @@ import {
 } from '@/lib/summary-language-preferences';
 
 type SummaryStatus = 'idle' | 'processing' | 'summarizing' | 'regenerating' | 'completed' | 'error';
+
+function calendarContextToMetadataRequest(
+  ctx: CalendarRecordingContextPayload
+): CalendarMetadataRequest {
+  return {
+    provider_kind: ctx.provider_kind,
+    provider_event_id: ctx.event_id,
+    occurrence_start_utc: ctx.occurrence_start,
+    occurrence_end_utc: ctx.occurrence_end,
+    event_title: ctx.event_title,
+  };
+}
 
 interface UseRecordingStopReturn {
   handleRecordingStop: (callApi: boolean) => Promise<void>;
@@ -88,10 +102,11 @@ export function useRecordingStop(
           message: string;
           folder_path?: string;
           meeting_name?: string;
+          calendar_context?: CalendarRecordingContextPayload;
         }>('recording-stopped', async (event) => {
           // Create promise that resolves when sessionStorage is set (prevents race condition)
           recordingStoppedDataRef.current = (async () => {
-            const { folder_path, meeting_name } = event.payload;
+            const { folder_path, meeting_name, calendar_context } = event.payload;
 
             // Store folder_path and meeting_name for later use in handleRecordingStop
             if (folder_path) {
@@ -99,6 +114,12 @@ export function useRecordingStop(
             }
             if (meeting_name) {
               sessionStorage.setItem('last_recording_meeting_name', meeting_name);
+            }
+            if (calendar_context) {
+              sessionStorage.setItem(
+                'last_recording_calendar_context',
+                JSON.stringify(calendar_context)
+              );
             }
           })();
 
@@ -255,10 +276,24 @@ export function useRecordingStop(
         });
 
         try {
+          // Parse calendar context if available from scheduler-started recording
+          let calendarMetadata: CalendarMetadataRequest | undefined;
+          const calendarContextRaw = sessionStorage.getItem('last_recording_calendar_context');
+          if (calendarContextRaw) {
+            try {
+              const ctx: CalendarRecordingContextPayload = JSON.parse(calendarContextRaw);
+              calendarMetadata = calendarContextToMetadataRequest(ctx);
+              console.log('📅 Calendar metadata available for save:', calendarMetadata);
+            } catch {
+              console.warn('Failed to parse calendar context from session storage');
+            }
+          }
+
           const responseData = await storageService.saveMeeting(
             savedMeetingName || meetingTitle || 'New Meeting',  // PREFER savedMeetingName (backend source)
             freshTranscripts,
-            folderPath
+            folderPath,
+            calendarMetadata
           );
 
           const meetingId = responseData.meeting_id;
@@ -314,6 +349,7 @@ export function useRecordingStop(
           // Clean up session storage
           sessionStorage.removeItem('last_recording_folder_path');
           sessionStorage.removeItem('last_recording_meeting_name');
+          sessionStorage.removeItem('last_recording_calendar_context');
           // Clean up IndexedDB meeting ID (redundant with markMeetingAsSaved cleanup, but ensures cleanup)
           sessionStorage.removeItem('indexeddb_current_meeting_id');
 
