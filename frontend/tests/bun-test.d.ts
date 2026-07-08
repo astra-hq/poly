@@ -22,12 +22,15 @@ declare module 'bun:test' {
     toBeArray(): void;
     toBeDefined(): void;
     toBeGreaterThan(expected: number): void;
+    toBeNull(): void;
     toBeNumber(): void;
     toBeString(): void;
     toBeUndefined(): void;
     toContain(expected: string | number): void;
     toHaveBeenCalledTimes(expected: number): void;
     toHaveBeenCalledWith(...expected: readonly unknown[]): void;
+    toHaveProperty(key: string, value?: unknown): void;
+    toMatch(expected: string | RegExp): void;
     toThrow(expected?: string | RegExp | Error): void;
   }
 
