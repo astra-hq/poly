@@ -39,6 +39,7 @@ pub mod anthropic;
 pub mod api;
 pub mod app_data;
 pub mod audio;
+pub mod calendar;
 pub mod config;
 pub mod console_utils;
 pub mod database;
@@ -110,6 +111,7 @@ async fn start_recording<R: Runtime>(
         mic_device_name,
         system_device_name,
         meeting_name.clone(),
+        None, // no calendar context for manual start
     )
     .await
     {
@@ -320,8 +322,12 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 "No devices specified, starting with defaults and meeting: {:?}",
                 meeting_name
             );
-            audio::recording_commands::start_recording_with_meeting_name(app.clone(), meeting_name)
-                .await
+            audio::recording_commands::start_recording_with_meeting_name(
+                app.clone(),
+                meeting_name,
+                None, // no calendar context for manual start with defaults
+            )
+            .await
         }
         _ => {
             log_info!(
@@ -335,6 +341,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 mic_device_name,
                 system_device_name,
                 meeting_name,
+                None, // no calendar context for manual start with devices
             )
             .await
         }
@@ -500,6 +507,21 @@ pub fn run() {
                 database::setup::initialize_database_on_startup(&_app.handle()).await
             })
             .expect("Failed to initialize database");
+
+            // Initialize calendar auto-record scheduler
+            {
+                let app_handle = _app.handle().clone();
+                let config_repo = app_handle
+                    .state::<state::AppState>()
+                    .config_repo
+                    .clone();
+                let scheduler = Arc::new(calendar::scheduler::CalendarRecordingScheduler::new(
+                    Arc::new(config_repo),
+                ));
+                tauri::async_runtime::spawn(async move {
+                    scheduler.start(app_handle).await;
+                });
+            }
 
             // Initialize bundled templates directory for dynamic template discovery
             log::info!("Initializing bundled templates directory...");
@@ -718,6 +740,14 @@ pub fn run() {
             audio::permissions::check_screen_recording_permission_command,
             audio::permissions::request_screen_recording_permission_command,
             audio::permissions::trigger_system_audio_permission_command,
+            calendar::apple_calendar::check_calendar_permission,
+            calendar::commands::get_calendar_settings,
+            calendar::commands::save_calendar_settings,
+            calendar::commands::get_calendar_permission_status,
+            calendar::commands::request_calendar_permission,
+            calendar::commands::get_calendar_provider_health,
+            calendar::commands::get_upcoming_calendar_candidates,
+            calendar::commands::get_selected_calendars,
             // Database import commands
             database::commands::check_first_launch,
             database::commands::select_legacy_database_path,
