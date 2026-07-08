@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion';
 import { useRecordingState } from '@/contexts/RecordingStateContext';
+import { CalendarSchedulerStatus } from '@/components/CalendarSchedulerStatus';
 import { useEffect, useState } from 'react';
 
 interface RecordingStatusBarProps {
@@ -9,17 +10,11 @@ interface RecordingStatusBarProps {
 }
 
 export const RecordingStatusBar: React.FC<RecordingStatusBarProps> = ({ isPaused = false }) => {
-  // Get recording duration from backend-synced context (in seconds)
-  // Backend polls every 500ms, providing smooth updates
-  const { activeDuration, isRecording } = useRecordingState();
-
-  // Display state synced from backend
+  const { activeDuration, isRecording, schedulerStatus } = useRecordingState();
   const [displaySeconds, setDisplaySeconds] = useState(0);
 
-  // Sync with backend duration when it changes (handles refresh/navigation)
   useEffect(() => {
     if (activeDuration !== null) {
-      // Round to nearest second to avoid decimal issues
       setDisplaySeconds(Math.floor(activeDuration));
     }
   }, [activeDuration]);
@@ -29,6 +24,12 @@ export const RecordingStatusBar: React.FC<RecordingStatusBarProps> = ({ isPaused
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  if (!isRecording && schedulerStatus) {
+    return (
+      <CalendarSchedulerStatus status={schedulerStatus} />
+    );
+  }
 
   return (
     <motion.div
