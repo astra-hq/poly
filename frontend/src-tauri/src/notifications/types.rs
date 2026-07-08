@@ -20,9 +20,12 @@ pub enum NotificationType {
     RecordingPaused,
     RecordingResumed,
     TranscriptionComplete,
-    MeetingReminder(u64), // Duration in minutes
+    MeetingReminder(u64),
     SystemError(String),
-    Test, // For testing notifications
+    CalendarAutoRecordStarted,
+    CalendarAutoRecordSkipped,
+    CalendarSchedulerError,
+    Test,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,5 +209,36 @@ impl Notification {
         )
         .with_priority(NotificationPriority::Normal)
         .with_timeout(NotificationTimeout::Seconds(5))
+    }
+
+    pub fn calendar_auto_record_started() -> Self {
+        Notification::new(
+            "Poly",
+            "A scheduled meeting is now being recorded automatically.",
+            NotificationType::CalendarAutoRecordStarted,
+        )
+        .with_priority(NotificationPriority::High)
+        .with_timeout(NotificationTimeout::Seconds(6))
+    }
+
+    pub fn calendar_auto_record_skipped(reason: impl Into<String>) -> Self {
+        Notification::new(
+            "Poly",
+            reason.into(),
+            NotificationType::CalendarAutoRecordSkipped,
+        )
+        .with_priority(NotificationPriority::Normal)
+        .with_timeout(NotificationTimeout::Seconds(5))
+    }
+
+    pub fn calendar_scheduler_error(error: impl Into<String>) -> Self {
+        let error_string = error.into();
+        Notification::new(
+            "Poly Error",
+            error_string.clone(),
+            NotificationType::CalendarSchedulerError,
+        )
+        .with_priority(NotificationPriority::High)
+        .with_timeout(NotificationTimeout::Seconds(8))
     }
 }

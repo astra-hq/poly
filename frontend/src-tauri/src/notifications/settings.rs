@@ -58,6 +58,15 @@ pub struct NotificationPreferences {
     /// Show system error notifications
     pub show_system_errors: bool,
 
+    /// Show calendar auto-record started notifications
+    pub show_calendar_auto_record_started: bool,
+
+    /// Show calendar auto-record skipped notifications
+    pub show_calendar_auto_record_skipped: bool,
+
+    /// Show calendar scheduler error notifications
+    pub show_calendar_scheduler_errors: bool,
+
     /// Minutes before meeting to show reminder (0 = disabled)
     pub meeting_reminder_minutes: Vec<u64>,
 }
@@ -88,7 +97,10 @@ impl Default for NotificationPreferences {
             show_transcription_complete: true,
             show_meeting_reminders: true,
             show_system_errors: true,
-            meeting_reminder_minutes: vec![15, 5], // 15 minutes and 5 minutes before
+            show_calendar_auto_record_started: true,
+            show_calendar_auto_record_skipped: true,
+            show_calendar_scheduler_errors: true,
+            meeting_reminder_minutes: vec![15, 5],
         }
     }
 }
