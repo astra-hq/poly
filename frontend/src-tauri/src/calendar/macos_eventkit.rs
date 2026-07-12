@@ -364,6 +364,16 @@ fn request_calendar_access(
         })?;
 
     if granted {
+        // macOS may not have updated the cached authorization status immediately after the
+        // dialog closes. Poll briefly until it reflects the grant (or timeout).
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            let status = authorization_status()?;
+            if status.can_read_events() {
+                return Ok(status);
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
         authorization_status()
     } else {
         Ok(CalendarPermissionStatus::Denied)
