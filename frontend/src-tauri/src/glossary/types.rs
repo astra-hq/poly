@@ -29,7 +29,7 @@ pub struct GlossaryEntry {
 pub struct Glossary {
     #[serde(default = "default_version")]
     pub version: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub entries: Vec<GlossaryEntry>,
 }
 
@@ -319,10 +319,10 @@ mod tests {
     }
 
     #[test]
-    fn serialize_empty_glossary_omits_empty_entries_vec() {
+    fn serialize_empty_glossary_includes_empty_entries_vec() {
         let g = Glossary::default();
         let yaml = serde_yaml::to_string(&g).unwrap();
-        assert!(!yaml.contains("entries"));
+        assert!(yaml.contains("entries"));
     }
 
     #[test]
