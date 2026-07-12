@@ -57,7 +57,13 @@ if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
     echo "Temporary signing key generated and exported"
 fi
 
+echo "Disabling hardened runtime for local ad-hoc build..."
+sed -i '' 's/"hardenedRuntime": true/"hardenedRuntime": false/' src-tauri/tauri.conf.json
+
 echo "Building Tauri app..."
 pnpm run tauri build
+
+echo "Restoring tauri.conf.json..."
+git checkout src-tauri/tauri.conf.json
 sleep
 
