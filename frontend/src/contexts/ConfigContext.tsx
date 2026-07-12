@@ -89,6 +89,7 @@ interface ConfigContextType {
   upcomingCalendarCandidates: CalendarCandidate[];
   schedulerStatus: { type: string; event_id?: string; title?: string; start?: string; end?: string; reason?: string; message?: string } | null;
   isLoadingCalendar: boolean;
+  availableCalendars: { id: string; title: string }[];
   loadCalendarStatus: () => Promise<void>;
   requestCalendarPermission: () => Promise<CalendarPermissionStatus>;
 
@@ -178,6 +179,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [upcomingCalendarCandidates, setUpcomingCalendarCandidates] = useState<CalendarCandidate[]>([]);
   const [schedulerStatus, setSchedulerStatus] = useState<{ type: string; event_id?: string; title?: string; start?: string; end?: string; reason?: string; message?: string } | null>(null);
   const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
+  const [availableCalendars, setAvailableCalendars] = useState<{ id: string; title: string }[]>([]);
 
   // Preference settings state (lazy loaded)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
@@ -320,14 +322,16 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const loadCalendarStatus = useCallback(async () => {
     setIsLoadingCalendar(true);
     try {
-      const [status, health, upcoming] = await Promise.all([
+      const [status, health, upcoming, calendars] = await Promise.all([
         configService.getCalendarPermissionStatus(),
         configService.getCalendarProviderHealth(),
         configService.getUpcomingCalendarCandidates(),
+        configService.getAppleCalendars().catch(() => [] as { id: string; title: string }[]),
       ]);
       setCalendarPermissionStatus(status);
       setCalendarProviderHealth(health);
       setUpcomingCalendarCandidates(upcoming.candidates.filter((c) => c.eligible));
+      setAvailableCalendars(calendars);
     } catch (error) {
       console.error('[ConfigContext] Failed to load calendar status:', error);
     } finally {
@@ -339,6 +343,12 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     try {
       const status = await configService.requestCalendarPermission();
       setCalendarPermissionStatus(status);
+      try {
+        const health = await configService.getCalendarProviderHealth();
+        setCalendarProviderHealth(health);
+      } catch (healthErr) {
+        console.error('[ConfigContext] Failed to refresh calendar health after permission grant:', healthErr);
+      }
       return status;
     } catch (error) {
       console.error('[ConfigContext] Failed to request calendar permission:', error);
@@ -561,6 +571,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     upcomingCalendarCandidates,
     schedulerStatus,
     isLoadingCalendar,
+    availableCalendars,
     loadCalendarStatus,
     requestCalendarPermission,
     models,
@@ -592,6 +603,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     upcomingCalendarCandidates,
     schedulerStatus,
     isLoadingCalendar,
+    availableCalendars,
     loadCalendarStatus,
     requestCalendarPermission,
     models,

@@ -751,6 +751,7 @@ pub fn run() {
             calendar::commands::get_calendar_provider_health,
             calendar::commands::get_upcoming_calendar_candidates,
             calendar::commands::get_selected_calendars,
+            calendar::commands::get_apple_calendars,
             // Database import commands
             database::commands::check_first_launch,
             database::commands::select_legacy_database_path,

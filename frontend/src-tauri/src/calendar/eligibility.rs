@@ -134,7 +134,7 @@ pub fn auto_record_eligibility(
         }
     }
 
-    if event.details.meeting_link.is_none() {
+    if event.details.meeting_link.is_none() && !event.organizer_is_current_user {
         return AutoRecordEligibility::ineligible(
             event.id.clone(),
             event.occurrence_key.clone(),

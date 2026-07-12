@@ -136,6 +136,19 @@ pub async fn get_selected_calendars(state: State<'_, AppState>) -> Result<Vec<St
 }
 
 #[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn get_apple_calendars() -> Result<Vec<crate::calendar::types::CalendarInfo>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn get_apple_calendars() -> Result<Vec<crate::calendar::types::CalendarInfo>, String> {
+    crate::calendar::macos_eventkit::list_calendars()
+        .map_err(|e| format!("Failed to list calendars: {}", e.message))
+}
+
+#[cfg(not(target_os = "macos"))]
 fn platform_permission_status() -> Result<CalendarPermissionStatus, String> {
     Ok(CalendarPermissionStatus::UnsupportedPlatform)
 }

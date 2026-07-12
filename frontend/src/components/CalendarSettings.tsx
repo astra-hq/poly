@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Calendar, AlertCircle, CheckCircle, XCircle, HelpCircle, Loader2, Info } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useConfig } from '@/contexts/ConfigContext';
 import { usePlatform } from '@/hooks/usePlatform';
 import type { CalendarConfig, CalendarPermissionStatus } from '@/services/configService';
@@ -77,6 +78,7 @@ export function CalendarSettings() {
     isLoadingCalendar,
     loadCalendarStatus,
     requestCalendarPermission,
+    availableCalendars,
   } = useConfig();
 
   const platform = usePlatform();
@@ -135,6 +137,26 @@ export function CalendarSettings() {
       await updateCalendarSettings(updated);
     } catch (err) {
       console.error('[CalendarSettings] Failed to save auto_record_enabled:', err);
+      setCalendarSettings(calendarSettings);
+    }
+  };
+
+  const handleToggleCalendar = async (calendarId: string, checked: boolean) => {
+    const current = new Set(calendarSettings.selected_apple_calendar_identifiers);
+    if (checked) {
+      current.add(calendarId);
+    } else {
+      current.delete(calendarId);
+    }
+    const updated: CalendarConfig = {
+      ...calendarSettings,
+      selected_apple_calendar_identifiers: Array.from(current),
+    };
+    setCalendarSettings(updated);
+    try {
+      await updateCalendarSettings(updated);
+    } catch (err) {
+      console.error('[CalendarSettings] Failed to save selected calendars:', err);
       setCalendarSettings(calendarSettings);
     }
   };
@@ -217,6 +239,28 @@ export function CalendarSettings() {
         </div>
       )}
 
+      {isMacOS && canRead && availableCalendars.length > 0 && (
+        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+          <h4 className="font-medium text-gray-800 mb-2">Monitored calendars</h4>
+          <div className="space-y-2">
+            {availableCalendars.map((cal) => (
+              <label key={cal.id} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  checked={calendarSettings.selected_apple_calendar_identifiers.includes(cal.id)}
+                  onChange={(e) => handleToggleCalendar(cal.id, e.target.checked)}
+                />
+                <span className="text-sm text-gray-700">{cal.title}</span>
+              </label>
+            ))}
+          </div>
+          {calendarSettings.selected_apple_calendar_identifiers.length === 0 && (
+            <p className="text-xs text-gray-500 mt-2">All calendars are monitored by default. Select specific calendars to limit auto-record to those only.</p>
+          )}
+        </div>
+      )}
+
       <div className="space-y-4">
         <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
           <div>
@@ -254,7 +298,29 @@ export function CalendarSettings() {
 
       {isMacOS && canRead && (
         <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <h4 className="font-medium text-gray-800 mb-2">Next eligible meeting</h4>
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="font-medium text-gray-800">Next eligible meeting</h4>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button className="text-gray-400 hover:text-gray-600 transition-colors" aria-label="What makes a meeting eligible?">
+                    <Info className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs space-y-1.5">
+                  <p className="font-semibold">A meeting is eligible for auto-record when it:</p>
+                  <ul className="list-disc pl-3.5 space-y-0.5">
+                    <li>Is a timed event (not all-day)</li>
+                    <li>Has not been cancelled</li>
+                    <li>You accepted or tentatively accepted</li>
+                    <li>Has a meeting link (Zoom/Meet/etc.) OR you are the organizer</li>
+                    <li>Has not already ended</li>
+                    <li>Is within the grace window of its start time</li>
+                  </ul>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
           {isLoadingCalendar ? (
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <Loader2 className="w-4 h-4 animate-spin" />

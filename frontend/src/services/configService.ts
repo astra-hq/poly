@@ -135,6 +135,10 @@ export class ConfigService {
     return invoke<string[]>('get_selected_calendars');
   }
 
+  async getAppleCalendars(): Promise<{ id: string; title: string }[]> {
+    return invoke<{ id: string; title: string }[]>('get_apple_calendars');
+  }
+
   /**
    * Get all configured providers from poly.yml.
    */

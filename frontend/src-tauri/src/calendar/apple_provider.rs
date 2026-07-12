@@ -173,5 +173,6 @@ fn convert_raw_event(raw: RawCalendarEvent) -> Option<CalendarEvent> {
         response_status,
         category,
         is_cancelled: raw.is_cancelled,
+        organizer_is_current_user: raw.organizer_is_current_user,
     })
 }

@@ -9,7 +9,7 @@ pub(crate) fn read_event(event: *mut Object) -> RawCalendarEvent {
     let status_code = integer_property(event, sel!(status));
     let is_cancelled = status_code == 3;
 
-    let (calendar_id, organizer_name, organizer_email) = read_event_extras(event);
+    let (calendar_id, organizer_name, organizer_email, organizer_is_current_user) = read_event_extras(event);
 
     RawCalendarEvent {
         identifier: string_property(event, sel!(eventIdentifier))
@@ -26,10 +26,11 @@ pub(crate) fn read_event(event: *mut Object) -> RawCalendarEvent {
         calendar_id,
         organizer_name,
         organizer_email,
+        organizer_is_current_user,
     }
 }
 
-fn read_event_extras(event: *mut Object) -> (Option<String>, Option<String>, Option<String>) {
+fn read_event_extras(event: *mut Object) -> (Option<String>, Option<String>, Option<String>, bool) {
     // SAFETY: [Category 8 — FFI boundary]
     // `calendar` is a documented property on EKEvent; method exists on all supported macOS versions.
     let calendar: *mut Object = unsafe { msg_send![event, calendar] };
@@ -42,17 +43,19 @@ fn read_event_extras(event: *mut Object) -> (Option<String>, Option<String>, Opt
     // SAFETY: [Category 8 — FFI boundary]
     // `organizer` returns an EKOrganizer?; nil is checked before property access.
     let organizer: *mut Object = unsafe { msg_send![event, organizer] };
-    let (organizer_name, organizer_email) = if organizer.is_null() {
-        (None, None)
+    let (organizer_name, organizer_email, organizer_is_current_user) = if organizer.is_null() {
+        (None, None, false)
     } else {
         let name = string_property(organizer, sel!(name));
         // EKOrganizer is a subclass of EKParticipant; emailAddress is available as a
         // deprecated convenience on older runtimes and may return nil on macOS 14+.
         let email = string_property(organizer, sel!(emailAddress));
-        (name, email)
+        // EKParticipant `isCurrentUser` returns BOOL.
+        let is_current: bool = unsafe { msg_send![organizer, isCurrentUser] };
+        (name, email, is_current)
     };
 
-    (calendar_id, organizer_name, organizer_email)
+    (calendar_id, organizer_name, organizer_email, organizer_is_current_user)
 }
 
 /// Read an NSString property and return it as a Rust String.

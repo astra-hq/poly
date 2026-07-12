@@ -197,6 +197,7 @@ pub struct CalendarEvent {
     pub response_status: EventResponseStatus,
     pub category: EventCategory,
     pub is_cancelled: bool,
+    pub organizer_is_current_user: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

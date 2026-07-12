@@ -24,6 +24,46 @@ pub fn eventkit_authorization_status() -> Result<CalendarPermissionStatus, Calen
     authorization_status()
 }
 
+/// List all visible calendars that support events.
+pub fn list_calendars() -> Result<Vec<crate::calendar::types::CalendarInfo>, CalendarProbeError> {
+    autoreleasepool(|| {
+        let store = event_store()?;
+
+        // SAFETY: [Category 8 — FFI boundary]
+        // `calendarsForEntityType:` returns an NSArray of EKCalendar objects.
+        let calendars: *mut Object = unsafe {
+            msg_send![store, calendarsForEntityType: EK_ENTITY_TYPE_EVENT]
+        };
+
+        if calendars.is_null() {
+            return Ok(Vec::new());
+        }
+
+        // SAFETY: [Category 8 — FFI boundary]
+        // `calendars` is an NSArray; `count` bounds all indexed access.
+        let count: usize = unsafe { msg_send![calendars, count] };
+        let mut out = Vec::with_capacity(count);
+
+        for i in 0..count {
+            // SAFETY: [Category 8 — FFI boundary]
+            // `i` is bounded by `count`.
+            let calendar: *mut Object = unsafe { msg_send![calendars, objectAtIndex: i] };
+            if calendar.is_null() {
+                continue;
+            }
+
+            let id = crate::calendar::macos_values::string_property(calendar, sel!(calendarIdentifier))
+                .unwrap_or_default();
+            let title = crate::calendar::macos_values::string_property(calendar, sel!(title))
+                .unwrap_or_else(|| "Untitled".to_string());
+
+            out.push(crate::calendar::types::CalendarInfo { id, title });
+        }
+
+        Ok(out)
+    })
+}
+
 /// Prompt the user for calendar access and return the resulting status.
 pub fn eventkit_request_access() -> Result<CalendarPermissionStatus, CalendarProbeError> {
     autoreleasepool(|| {
