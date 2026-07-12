@@ -319,7 +319,13 @@ fn request_calendar_access(
     };
 
     let store_usize = store as usize;
-    let completion_usize = &*completion as *const block::Block<(bool, *mut Object), ()> as usize;
+    let completion_usize =
+        &*completion as *const block::Block<(bool, *mut Object), ()> as usize;
+
+    // Prevent the RcBlock from being dropped before the async dispatch runs.
+    // EventKit retains the block when it receives it, so it remains valid
+    // for the duration of the permission dialog.
+    std::mem::forget(completion);
 
     // EventKit permission dialogs must be triggered from the main thread.
     dispatch::Queue::main().exec_async(move || {
