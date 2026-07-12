@@ -36,6 +36,21 @@ pub fn ensure_legacy_config_dir() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Returns the glossary file path: `~/.poly/glossary.yml`
+pub fn glossary_path() -> PathBuf {
+    let home = dirs::home_dir().expect("Could not determine home directory");
+    home.join(".poly").join("glossary.yml")
+}
+
+/// Ensures the parent directory for the glossary file exists.
+pub fn ensure_glossary_dir() -> std::io::Result<()> {
+    let path = glossary_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,6 +70,18 @@ mod tests {
     #[test]
     fn ensure_config_dir_does_not_panic() {
         let result = ensure_config_dir();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn glossary_path_ends_in_glossary_yml() {
+        let path = glossary_path();
+        assert!(path.ends_with(".poly/glossary.yml"));
+    }
+
+    #[test]
+    fn ensure_glossary_dir_does_not_panic() {
+        let result = ensure_glossary_dir();
         assert!(result.is_ok());
     }
 }
