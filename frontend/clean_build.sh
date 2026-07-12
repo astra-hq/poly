@@ -49,12 +49,12 @@ pnpm install
 echo "Building Next.js application..."
 pnpm run build
 
-if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" && -z "$TAURI_SIGNING_PRIVATE_KEY_PATH" ]]; then
+if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
     echo "No Tauri signing key found. Generating temporary key for local build..."
     TEMP_KEY_DIR=$(mktemp -d)
     pnpm exec tauri signer generate -w "$TEMP_KEY_DIR/tauri-signing-key" --ci -f
-    export TAURI_SIGNING_PRIVATE_KEY_PATH="$TEMP_KEY_DIR/tauri-signing-key"
-    echo "Temporary signing key generated at: $TEMP_KEY_DIR/tauri-signing-key"
+    export TAURI_SIGNING_PRIVATE_KEY=$(cat "$TEMP_KEY_DIR/tauri-signing-key")
+    echo "Temporary signing key generated and exported"
 fi
 
 echo "Building Tauri app..."
