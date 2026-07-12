@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
-import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical, Network, Server } from 'lucide-react';
+import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical, Network, Server, BookOpen } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { motion } from 'framer-motion';
@@ -12,6 +12,7 @@ import { SummaryModelSettings } from '@/components/SummaryModelSettings';
 import { BetaSettings } from '@/components/BetaSettings';
 import { KnowledgeGraphSettings } from '@/components/KnowledgeGraphSettings';
 import { ProviderSettings } from '@/components/ProviderSettings';
+import { GlossarySettings } from '@/components/GlossarySettings';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -23,6 +24,7 @@ const TABS = [
   { value: 'summaryModels', label: 'Summary', icon: SparkleIcon },
   { value: 'providers', label: 'Providers', icon: Server },
   { value: 'knowledgeGraph', label: 'Knowledge Graph', icon: Network },
+  { value: 'glossary', label: 'Glossary', icon: BookOpen },
   { value: 'beta', label: 'Beta', icon: FlaskConical }
 ] as const;
 
@@ -133,6 +135,9 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="knowledgeGraph" className="mt-6">
               <KnowledgeGraphSettings />
+            </TabsContent>
+            <TabsContent value="glossary" className="mt-6">
+              <GlossarySettings />
             </TabsContent>
             <TabsContent value="beta" className="mt-6">
               <BetaSettings />
