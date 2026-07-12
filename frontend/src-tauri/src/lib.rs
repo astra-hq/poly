@@ -43,6 +43,7 @@ pub mod calendar;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod glossary;
 pub mod groq;
 pub mod knowledge_graph;
 pub mod local_bridge;
@@ -677,6 +678,8 @@ pub fn run() {
             api::api_get_providers,
             api::api_save_provider,
             api::api_delete_provider,
+            glossary::commands::api_get_glossary,
+            glossary::commands::api_save_glossary,
             // Summary commands
             summary::commands::api_process_transcript,
             summary::commands::api_get_summary,
@@ -797,6 +800,9 @@ pub fn run() {
             knowledge_graph::commands::api_ingest_summary_to_knowledge_graph,
             knowledge_graph::commands::api_delete_summary_from_knowledge_graph,
             knowledge_graph::commands::api_get_summary_track_status,
+            // Knowledge graph glossary
+            knowledge_graph::commands::api_sync_glossary_to_knowledge_graph,
+            knowledge_graph::commands::api_delete_glossary_from_knowledge_graph,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -839,4 +845,13 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn glossary_module_compiles_and_exports() {
+        let _glossary = crate::glossary::Glossary::default();
+        let _repo = crate::glossary::GlossaryRepository::new();
+    }
 }
