@@ -5,8 +5,10 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 
 pub(crate) fn read_event(event: *mut Object) -> RawCalendarEvent {
-    let is_all_day = bool_property(event, sel!(isAllDay));
-    let status_code = integer_property(event, sel!(status));
+    // SAFETY: [Category 8 — FFI boundary]
+    // `isAllDay` and `status` are documented EKEvent properties with stable signatures.
+    let is_all_day: bool = unsafe { msg_send![event, isAllDay] };
+    let status_code: isize = unsafe { msg_send![event, status] };
     let is_cancelled = status_code == 3;
 
     let (calendar_id, organizer_name, organizer_email, organizer_is_current_user) = read_event_extras(event);
@@ -64,15 +66,6 @@ pub(crate) fn string_property(object: *mut Object, selector: objc::runtime::Sel)
     // The caller supplies an NSString-returning property selector documented for this EventKit type.
     let value: *mut Object = unsafe { msg_send![object, performSelector: selector] };
     ns_string(value)
-}
-
-/// Read a BOOL property from an Objective-C object.
-fn bool_property(object: *mut Object, selector: objc::runtime::Sel) -> bool {
-    unsafe { msg_send![object, selector] }
-}
-
-fn integer_property(object: *mut Object, selector: objc::runtime::Sel) -> isize {
-    unsafe { msg_send![object, selector] }
 }
 
 pub(crate) fn ns_error_description(error: *mut Object) -> Option<String> {
