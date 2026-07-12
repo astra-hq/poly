@@ -1,6 +1,7 @@
 use crate::database::repositories::{
     meeting::MeetingsRepository, summary::SummaryProcessesRepository,
 };
+use crate::glossary::GlossaryRepository;
 use crate::ollama::metadata::ModelMetadataCache;
 use crate::poly_config::ConfigRepository;
 use crate::providers::{ProviderConfig, ProviderType};
@@ -73,6 +74,7 @@ struct SummaryCacheSource {
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
+    glossary_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,6 +110,7 @@ fn build_summary_cache_source(
     max_tokens: Option<u32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
+    glossary_fingerprint: &str,
 ) -> SummaryCacheSource {
     SummaryCacheSource {
         transcript_fingerprint: stable_text_fingerprint(text),
@@ -122,6 +125,7 @@ fn build_summary_cache_source(
         max_tokens,
         temperature,
         top_p,
+        glossary_fingerprint: glossary_fingerprint.to_string(),
     }
 }
 
@@ -331,6 +335,30 @@ impl SummaryService {
             }
         };
 
+        // ── Load glossary for prompt context and cache fingerprint ──────────
+        let glossary_repo = GlossaryRepository::new();
+        let glossary = match glossary_repo.load() {
+            Ok(g) => g,
+            Err(e) => {
+                warn!(
+                    "Failed to load glossary (proceeding without glossary context): {}",
+                    e
+                );
+                crate::glossary::Glossary::default()
+            }
+        };
+        let glossary_prompt_context = glossary.to_prompt_context();
+        let glossary_fingerprint = stable_text_fingerprint(&glossary_prompt_context);
+
+        if glossary_prompt_context.is_empty() {
+            info!("No glossary entries loaded; summary prompts will omit glossary context");
+        } else {
+            info!(
+                "Loaded {} glossary entries for summary prompt context",
+                glossary.entries.len()
+            );
+        }
+
         // ── Resolve LLMProvider from the configured providers list ─────────
         // First try: look up the provider in the global providers list
         let provider = if let Some(pc) = cfg.find_provider(&model_provider) {
@@ -508,6 +536,7 @@ impl SummaryService {
             custom_openai_max_tokens,
             custom_openai_temperature,
             custom_openai_top_p,
+            &glossary_fingerprint,
         );
 
         let cached_english = match SummaryProcessesRepository::get_summary_data(&pool, &meeting_id).await {
@@ -558,6 +587,7 @@ impl SummaryService {
             summary_language.as_deref(),
             detected_summary_language.as_deref(),
             cached_english.as_deref(),
+            &glossary_prompt_context,
         )
         .await;
 
@@ -773,6 +803,7 @@ mod tests {
             None,
             None,
             None,
+            "",
         )
     }
 
@@ -872,6 +903,7 @@ mod tests {
                 None,
                 None,
                 None,
+                "",
             ),
             build_summary_cache_source(
                 "transcript body",
@@ -886,6 +918,7 @@ mod tests {
                 None,
                 None,
                 None,
+                "",
             ),
             build_summary_cache_source(
                 "transcript body",
@@ -900,6 +933,7 @@ mod tests {
                 None,
                 None,
                 None,
+                "",
             ),
             build_summary_cache_source(
                 "transcript body",
@@ -914,6 +948,7 @@ mod tests {
                 None,
                 None,
                 None,
+                "",
             ),
             build_summary_cache_source(
                 "transcript body",
@@ -928,6 +963,7 @@ mod tests {
                 None,
                 None,
                 None,
+                "",
             ),
             build_summary_cache_source(
                 "transcript body",
@@ -942,6 +978,7 @@ mod tests {
                 None,
                 None,
                 None,
+                "",
             ),
             build_summary_cache_source(
                 "transcript body",
@@ -956,6 +993,7 @@ mod tests {
                 Some(2048),
                 Some(0.2),
                 Some(0.9),
+                "",
             ),
         ];
 
@@ -1009,6 +1047,51 @@ mod tests {
             extract_cached_english_markdown(&raw, &changed_threshold, Some("de")).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn test_changed_glossary_fingerprint_rejects_cache() {
+        let source = sample_cache_source();
+        let raw = build_summary_result_json(
+            "# Reunion\n## Points\nBonjour",
+            "# Meeting\n## Points\nHello",
+            source.clone(),
+            Some("fr"),
+        )
+        .to_string();
+
+        let changed_glossary = SummaryCacheSource {
+            glossary_fingerprint: stable_text_fingerprint(
+                "## Glossary\n\n- **Jane Doe** (person): Lead engineer",
+            ),
+            ..source
+        };
+
+        assert_eq!(
+            extract_cached_english_markdown(&raw, &changed_glossary, Some("de")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_different_glossary_fingerprints_are_unequal_sources() {
+        let fingerprint_a = stable_text_fingerprint(
+            "## Glossary\n\n- **Jane Doe** (person): Lead engineer",
+        );
+        let fingerprint_b = stable_text_fingerprint(
+            "## Glossary\n\n- **Bob Smith** (person): Architect",
+        );
+        assert_ne!(fingerprint_a, fingerprint_b);
+
+        let source_a = SummaryCacheSource {
+            glossary_fingerprint: fingerprint_a,
+            ..sample_cache_source()
+        };
+        let source_b = SummaryCacheSource {
+            glossary_fingerprint: fingerprint_b,
+            ..sample_cache_source()
+        };
+        assert_ne!(source_a, source_b);
     }
 
     #[test]
