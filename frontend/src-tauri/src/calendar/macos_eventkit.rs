@@ -300,7 +300,7 @@ fn request_calendar_access(
     store: *mut Object,
 ) -> Result<CalendarPermissionStatus, CalendarProbeError> {
     let (tx, rx) = mpsc::channel::<Result<bool, String>>();
-    let completion = ConcreteBlock::new(move |granted: BOOL, error: *mut Object| {
+    let completion = ConcreteBlock::new(move |granted: bool, error: *mut Object| {
         let result = if error.is_null() {
             Ok(granted)
         } else {
@@ -314,32 +314,42 @@ fn request_calendar_access(
 
     // SAFETY: [Category 8 — FFI boundary]
     // `store` is a live EKEventStore and `respondsToSelector:` only queries method availability.
-    let supports_full_access: BOOL = unsafe {
+    let supports_full_access: bool = unsafe {
         msg_send![store, respondsToSelector: sel!(requestFullAccessToEventsWithCompletion:)]
     };
 
-    if supports_full_access {
-        // SAFETY: [Category 8 — FFI boundary]
-        // The copied block has Objective-C block ABI and remains alive until the bounded receive
-        // below completes. The selector is checked at runtime before being sent.
-        unsafe {
-            let _: () = msg_send![
-                store,
-                requestFullAccessToEventsWithCompletion: &*completion
-            ];
-        }
-    } else {
-        // SAFETY: [Category 8 — FFI boundary]
-        // Older macOS EventKit uses this selector with EKEntityTypeEvent. The copied block remains
-        // alive until the bounded receive below completes.
-        unsafe {
-            let _: () = msg_send![
-                store,
-                requestAccessToEntityType: EK_ENTITY_TYPE_EVENT
-                completion: &*completion
-            ];
-        }
-    }
+    let store_usize = store as usize;
+    let completion_usize = &*completion as *const block::Block<(bool, *mut Object), ()> as usize;
+
+    // EventKit permission dialogs must be triggered from the main thread.
+    dispatch::Queue::main().exec_async(move || {
+        autoreleasepool(|| {
+            let store = store_usize as *mut Object;
+            let completion = completion_usize as *mut block::Block<(bool, *mut Object), ()>;
+            if supports_full_access {
+                // SAFETY: [Category 8 — FFI boundary]
+                // The copied block has Objective-C block ABI and remains alive until the bounded receive
+                // below completes. The selector is checked at runtime before being sent.
+                unsafe {
+                    let _: () = msg_send![
+                        store,
+                        requestFullAccessToEventsWithCompletion: completion
+                    ];
+                }
+            } else {
+                // SAFETY: [Category 8 — FFI boundary]
+                // Older macOS EventKit uses this selector with EKEntityTypeEvent. The copied block remains
+                // alive until the bounded receive below completes.
+                unsafe {
+                    let _: () = msg_send![
+                        store,
+                        requestAccessToEntityType: EK_ENTITY_TYPE_EVENT
+                        completion: completion
+                    ];
+                }
+            }
+        });
+    });
 
     let granted = rx
         .recv_timeout(Duration::from_secs(60))
