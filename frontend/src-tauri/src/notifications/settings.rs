@@ -100,7 +100,7 @@ impl Default for NotificationPreferences {
             show_calendar_auto_record_started: true,
             show_calendar_auto_record_skipped: true,
             show_calendar_scheduler_errors: true,
-            meeting_reminder_minutes: vec![15, 5],
+            meeting_reminder_minutes: vec![15, 5, 1],
         }
     }
 }

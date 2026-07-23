@@ -27,7 +27,7 @@
         "tauri:build:hipblas": "tauri build -- --features hipblas",
         "lint": "next lint",
         "typecheck": "tsc --noEmit",
-        "test:e2e": "playwright test --config playwright.config.ts"
+        "test:e2e": "node scripts/e2e.js"
     },
     "dependencies": {
         "@blocknote/core": "0.36.0",

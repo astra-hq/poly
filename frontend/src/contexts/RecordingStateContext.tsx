@@ -208,10 +208,10 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           'calendar-scheduler-status',
           (event) => {
             const payload = event.payload;
-            console.log('[RecordingStateContext] Calendar scheduler status:', payload);
+            console.log('[RecordingStateContext] Calendar scheduler status:', payload.type);
             setState(prev => ({
               ...prev,
-              schedulerStatus: payload as SchedulerStatus,
+              schedulerStatus: payload,
             }));
             showCalendarSchedulerNotification(payload.type, payload);
           }

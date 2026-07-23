@@ -352,6 +352,7 @@ mod tests {
             response_status: EventResponseStatus::Accepted,
             category: EventCategory::Timed,
             is_cancelled: false,
+            organizer_is_current_user: false,
         }
     }
 

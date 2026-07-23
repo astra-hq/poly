@@ -1813,6 +1813,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dispatch"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b"
+
+[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4957,6 +4963,7 @@ dependencies = [
  "dashmap",
  "dasp",
  "dirs 5.0.1",
+ "dispatch",
  "ebur128",
  "env_logger",
  "esaxx-rs",

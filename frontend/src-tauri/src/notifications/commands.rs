@@ -569,3 +569,36 @@ pub async fn show_calendar_scheduler_error_notification<R: Runtime>(
         }
     }
 }
+
+/// Show a meeting reminder notification from the scheduler (internal use)
+pub async fn show_meeting_reminder_notification<R: Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    manager_state: &NotificationManagerState<R>,
+    minutes_until: u64,
+    meeting_title: Option<String>,
+) -> Result<()> {
+    let manager_lock = manager_state.read().await;
+    if let Some(manager) = manager_lock.as_ref() {
+        manager
+            .show_meeting_reminder(minutes_until, meeting_title)
+            .await
+    } else {
+        drop(manager_lock);
+        match initialize_notification_manager(app_handle.clone()).await {
+            Ok(manager) => {
+                let mut state_lock = manager_state.write().await;
+                *state_lock = Some(manager);
+                drop(state_lock);
+                let manager_lock = manager_state.read().await;
+                if let Some(manager) = manager_lock.as_ref() {
+                    manager
+                        .show_meeting_reminder(minutes_until, meeting_title)
+                        .await
+                } else {
+                    Ok(())
+                }
+            }
+            Err(_) => Ok(()),
+        }
+    }
+}

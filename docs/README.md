@@ -11,7 +11,8 @@ docs/
 │   ├── BUILDING.md
 │   ├── GPU_ACCELERATION.md
 │   ├── architecture.md
-│   └── building_in_linux.md
+│   ├── building_in_linux.md
+│   └── glossary.md
 ├── images/          # Screenshots, diagrams, and logos
 │   └── ...
 └── kg/              # Knowledge Graph setup & usage
@@ -26,5 +27,6 @@ docs/
 - **Linux build guide** → [guides/building_in_linux.md](guides/building_in_linux.md)
 - **GPU acceleration** → [guides/GPU_ACCELERATION.md](guides/GPU_ACCELERATION.md)
 - **System architecture** → [guides/architecture.md](guides/architecture.md)
+- **Glossary** → [guides/glossary.md](guides/glossary.md)
 - **Knowledge Graph local setup** → [kg/LOCAL_SETUP.md](kg/LOCAL_SETUP.md)
 - **Knowledge Graph remote deployment (Helm)** → [kg/REMOTE_HELM.md](kg/REMOTE_HELM.md)

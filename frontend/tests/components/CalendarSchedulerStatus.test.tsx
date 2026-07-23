@@ -204,7 +204,7 @@ describe('Calendar scheduler notification content privacy', () => {
     }
   });
 
-  test('showCalendarSchedulerNotification for candidate_found is privacy-safe', () => {
+  test('showCalendarSchedulerNotification for candidate_found does not show an in-app toast', () => {
     showCalendarSchedulerNotification('candidate_found', {
       event_id: 'evt-123',
       title: 'Secret Board Meeting',
@@ -212,15 +212,7 @@ describe('Calendar scheduler notification content privacy', () => {
       end: '2026-07-08T11:00:00Z',
     });
 
-    expect(toastCalls.length).toBe(1);
-    const call = toastCalls[0];
-    const content = `${call.title} ${call.description}`;
-
-    // Must NOT contain the actual meeting title
-    expect(content).not.toContain('Secret Board Meeting');
-    expect(content).not.toContain('evt-123');
-    // Should contain generic indicator
-    expect(content.toLowerCase()).toContain('upcoming meeting');
+    expect(toastCalls.length).toBe(0);
   });
 
   test('showCalendarSchedulerNotification for error is privacy-safe', () => {

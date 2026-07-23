@@ -75,6 +75,24 @@ const HEALTH_NOT_DETERMINED = {
   error: null,
 };
 
+const HEALTH_RESTRICTED = {
+  provider: 'apple',
+  platform_supported: true,
+  permission_granted: false,
+  permission_status: 'restricted',
+  event_count: null,
+  error: null,
+};
+
+const HEALTH_UNKNOWN = {
+  provider: 'apple',
+  platform_supported: true,
+  permission_granted: false,
+  permission_status: 'unknown',
+  event_count: null,
+  error: null,
+};
+
 const HEALTH_UNSUPPORTED = {
   provider: 'apple',
   platform_supported: false,
@@ -90,13 +108,16 @@ const HEALTH_UNSUPPORTED = {
  * Build the addInitScript content that patches Tauri's invoke function
  * before the app code loads. Returns a string of JavaScript.
  */
-function buildMockScript(overrides: Record<string, unknown>): string {
+function buildMockScript(overrides: Record<string, unknown>, mockPlatform: 'macos' | 'linux' = 'macos'): string {
   const base: Record<string, unknown> = {
+    'plugin:os|platform': mockPlatform,
     get_calendar_settings: CALENDAR_SETTINGS_DEFAULT,
+    get_onboarding_status: { completed: true },
     get_calendar_permission_status: 'authorized',
     get_calendar_provider_health: HEALTH_AUTHORIZED,
     get_upcoming_calendar_candidates: CANDIDATE_TEAM_STANDUP,
     get_selected_calendars: ['cal-work'],
+    get_apple_calendars: [{ id: 'cal-work', title: 'Work' }],
     request_calendar_permission: 'authorized',
     save_calendar_settings: null, // special: returns the input
     get_notification_settings: {
@@ -148,10 +169,18 @@ function buildMockScript(overrides: Record<string, unknown>): string {
 
   return `
 (function() {
+  Object.defineProperty(navigator, 'userAgent', {
+    value: ${JSON.stringify(mockPlatform === 'macos'
+      ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+      : 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36')},
+    configurable: true
+  });
+
   var HANDLERS = {
     ${pairs}
   };
   var calls = [];
+  var eventListeners = {};
 
   window.__TAURI_INTERNALS__ = {
     invoke: function(cmd, args) {
@@ -163,6 +192,20 @@ function buildMockScript(overrides: Record<string, unknown>): string {
       }
 
       if (cmd === 'api_get_api_key') {
+        return Promise.resolve(null);
+      }
+
+      if (cmd === 'plugin:event|listen') {
+        var eventName = args.event;
+        eventListeners[eventName] = eventListeners[eventName] || [];
+        eventListeners[eventName].push(args.handler);
+        return Promise.resolve(args.handler);
+      }
+
+      if (cmd === 'plugin:event|unlisten') {
+        var listenerList = eventListeners[args.event] || [];
+        var listenerIndex = listenerList.indexOf(args.eventId);
+        if (listenerIndex >= 0) listenerList.splice(listenerIndex, 1);
         return Promise.resolve(null);
       }
 
@@ -178,24 +221,34 @@ function buildMockScript(overrides: Record<string, unknown>): string {
   };
 
   // Mock Tauri event system
-  window.__TAURI_EVENT_LISTENERS__ = {};
+  window.__TAURI_EVENT_LISTENERS__ = eventListeners;
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: function(event, eventId) {
+      var listenerList = eventListeners[event] || [];
+      var listenerIndex = listenerList.indexOf(eventId);
+      if (listenerIndex >= 0) listenerList.splice(listenerIndex, 1);
+    }
+  };
   window.__TAURI_INTERNALS__.listen = function(event, handler) {
-    window.__TAURI_EVENT_LISTENERS__[event] = window.__TAURI_EVENT_LISTENERS__[event] || [];
-    window.__TAURI_EVENT_LISTENERS__[event].push(handler);
+    eventListeners[event] = eventListeners[event] || [];
+    eventListeners[event].push(handler);
     return Promise.resolve(function() {
-      var idx = window.__TAURI_EVENT_LISTENERS__[event].indexOf(handler);
-      if (idx >= 0) window.__TAURI_EVENT_LISTENERS__[event].splice(idx, 1);
+      var idx = eventListeners[event].indexOf(handler);
+      if (idx >= 0) eventListeners[event].splice(idx, 1);
     });
   };
 
   // Helper to emit mock Tauri events from tests
   window.__EMIT_TAURI_EVENT__ = function(event, payload) {
-    var listeners = window.__TAURI_EVENT_LISTENERS__[event] || [];
+    var listeners = eventListeners[event] || [];
     listeners.forEach(function(fn) { fn({ payload: payload }); });
   };
 
   window.__CALENDAR_MOCK_CALLS__ = calls;
   window.__CALENDAR_MOCK_SCENARIO__ = 'default';
+  window.__SET_CALENDAR_MOCK_RESPONSE__ = function(cmd, response) {
+    HANDLERS[cmd] = response;
+  };
 })();
 `;
 }
@@ -217,12 +270,12 @@ test.describe('Calendar Settings', () => {
     await expect(page.getByText('Calendar').first()).toBeVisible({ timeout: 10_000 });
 
     // Verify the descriptive text
-    await expect(page.getByText(/Connect to Apple Calendar/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Connect a calendar/)).toBeVisible({ timeout: 10_000 });
   });
 
   // ── Authorized permission state ─────────────────────────────────────
 
-  test('shows Access granted when permission is authorized', async ({ page }) => {
+  test('hides granted access card and shows revoke guidance when permission is authorized', async ({ page }) => {
     await page.addInitScript({ content: buildMockScript({
       get_calendar_permission_status: 'authorized',
       get_calendar_provider_health: HEALTH_AUTHORIZED,
@@ -231,7 +284,9 @@ test.describe('Calendar Settings', () => {
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
 
-    await expect(page.getByText('Access granted')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Access granted')).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByLabel('How to revoke calendar access')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Pull meeting metadata' })).toBeVisible({ timeout: 10_000 });
   });
 
   // ── Permission denied state ─────────────────────────────────────────
@@ -252,9 +307,8 @@ test.describe('Calendar Settings', () => {
     // Should show guidance text for denied state
     await expect(page.getByText(/System Settings → Privacy & Security → Calendars/)).toBeVisible({ timeout: 10_000 });
 
-    // Auto-record toggle should be disabled when permission is denied
-    const autoRecordSection = page.getByText('Auto-record meetings');
-    await expect(autoRecordSection).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Auto-record meetings')).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText('Next eligible meeting')).not.toBeVisible({ timeout: 5_000 });
   });
 
   // ── Request Access button for not-determined ────────────────────────
@@ -273,6 +327,21 @@ test.describe('Calendar Settings', () => {
     await expect(page.getByRole('button', { name: 'Request Access' })).toBeVisible({ timeout: 10_000 });
   });
 
+  test('keeps access granted when health proves calendar reads after stale raw status', async ({ page }) => {
+    await page.addInitScript({ content: buildMockScript({
+      get_calendar_permission_status: 'not_determined',
+      get_calendar_provider_health: HEALTH_AUTHORIZED,
+      get_upcoming_calendar_candidates: CANDIDATE_TEAM_STANDUP,
+    }) });
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByText('Access granted')).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByRole('button', { name: 'Request Access' })).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText('Team Standup')).toBeVisible({ timeout: 10_000 });
+  });
+
   // ── Metadata pull toggle ────────────────────────────────────────────
 
   test('toggles metadata pull setting on and off', async ({ page }) => {
@@ -280,7 +349,7 @@ test.describe('Calendar Settings', () => {
     await page.waitForLoadState('networkidle');
 
     // Verify the metadata pull toggle exists
-    const metadataText = page.getByText('Pull meeting metadata');
+    const metadataText = page.getByRole('heading', { name: 'Pull meeting metadata' });
     await expect(metadataText).toBeVisible({ timeout: 10_000 });
 
     // Toggle interaction verification: the Switch component renders with
@@ -329,6 +398,212 @@ test.describe('Calendar Settings', () => {
     await expect(page.getByText('Has meeting link')).toBeVisible({ timeout: 10_000 });
   });
 
+  test('removes ended meeting from next eligible section after scheduler stopped event', async ({ page }) => {
+    await page.addInitScript({ content: buildMockScript({
+      get_calendar_permission_status: 'authorized',
+      get_calendar_provider_health: HEALTH_AUTHORIZED,
+      get_upcoming_calendar_candidates: CANDIDATE_TEAM_STANDUP,
+    }) });
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByText('Team Standup')).toBeVisible({ timeout: 10_000 });
+
+    await page.evaluate(() => {
+      const mock = window as unknown as {
+        __SET_CALENDAR_MOCK_RESPONSE__?: (cmd: string, response: unknown) => void;
+        __EMIT_TAURI_EVENT__?: (event: string, payload: unknown) => void;
+      };
+      mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_upcoming_calendar_candidates', { candidates: [] });
+      mock.__EMIT_TAURI_EVENT__?.('calendar-scheduler-status', {
+        type: 'stopped',
+        event_id: 'evt-1',
+      });
+    });
+
+    await expect(page.getByText('Team Standup')).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/No upcoming meetings/)).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('refreshes next eligible meeting when window regains focus', async ({ page }) => {
+    await page.addInitScript({ content: buildMockScript({
+      get_calendar_permission_status: 'authorized',
+      get_calendar_provider_health: HEALTH_AUTHORIZED,
+      get_upcoming_calendar_candidates: CANDIDATE_TEAM_STANDUP,
+    }) });
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByText('Team Standup')).toBeVisible({ timeout: 10_000 });
+
+    await page.evaluate(() => {
+      (window as unknown as {
+        __SET_CALENDAR_MOCK_RESPONSE__?: (cmd: string, response: unknown) => void;
+      }).__SET_CALENDAR_MOCK_RESPONSE__?.('get_upcoming_calendar_candidates', {
+        candidates: [
+          {
+            id: 'evt-1',
+            occurrence_key: 'evt-1|1752071100',
+            title: 'Moved Standup',
+            start: '2026-07-08T14:25:00Z',
+            end: '2026-07-08T14:55:00Z',
+            calendar_id: 'cal-work',
+            meeting_link: 'https://meet.google.com/abc-defg-hij',
+            is_cancelled: false,
+            category: 'Timed',
+            response_status: 'Accepted',
+            eligible: true,
+            ineligibility_reason: null,
+          },
+        ],
+      });
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    await expect(page.getByText('Moved Standup')).toBeVisible({ timeout: 10_000 });
+  });
+
+  test('keeps calendars and next meeting after transient empty focus refresh', async ({ page }) => {
+    await page.addInitScript({ content: buildMockScript({
+      get_calendar_permission_status: 'authorized',
+      get_calendar_provider_health: HEALTH_AUTHORIZED,
+      get_upcoming_calendar_candidates: CANDIDATE_TEAM_STANDUP,
+      get_apple_calendars: [{ id: 'cal-work', title: 'Work' }],
+    }) });
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByText('Monitored calendars')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('All 1 calendars')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Team Standup')).toBeVisible({ timeout: 10_000 });
+
+    await page.evaluate(() => {
+      const mock = window as unknown as {
+        __SET_CALENDAR_MOCK_RESPONSE__?: (cmd: string, response: unknown) => void;
+      };
+      mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_apple_calendars', []);
+      mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_upcoming_calendar_candidates', { candidates: [] });
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    await expect(page.getByText('Monitored calendars')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('All 1 calendars')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Team Standup')).toBeVisible({ timeout: 10_000 });
+  });
+
+  for (const scenario of [
+    { status: 'denied', health: HEALTH_DENIED, label: 'Access denied' },
+    { status: 'restricted', health: HEALTH_RESTRICTED, label: 'Access restricted' },
+    { status: 'unknown', health: HEALTH_UNKNOWN, label: 'Unknown status' },
+  ]) {
+    test(`refreshes calendar access after external grant from ${scenario.status} on focus`, async ({ page }) => {
+      await page.addInitScript({ content: buildMockScript({
+        get_calendar_permission_status: scenario.status,
+        get_calendar_provider_health: scenario.health,
+        get_upcoming_calendar_candidates: { candidates: [] },
+      }) });
+
+      await page.goto('/settings');
+      await page.waitForLoadState('networkidle');
+
+      await expect(page.getByText(scenario.label)).toBeVisible({ timeout: 10_000 });
+
+      await page.evaluate(() => {
+        const mock = window as unknown as {
+          __SET_CALENDAR_MOCK_RESPONSE__?: (cmd: string, response: unknown) => void;
+        };
+        mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_calendar_permission_status', 'authorized');
+        mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_calendar_provider_health', {
+          provider: 'apple',
+          platform_supported: true,
+          permission_granted: true,
+          permission_status: 'authorized',
+          event_count: 3,
+          error: null,
+        });
+        mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_upcoming_calendar_candidates', {
+          candidates: [
+            {
+              id: 'evt-1',
+              occurrence_key: 'evt-1|1752069600',
+              title: 'Team Standup',
+              start: '2026-07-08T14:00:00Z',
+              end: '2026-07-08T14:30:00Z',
+              calendar_id: 'cal-work',
+              meeting_link: 'https://meet.google.com/abc-defg-hij',
+              is_cancelled: false,
+              category: 'Timed',
+              response_status: 'Accepted',
+              eligible: true,
+              ineligibility_reason: null,
+            },
+          ],
+        });
+        window.dispatchEvent(new Event('focus'));
+      });
+
+      await expect(page.getByText('Access granted')).not.toBeVisible({ timeout: 5_000 });
+      await expect(page.getByText('Team Standup')).toBeVisible({ timeout: 10_000 });
+    });
+  }
+
+  test('refreshes calendar access after external grant on visibility change', async ({ page }) => {
+    await page.addInitScript({ content: buildMockScript({
+      get_calendar_permission_status: 'denied',
+      get_calendar_provider_health: HEALTH_DENIED,
+      get_upcoming_calendar_candidates: { candidates: [] },
+    }) });
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page.getByText('Access denied')).toBeVisible({ timeout: 10_000 });
+
+    await page.evaluate(() => {
+      const mock = window as unknown as {
+        __SET_CALENDAR_MOCK_RESPONSE__?: (cmd: string, response: unknown) => void;
+      };
+      mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_calendar_permission_status', 'authorized');
+      mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_calendar_provider_health', {
+        provider: 'apple',
+        platform_supported: true,
+        permission_granted: true,
+        permission_status: 'authorized',
+        event_count: 3,
+        error: null,
+      });
+      mock.__SET_CALENDAR_MOCK_RESPONSE__?.('get_upcoming_calendar_candidates', {
+        candidates: [
+          {
+            id: 'evt-1',
+            occurrence_key: 'evt-1|1752069600',
+            title: 'Team Standup',
+            start: '2026-07-08T14:00:00Z',
+            end: '2026-07-08T14:30:00Z',
+            calendar_id: 'cal-work',
+            meeting_link: 'https://meet.google.com/abc-defg-hij',
+            is_cancelled: false,
+            category: 'Timed',
+            response_status: 'Accepted',
+            eligible: true,
+            ineligibility_reason: null,
+          },
+        ],
+      });
+      Object.defineProperty(document, 'visibilityState', {
+        value: 'visible',
+        configurable: true,
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await expect(page.getByText('Access granted')).not.toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText('Team Standup')).toBeVisible({ timeout: 10_000 });
+  });
+
   // ── No upcoming meetings ────────────────────────────────────────────
 
   test('shows no upcoming meetings message when candidates list is empty', async ({ page }) => {
@@ -356,7 +631,7 @@ test.describe('Calendar Settings', () => {
       get_calendar_permission_status: 'unsupported_platform',
       get_calendar_provider_health: HEALTH_UNSUPPORTED,
       get_upcoming_calendar_candidates: { candidates: [] },
-    })});
+    }, 'linux')});
 
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
@@ -396,10 +671,7 @@ test.describe('Calendar Settings', () => {
     // Wait for React to re-render with the new scheduler status
     await page.waitForTimeout(500);
 
-    // Verify the scheduler status is displayed
-    // The component shows "Started recording: Team Standup" when recording_started
-    await expect(page.getByText(/Started recording/)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/Team Standup/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Recording', { exact: true })).toBeVisible({ timeout: 10_000 });
 
     // Simulate another event: recording_skipped_active
     await page.evaluate(() => {
@@ -412,8 +684,7 @@ test.describe('Calendar Settings', () => {
 
     await page.waitForTimeout(500);
 
-    // Verify the skipped-active message appears
-    await expect(page.getByText(/Skipped.*recording already active/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Skipped', { exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   // ── Scheduler error state ───────────────────────────────────────────

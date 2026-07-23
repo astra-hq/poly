@@ -168,6 +168,9 @@ let mockUpcomingCandidates: CalendarCandidate[] = [
 let mockSchedulerStatus: SchedulerStatusEvent | null = null;
 let mockIsLoadingCalendar = false;
 let mockPlatform: string = 'macos';
+let mockAvailableCalendars: { readonly id: string; readonly title: string }[] = [
+  { id: 'cal-work', title: 'Work' },
+];
 
 const mockSetCalendarSettings = mock((settings: CalendarConfig | ((prev: CalendarConfig) => CalendarConfig)) => {
   if (typeof settings === 'function') {
@@ -191,6 +194,8 @@ const mockRequestCalendarPermission = mock(async () => {
   return 'authorized';
 });
 
+const mockSkipCalendarOccurrence = mock(async () => undefined);
+
 mock.module('@/contexts/ConfigContext', () => ({
   useConfig: () => ({
     calendarSettings: mockCalendarSettings,
@@ -203,6 +208,8 @@ mock.module('@/contexts/ConfigContext', () => ({
     isLoadingCalendar: mockIsLoadingCalendar,
     loadCalendarStatus: mockLoadCalendarStatus,
     requestCalendarPermission: mockRequestCalendarPermission,
+    availableCalendars: mockAvailableCalendars,
+    skipCalendarOccurrence: mockSkipCalendarOccurrence,
     platform: mockPlatform,
   }),
 }));
@@ -249,6 +256,7 @@ describe('CalendarSettings', () => {
     mockSchedulerStatus = null;
     mockIsLoadingCalendar = false;
     mockPlatform = 'macos';
+    mockAvailableCalendars = [{ id: 'cal-work', title: 'Work' }];
 
   });
 
@@ -261,9 +269,10 @@ describe('CalendarSettings', () => {
     expect(html).toContain('Calendar');
   });
 
-  test('shows permission status when authorized', () => {
+  test('hides granted permission status and shows revoke guidance when authorized', () => {
     const html = renderToStaticMarkup(<CalendarSettings />);
-    expect(html).toContain('Access granted');
+    expect(html).not.toContain('Access granted');
+    expect(html).toContain('How to revoke calendar access');
   });
 
   test('shows permission denied state', () => {
@@ -278,6 +287,9 @@ describe('CalendarSettings', () => {
     };
     const html = renderToStaticMarkup(<CalendarSettings />);
     expect(html).toContain('Access denied');
+    expect(html).not.toContain('Pull meeting metadata');
+    expect(html).not.toContain('Auto-record meetings');
+    expect(html).not.toContain('Next eligible meeting');
   });
 
   test('shows unsupported platform message on non-macOS', () => {
@@ -342,6 +354,7 @@ describe('CalendarSettings', () => {
     };
     const html = renderToStaticMarkup(<CalendarSettings />);
     expect(html).toContain('Team Standup');
+    expect(html).toContain('Recording');
   });
 
   test('shows no candidates message when upcoming list is empty', () => {

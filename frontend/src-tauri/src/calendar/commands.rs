@@ -1,9 +1,12 @@
-use tauri::State;
+use std::sync::Arc;
+
+use tauri::{AppHandle, Emitter, State};
 
 use crate::calendar::apple_provider::AppleCalendarProvider;
 use crate::calendar::domain::{CalendarClock, CalendarInstant, CalendarTimeRange, SystemClock};
 use crate::calendar::eligibility::auto_record_eligibility;
 use crate::calendar::provider::CalendarProvider;
+use crate::calendar::scheduler::CalendarRecordingScheduler;
 use crate::calendar::types::{CalendarPermissionStatus, CalendarProviderHealth};
 use crate::poly_config::config::CalendarConfig;
 use crate::poly_config::ConfigRepository;
@@ -89,7 +92,7 @@ pub async fn get_upcoming_calendar_candidates(
         }
     };
 
-    let candidates: Vec<serde_json::Value> = page
+    let mut events: Vec<_> = page
         .events
         .into_iter()
         .filter(|event| {
@@ -99,6 +102,12 @@ pub async fn get_upcoming_calendar_candidates(
                 true
             }
         })
+        .collect();
+
+    events.sort_by_key(|e| e.time_range.start);
+
+    let candidates: Vec<serde_json::Value> = events
+        .into_iter()
         .map(|event| {
             let eligibility = auto_record_eligibility(&event, &clock);
             serde_json::json!({
@@ -133,6 +142,39 @@ pub async fn get_selected_calendars(state: State<'_, AppState>) -> Result<Vec<St
         .load()
         .map_err(|e| format!("Failed to load config: {e}"))?;
     Ok(config.calendar.selected_apple_calendar_identifiers)
+}
+
+#[tauri::command]
+pub async fn skip_calendar_occurrence(
+    app: AppHandle,
+    scheduler: State<'_, Arc<CalendarRecordingScheduler>>,
+    event_id: String,
+    occurrence_start: String,
+) -> Result<(), String> {
+    scheduler
+        .skip_occurrence(&event_id, &occurrence_start)
+        .await
+        .map_err(|e| format!("Failed to skip calendar occurrence: {e}"))?;
+    app.emit(
+        "calendar-scheduler-status",
+        crate::calendar::scheduler::SchedulerStatusEvent::Skipped {
+            reason: "manual_skip".to_string(),
+        },
+    )
+    .map_err(|e| format!("Failed to emit skip status: {e}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn get_apple_calendars() -> Result<Vec<crate::calendar::types::CalendarInfo>, String> {
+    Ok(Vec::new())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn get_apple_calendars() -> Result<Vec<crate::calendar::types::CalendarInfo>, String> {
+    crate::calendar::macos_eventkit::list_calendars()
+        .map_err(|e| format!("Failed to list calendars: {}", e.message))
 }
 
 #[cfg(not(target_os = "macos"))]

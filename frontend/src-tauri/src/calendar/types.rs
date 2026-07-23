@@ -119,6 +119,7 @@ pub(crate) struct RawCalendarEvent {
     pub(crate) calendar_id: Option<String>,
     pub(crate) organizer_name: Option<String>,
     pub(crate) organizer_email: Option<String>,
+    pub(crate) organizer_is_current_user: bool,
 }
 
 impl RawCalendarEvent {
@@ -146,8 +147,15 @@ impl RawCalendarEvent {
             calendar_id: None,
             organizer_name: None,
             organizer_email: None,
+            organizer_is_current_user: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CalendarInfo {
+    pub id: String,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

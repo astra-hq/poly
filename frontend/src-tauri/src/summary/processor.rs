@@ -137,9 +137,25 @@ fn translation_system_prompt(target_language: &str) -> String {
     )
 }
 
-fn build_chunk_summary_user_prompt(chunk: &str) -> String {
+fn build_glossary_context_block(prompt_context: &str) -> String {
+    let trimmed = prompt_context.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
     format!(
-        "{ENGLISH_BASE_SUMMARY_INSTRUCTION}\n\nProvide a concise but comprehensive summary of the following transcript chunk. Capture all key points, decisions, action items, and mentioned individuals.\n\n<transcript_chunk>\n{chunk}\n</transcript_chunk>"
+        "<glossary_context>\n{trimmed}\n\nMANDATORY: Use the glossary to standardize all glossary terminology in the summary/report. When source text uses a listed alias, write the canonical glossary term, not the alias. Confirm that no listed aliases remain before output; if any are present, replace them with the canonical glossary terms. For example, if `acabee` is an alias for `Acapella B`, output `Acapella B`. This terminology standardization is required so downstream knowledge graph ingestion preserves the conversation structure. Do not introduce any glossary entry as a meeting fact unless the source text explicitly supports it.\n</glossary_context>"
+    )
+}
+
+fn build_chunk_summary_user_prompt(chunk: &str, glossary_context: &str) -> String {
+    let glossary_block = build_glossary_context_block(glossary_context);
+    let glossary_section = if glossary_block.is_empty() {
+        String::new()
+    } else {
+        format!("{glossary_block}\n\n")
+    };
+    format!(
+        "{ENGLISH_BASE_SUMMARY_INSTRUCTION}\n\n{glossary_section}Provide a concise but comprehensive summary of the following transcript chunk. Capture all key points, decisions, action items, and mentioned individuals.\n\n<transcript_chunk>\n{chunk}\n</transcript_chunk>"
     )
 }
 
@@ -343,6 +359,7 @@ pub async fn generate_meeting_summary(
     summary_language: Option<&str>,
     detected_transcript_language: Option<&str>,
     cached_english: Option<&str>,
+    glossary_context: &str,
 ) -> Result<(String, String, i64), String> {
     if let Some(token) = cancellation_token {
         if token.is_cancelled() {
@@ -409,7 +426,7 @@ pub async fn generate_meeting_summary(
                 }
 
                 info!("Processing chunk {}/{}", i + 1, num_chunks);
-                let user_prompt_chunk = build_chunk_summary_user_prompt(chunk);
+                let user_prompt_chunk = build_chunk_summary_user_prompt(chunk, glossary_context);
 
                 match generate_summary_legacy(
                     client,
@@ -499,6 +516,13 @@ pub async fn generate_meeting_summary(
 
         let mut final_user_prompt =
             format!("<transcript_chunks>\n{content_to_summarize}\n</transcript_chunks>\n");
+
+        let glossary_block = build_glossary_context_block(glossary_context);
+        if !glossary_block.is_empty() {
+            final_user_prompt.push('\n');
+            final_user_prompt.push_str(&glossary_block);
+            final_user_prompt.push('\n');
+        }
 
         if !custom_prompt.is_empty() {
             final_user_prompt.push_str("\n\nUser Provided Context:\n\n<user_context>\n");
@@ -728,7 +752,7 @@ mod tests {
 
     #[test]
     fn chunk_summary_prompt_forces_english_base_output() {
-        let prompt = build_chunk_summary_user_prompt("会議の内容");
+        let prompt = build_chunk_summary_user_prompt("会議の内容", "");
 
         assert!(prompt.contains(ENGLISH_BASE_SUMMARY_INSTRUCTION));
         assert!(prompt.contains("<transcript_chunk>"));
@@ -876,5 +900,83 @@ mod tests {
     fn underscore_locale_variant_returns_none() {
         // OS locale APIs (notably macOS) may emit "en_GB" with underscore.
         assert_eq!(resolve_cached_english(Some("body"), Some("en_GB")), None);
+    }
+
+    // ── Glossary context block construction ──────────────────────────
+
+    #[test]
+    fn empty_glossary_context_produces_no_block() {
+        let block = build_glossary_context_block("");
+        assert!(block.is_empty());
+
+        let block = build_glossary_context_block("   \n  ");
+        assert!(block.is_empty());
+    }
+
+    #[test]
+    fn non_empty_glossary_context_wraps_in_tags_with_interpretive_note() {
+        let ctx = "## Glossary\n\n- **Jane Doe** (person):\n  Definition: Lead engineer";
+        let block = build_glossary_context_block(ctx);
+
+        assert!(block.contains("<glossary_context>"));
+        assert!(block.contains("</glossary_context>"));
+        assert!(block.contains("**Jane Doe**"));
+        assert!(block.contains("Lead engineer"));
+        assert!(block.contains("Do not introduce any glossary entry as a meeting fact"));
+    }
+
+    #[test]
+    fn glossary_context_instructs_aliases_to_use_canonical_terms_in_output() {
+        let ctx = "## Glossary\n\n- **Acapella B** (project) [Aliases: acabee]:\n  Definition: Customer project";
+        let block = build_glossary_context_block(ctx);
+
+        assert!(block.contains("MANDATORY"));
+        assert!(block.contains("standardize all glossary terminology"));
+        assert!(block.contains("When source text uses a listed alias"));
+        assert!(block.contains("write the canonical glossary term"));
+        assert!(block.contains("not the alias"));
+        assert!(block.contains("Confirm that no listed aliases remain"));
+        assert!(block.contains("replace them with the canonical glossary terms"));
+        assert!(block.contains("acabee"));
+        assert!(block.contains("Acapella B"));
+    }
+
+    // ── Chunk prompts with glossary ──────────────────────────────────
+
+    #[test]
+    fn chunk_prompt_empty_glossary_omits_glossary_context() {
+        let prompt = build_chunk_summary_user_prompt("会議の内容", "");
+
+        assert!(!prompt.contains("<glossary_context>"));
+        assert!(!prompt.contains("glossary"));
+        assert!(prompt.contains("<transcript_chunk>"));
+    }
+
+    #[test]
+    fn chunk_prompt_with_glossary_includes_alias_and_term_context() {
+        let glossary_ctx = "## Glossary\n\n- **Jane Doe** (person) (JAYN doh) [Aliases: JD, Janie]:\n  Definition: Lead engineer";
+        let prompt = build_chunk_summary_user_prompt("meeting notes about Jane", glossary_ctx);
+
+        assert!(prompt.contains("<glossary_context>"));
+        assert!(prompt.contains("**Jane Doe**"));
+        assert!(prompt.contains("Lead engineer"));
+        assert!(prompt.contains("JAYN doh"));
+        assert!(prompt.contains("[Aliases: JD, Janie]"));
+        assert!(prompt.contains("<transcript_chunk>"));
+        assert!(prompt.contains("standardize all glossary terminology"));
+        assert!(prompt.contains("Confirm that no listed aliases remain"));
+        assert!(prompt.contains("Do not introduce any glossary entry as a meeting fact"));
+    }
+
+    // ── Final report prompts with glossary ───────────────────────────
+
+    #[test]
+    fn final_report_system_prompt_unchanged_by_glossary() {
+        // The system prompt itself doesn't take glossary context.
+        let prompt = build_final_report_system_prompt("Fill the section", "# <Add Title here>");
+
+        assert!(prompt.contains(ENGLISH_BASE_SUMMARY_INSTRUCTION));
+        assert!(prompt.contains("SECTION-SPECIFIC INSTRUCTIONS"));
+        assert!(!prompt.contains("<glossary_context>"));
     }
 }

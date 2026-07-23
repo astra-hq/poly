@@ -4,6 +4,7 @@ import { BlockNoteSummaryViewRef } from '@/components/AISummary/BlockNoteSummary
 import { CurrentMeeting, useSidebar } from '@/components/Sidebar/SidebarProvider';
 import { invoke as invokeTauri } from '@tauri-apps/api/core';
 import { toast } from 'sonner';
+import { knowledgeGraphService } from '@/services/knowledgeGraphService';
 
 interface UseMeetingDataProps {
   meeting: any;
@@ -106,6 +107,39 @@ export function useMeetingData({ meeting, summaryData, onMeetingUpdated }: UseMe
       });
 
       console.log('✅ Save meeting summary success');
+
+      try {
+        const deleteResult = await knowledgeGraphService.deleteSummaryFromKnowledgeGraph(meeting.id);
+        if (deleteResult.ingested) {
+          console.log('Old summary deleted from KG');
+        } else if (deleteResult.profile_id === null) {
+          console.log('No KG profile — skipping delete');
+        }
+
+        const ingestResult = await knowledgeGraphService.ingestSummaryToKnowledgeGraph(meeting.id);
+        if (ingestResult.ingested) {
+          console.log('Summary synced to Knowledge Graph');
+          toast.success('Summary synced to Knowledge Graph', {
+            description: `Profile: ${ingestResult.profile_id}`,
+            duration: 3000,
+          });
+        } else if (ingestResult.profile_id === null) {
+          console.log('No KG profile — skipping ingest');
+        } else if (ingestResult.error) {
+          console.warn('KG sync error:', ingestResult.error);
+          toast.warning('Knowledge Graph sync issue', {
+            description: ingestResult.error,
+            duration: 5000,
+          });
+        }
+      } catch (kgErr) {
+        const kgMsg = kgErr instanceof Error ? kgErr.message : String(kgErr);
+        console.warn('Knowledge Graph sync failed:', kgMsg);
+        toast.warning('Failed to sync summary to Knowledge Graph', {
+          description: kgMsg,
+          duration: 5000,
+        });
+      }
     } catch (error) {
       console.error('❌ Failed to save meeting summary:', error);
       if (error instanceof Error) {
