@@ -39,9 +39,11 @@ pub mod anthropic;
 pub mod api;
 pub mod app_data;
 pub mod audio;
+pub mod calendar;
 pub mod config;
 pub mod console_utils;
 pub mod database;
+pub mod glossary;
 pub mod groq;
 pub mod knowledge_graph;
 pub mod local_bridge;
@@ -110,6 +112,7 @@ async fn start_recording<R: Runtime>(
         mic_device_name,
         system_device_name,
         meeting_name.clone(),
+        None, // no calendar context for manual start
     )
     .await
     {
@@ -320,8 +323,12 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 "No devices specified, starting with defaults and meeting: {:?}",
                 meeting_name
             );
-            audio::recording_commands::start_recording_with_meeting_name(app.clone(), meeting_name)
-                .await
+            audio::recording_commands::start_recording_with_meeting_name(
+                app.clone(),
+                meeting_name,
+                None, // no calendar context for manual start with defaults
+            )
+            .await
         }
         _ => {
             log_info!(
@@ -335,6 +342,7 @@ async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 mic_device_name,
                 system_device_name,
                 meeting_name,
+                None, // no calendar context for manual start with devices
             )
             .await
         }
@@ -501,6 +509,22 @@ pub fn run() {
             })
             .expect("Failed to initialize database");
 
+            // Initialize calendar auto-record scheduler
+            {
+                let app_handle = _app.handle().clone();
+                let config_repo = app_handle
+                    .state::<state::AppState>()
+                    .config_repo
+                    .clone();
+                let scheduler = Arc::new(calendar::scheduler::CalendarRecordingScheduler::new(
+                    Arc::new(config_repo),
+                ));
+                _app.manage(scheduler.clone());
+                tauri::async_runtime::spawn(async move {
+                    scheduler.start(app_handle).await;
+                });
+            }
+
             // Initialize bundled templates directory for dynamic template discovery
             log::info!("Initializing bundled templates directory...");
             if let Ok(resource_path) = _app.handle().path().resource_dir() {
@@ -655,6 +679,8 @@ pub fn run() {
             api::api_get_providers,
             api::api_save_provider,
             api::api_delete_provider,
+            glossary::commands::api_get_glossary,
+            glossary::commands::api_save_glossary,
             // Summary commands
             summary::commands::api_process_transcript,
             summary::commands::api_get_summary,
@@ -718,6 +744,16 @@ pub fn run() {
             audio::permissions::check_screen_recording_permission_command,
             audio::permissions::request_screen_recording_permission_command,
             audio::permissions::trigger_system_audio_permission_command,
+            calendar::apple_calendar::check_calendar_permission,
+            calendar::commands::get_calendar_settings,
+            calendar::commands::save_calendar_settings,
+            calendar::commands::get_calendar_permission_status,
+            calendar::commands::request_calendar_permission,
+            calendar::commands::get_calendar_provider_health,
+            calendar::commands::get_upcoming_calendar_candidates,
+            calendar::commands::get_selected_calendars,
+            calendar::commands::skip_calendar_occurrence,
+            calendar::commands::get_apple_calendars,
             // Database import commands
             database::commands::check_first_launch,
             database::commands::select_legacy_database_path,
@@ -767,6 +803,9 @@ pub fn run() {
             knowledge_graph::commands::api_ingest_summary_to_knowledge_graph,
             knowledge_graph::commands::api_delete_summary_from_knowledge_graph,
             knowledge_graph::commands::api_get_summary_track_status,
+            // Knowledge graph glossary
+            knowledge_graph::commands::api_sync_glossary_to_knowledge_graph,
+            knowledge_graph::commands::api_delete_glossary_from_knowledge_graph,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -809,4 +848,13 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn glossary_module_compiles_and_exports() {
+        let _glossary = crate::glossary::Glossary::default();
+        let _repo = crate::glossary::GlossaryRepository::new();
+    }
 }

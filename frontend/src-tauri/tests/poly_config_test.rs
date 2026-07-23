@@ -1,7 +1,7 @@
 use app_lib::knowledge_graph::config::KnowledgeGraphSelection;
 use app_lib::poly_config::config::{
-    KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets, PolyConfig,
-    PreferencesConfig, SummaryConfig, TranscriptConfig,
+    CalendarConfig, KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets,
+    PolyConfig, PreferencesConfig, SummaryConfig, TranscriptConfig,
 };
 use app_lib::providers::{ProviderConfig, ProviderType};
 
@@ -62,6 +62,7 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
         preferences: PreferencesConfig {
             language: "en".to_string(),
         },
+        calendar: CalendarConfig::default(),
     };
 
     let yaml = serde_yaml::to_string(&cfg).unwrap();
@@ -111,6 +112,7 @@ fn poly_config_full_schema_roundtrip_without_raw_secrets() {
         KnowledgeGraphSelection::Profile("kg-1".to_string())
     );
     assert_eq!(restored.preferences.language, "en");
+    assert_eq!(restored.calendar, CalendarConfig::default());
 }
 
 // ─── partial config loading test ───────────────────────────────────────────
@@ -136,10 +138,7 @@ preferences:
     assert_eq!(cfg.transcript.provider, "groq");
 
     // Defaulted fields
-    assert_eq!(
-        cfg.summary._whisper_model,
-        None
-    ); // default
+    assert_eq!(cfg.summary._whisper_model, None); // default
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8"); // default
     assert!(cfg.providers.is_empty());
     assert!(cfg.knowledge_graph.profiles.is_empty()); // default
@@ -148,6 +147,7 @@ preferences:
         KnowledgeGraphSelection::None
     ); // default
     assert_eq!(cfg.preferences.language, "fr"); // set
+    assert_eq!(cfg.calendar, CalendarConfig::default());
 }
 
 // ─── completely empty YAML ─────────────────────────────────────────────────
@@ -159,10 +159,7 @@ fn empty_yaml_produces_all_defaults() {
 
     assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
-    assert_eq!(
-        cfg.summary._whisper_model,
-        None
-    );
+    assert_eq!(cfg.summary._whisper_model, None);
     assert_eq!(cfg.transcript.provider, "local");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert!(cfg.providers.is_empty());
@@ -172,6 +169,7 @@ fn empty_yaml_produces_all_defaults() {
         KnowledgeGraphSelection::None
     );
     assert_eq!(cfg.preferences.language, "auto-translate");
+    assert_eq!(cfg.calendar, CalendarConfig::default());
 }
 
 // ─── malformed YAML returns typed error without deleting file ───────────────
@@ -233,6 +231,7 @@ fn save_and_load_roundtrip_via_file() {
         preferences: PreferencesConfig {
             language: "ja".to_string(),
         },
+        calendar: CalendarConfig::default(),
     };
 
     // Save
@@ -253,6 +252,7 @@ fn save_and_load_roundtrip_via_file() {
     assert_eq!(restored.transcript.model, "large-v3");
     assert!(restored.knowledge_graph.profiles.is_empty());
     assert_eq!(restored.preferences.language, "ja");
+    assert_eq!(restored.calendar, CalendarConfig::default());
 }
 
 // ─── KG profile serialization excludes api_key ─────────────────────────────
@@ -304,6 +304,7 @@ fn load_default_returns_default_config() {
     let cfg = PolyConfig::load_default();
     assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.preferences.language, "auto-translate");
+    assert_eq!(cfg.calendar, CalendarConfig::default());
 }
 
 #[test]
@@ -325,6 +326,7 @@ fn default_poly_config_has_sensible_values() {
     assert_eq!(cfg.transcript.provider, "local");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert_eq!(cfg.preferences.language, "auto-translate");
+    assert_eq!(cfg.calendar, CalendarConfig::default());
 }
 
 // ─── atomic save preserves existing file on failure ───────────────────────
@@ -350,6 +352,7 @@ fn poly_config_atomic_save_preserves_existing_file_on_failure() {
         transcript: TranscriptConfig::default(),
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
         preferences: PreferencesConfig::default(),
+        calendar: CalendarConfig::default(),
     };
     let yaml = serde_yaml::to_string(&original_cfg).unwrap();
     std::fs::write(&file_path, &yaml).unwrap();
@@ -378,6 +381,7 @@ fn poly_config_atomic_save_preserves_existing_file_on_failure() {
         transcript: TranscriptConfig::default(),
         knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
         preferences: PreferencesConfig::default(),
+        calendar: CalendarConfig::default(),
     };
     let result = repo.save_atomic(&new_cfg);
     assert!(
@@ -430,13 +434,11 @@ fn startup_creates_default_poly_yaml_without_config_tables() {
     // Returned config has correct defaults
     assert_eq!(cfg.summary.provider_id, "local");
     assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
-    assert_eq!(
-        cfg.summary._whisper_model,
-        None
-    );
+    assert_eq!(cfg.summary._whisper_model, None);
     assert_eq!(cfg.transcript.provider, "local");
     assert_eq!(cfg.transcript.model, "parakeet-tdt-0.6b-v3-int8");
     assert_eq!(cfg.preferences.language, "auto-translate");
+    assert_eq!(cfg.calendar, CalendarConfig::default());
 
     // Verify actual file contents
     let contents = fs::read_to_string(&file_path).unwrap();
@@ -451,6 +453,10 @@ fn startup_creates_default_poly_yaml_without_config_tables() {
     assert!(
         contents.contains("auto-translate"),
         "YAML must contain default language"
+    );
+    assert!(
+        contents.contains("calendar:"),
+        "YAML must contain default calendar settings"
     );
 
     // Second startup: file already exists — must NOT be overwritten

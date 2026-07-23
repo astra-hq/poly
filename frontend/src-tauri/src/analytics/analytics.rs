@@ -6,11 +6,13 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-const SENSITIVE_ANALYTICS_KEYS: &[&str] = &[
+pub const SENSITIVE_ANALYTICS_KEYS: &[&str] = &[
+    // --- meeting identity ---
     "meeting_title",
     "meetingTitle",
     "meeting_name",
     "meetingName",
+    // --- file system paths ---
     "file_name",
     "filename",
     "file_path",
@@ -18,11 +20,63 @@ const SENSITIVE_ANALYTICS_KEYS: &[&str] = &[
     "path",
     "source_path",
     "meeting_folder_path",
+    // --- devices ---
     "device_name",
     "user_agent",
+    // --- calendar privacy: event identity ---
+    "event_title",
+    "eventTitle",
+    "calendar_title",
+    "calendarTitle",
+    // --- calendar privacy: attendees & organizer ---
+    "attendee",
+    "attendee_email",
+    "attendeeEmail",
+    "attendee_name",
+    "attendeeName",
+    "attendees",
+    "organizer",
+    "organizer_email",
+    "organizerEmail",
+    "organizer_name",
+    "organizerName",
+    // --- calendar privacy: meeting link / url ---
+    "meeting_url",
+    "meetingUrl",
+    "meeting_link",
+    "meetingLink",
+    "join_url",
+    "joinUrl",
+    "conference_url",
+    "conferenceUrl",
+    // --- calendar privacy: body / description ---
+    "invite_body",
+    "inviteBody",
+    "event_body",
+    "eventBody",
+    "event_notes",
+    "eventNotes",
+    "calendar_notes",
+    "calendarNotes",
+    "description",
+    // --- calendar privacy: raw provider payloads ---
+    "raw_event",
+    "rawEvent",
+    "provider_payload",
+    "providerPayload",
+    "raw_payload",
+    "rawPayload",
+    "event_data",
+    "eventData",
+    "source_data",
+    "sourceData",
+    // --- calendar privacy: location ---
+    "location",
+    "event_location",
+    "eventLocation",
 ];
 
-fn sanitize_analytics_properties(
+pub fn sanitize_analytics_properties(
     mut properties: HashMap<String, String>,
 ) -> HashMap<String, String> {
     properties.retain(|key, _| !SENSITIVE_ANALYTICS_KEYS.contains(&key.as_str()));

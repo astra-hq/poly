@@ -101,7 +101,9 @@ mod tests {
     /// Wait for the bridge to become healthy, polling every 100ms up to a
     /// timeout.  Returns true once `bridge_health()` succeeds.
     fn wait_for_bridge(timeout_ms: u64) -> bool {
-        let deadline = Instant::now().checked_add(Duration::from_millis(timeout_ms)).unwrap();
+        let deadline = Instant::now()
+            .checked_add(Duration::from_millis(timeout_ms))
+            .unwrap();
         while Instant::now() < deadline {
             if bridge_health() {
                 return true;
@@ -406,10 +408,7 @@ mod tests {
             "Bridge must start with dev-style path: {:?}",
             result.err()
         );
-        assert!(
-            wait_for_bridge(5000),
-            "Bridge must be healthy after start"
-        );
+        assert!(wait_for_bridge(5000), "Bridge must be healthy after start");
 
         let _ = stop_bridge();
         let _ = std::fs::remove_dir_all(dev_dir.parent().unwrap().parent().unwrap());
@@ -435,10 +434,7 @@ mod tests {
             "Bridge must start with mocked packaged path: {:?}",
             result.err()
         );
-        assert!(
-            wait_for_bridge(5000),
-            "Bridge must be healthy after start"
-        );
+        assert!(wait_for_bridge(5000), "Bridge must be healthy after start");
 
         let _ = stop_bridge();
         let _ = std::fs::remove_dir_all(

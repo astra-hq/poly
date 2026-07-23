@@ -7,6 +7,93 @@ use crate::knowledge_graph::config::{
 use crate::providers::ProviderConfig;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Calendar config
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CalendarProvider {
+    Apple,
+}
+
+impl Default for CalendarProvider {
+    fn default() -> Self {
+        Self::Apple
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CalendarConfig {
+    #[serde(default = "default_calendar_metadata_pull_enabled")]
+    pub metadata_pull_enabled: bool,
+
+    #[serde(default)]
+    pub auto_record_enabled: bool,
+
+    #[serde(default)]
+    pub provider: CalendarProvider,
+
+    #[serde(default = "default_calendar_lookahead_window_minutes")]
+    pub lookahead_window_minutes: u16,
+
+    #[serde(default = "default_calendar_grace_window_minutes")]
+    pub start_grace_window_minutes: u16,
+
+    #[serde(default = "default_calendar_grace_window_minutes")]
+    pub end_grace_window_minutes: u16,
+
+    /// Seconds between polling the calendar provider for eligible events.
+    #[serde(default = "default_calendar_poll_interval_seconds")]
+    pub poll_interval_seconds: u16,
+
+    #[serde(default)]
+    pub selected_apple_calendar_identifiers: Vec<String>,
+
+    #[serde(default = "default_calendar_status_visible")]
+    pub show_calendar_status: bool,
+
+    #[serde(default = "default_calendar_status_visible")]
+    pub show_next_meeting_banner: bool,
+}
+
+const fn default_calendar_metadata_pull_enabled() -> bool {
+    true
+}
+
+const fn default_calendar_lookahead_window_minutes() -> u16 {
+    60
+}
+
+const fn default_calendar_grace_window_minutes() -> u16 {
+    5
+}
+
+const fn default_calendar_status_visible() -> bool {
+    true
+}
+
+const fn default_calendar_poll_interval_seconds() -> u16 {
+    30
+}
+
+impl Default for CalendarConfig {
+    fn default() -> Self {
+        Self {
+            metadata_pull_enabled: default_calendar_metadata_pull_enabled(),
+            auto_record_enabled: false,
+            provider: CalendarProvider::Apple,
+            lookahead_window_minutes: default_calendar_lookahead_window_minutes(),
+            start_grace_window_minutes: default_calendar_grace_window_minutes(),
+            end_grace_window_minutes: default_calendar_grace_window_minutes(),
+            poll_interval_seconds: default_calendar_poll_interval_seconds(),
+            selected_apple_calendar_identifiers: Vec::new(),
+            show_calendar_status: default_calendar_status_visible(),
+            show_next_meeting_banner: default_calendar_status_visible(),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Summary config (references a provider from the global providers list)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -213,6 +300,9 @@ pub struct PolyConfig {
 
     #[serde(default)]
     pub preferences: PreferencesConfig,
+
+    #[serde(default)]
+    pub calendar: CalendarConfig,
 }
 
 impl Default for PolyConfig {
@@ -243,6 +333,7 @@ impl Default for PolyConfig {
             transcript: TranscriptConfig::default(),
             knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
             preferences: PreferencesConfig::default(),
+            calendar: CalendarConfig::default(),
         }
     }
 }
@@ -390,6 +481,7 @@ mod tests {
         assert_eq!(cfg.summary.model, "gpt-4o-2024-11-20");
         assert_eq!(cfg.transcript.provider, "local");
         assert_eq!(cfg.preferences.language, "auto-translate");
+        assert_eq!(cfg.calendar, CalendarConfig::default());
     }
 
     #[test]

@@ -6,12 +6,13 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { Transcript } from '@/types';
+import { Transcript, CalendarMetadataRequest } from '@/types';
 
 export interface SaveMeetingRequest {
   meetingTitle: string;
   transcripts: Transcript[];
   folderPath: string | null;
+  calendarMetadata?: CalendarMetadataRequest | null;
 }
 
 export interface SaveMeetingResponse {
@@ -34,17 +35,20 @@ export class StorageService {
    * @param meetingTitle - Title of the meeting
    * @param transcripts - Array of transcript segments
    * @param folderPath - Optional folder path for audio file
+   * @param calendarMetadata - Optional calendar event metadata
    * @returns Promise with { meeting_id: string }
    */
   async saveMeeting(
     meetingTitle: string,
     transcripts: Transcript[],
-    folderPath: string | null
+    folderPath: string | null,
+    calendarMetadata?: CalendarMetadataRequest | null
   ): Promise<SaveMeetingResponse> {
     return invoke<SaveMeetingResponse>('api_save_transcript', {
       meetingTitle,
       transcripts,
       folderPath,
+      calendarMetadata: calendarMetadata ?? null,
     });
   }
 

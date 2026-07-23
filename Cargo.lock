@@ -600,6 +600,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "block"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1805,6 +1811,12 @@ dependencies = [
  "redox_users 0.4.6",
  "winapi",
 ]
+
+[[package]]
+name = "dispatch"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b"
 
 [[package]]
 name = "dispatch2"
@@ -4938,6 +4950,7 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "block",
  "bytemuck",
  "bytes",
  "chrono",
@@ -4950,6 +4963,7 @@ dependencies = [
  "dashmap",
  "dasp",
  "dirs 5.0.1",
+ "dispatch",
  "ebur128",
  "env_logger",
  "esaxx-rs",

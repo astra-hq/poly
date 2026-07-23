@@ -17,6 +17,7 @@ use super::paths;
 /// On first run, if the Poly config file does not exist, the repository
 /// checks for a legacy `~/.resourcefully/resourcefully.yml` and migrates
 /// it forward atomically — the legacy file is never deleted.
+#[derive(Clone)]
 pub struct ConfigRepository {
     path: PathBuf,
     /// Override for the legacy config path used during `try_legacy_migration`.

@@ -20,10 +20,10 @@ mod integration {
     };
     use crate::knowledge_graph::service::KnowledgeGraphIngestionService;
     use crate::knowledge_graph::types::{
-        KnowledgeGraphHealth, KnowledgeGraphInsertTextRequest, KnowledgeGraphInsertTextResponse,
-        KnowledgeGraphNode, KnowledgeGraphNodeId, KnowledgeGraphPipelineStatus,
-        KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId,
-        KnowledgeGraphTrackStatus, QueryMode,
+        DocumentStatus, KnowledgeGraphHealth, KnowledgeGraphInsertTextRequest,
+        KnowledgeGraphInsertTextResponse, KnowledgeGraphNode, KnowledgeGraphNodeId,
+        KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse,
+        KnowledgeGraphTrackId, KnowledgeGraphTrackStatus, QueryMode,
     };
 
     // ── Mock provider (simple version for integration tests) ──────
@@ -107,6 +107,12 @@ mod integration {
         ) -> KnowledgeGraphResult<KnowledgeGraphTrackStatus> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "track_status",
+            })
+        }
+
+        async fn list_documents(&self) -> KnowledgeGraphResult<Vec<DocumentStatus>> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "list_documents",
             })
         }
 
@@ -413,6 +419,12 @@ mod integration {
         ) -> KnowledgeGraphResult<KnowledgeGraphTrackStatus> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "track_status",
+            })
+        }
+
+        async fn list_documents(&self) -> KnowledgeGraphResult<Vec<DocumentStatus>> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "list_documents",
             })
         }
 

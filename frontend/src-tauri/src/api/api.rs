@@ -8,8 +8,8 @@ use crate::{
     database::{
         models::MeetingModel,
         repositories::{
-            meeting::MeetingsRepository, setting::SettingsRepository,
-            transcript::TranscriptsRepository,
+            calendar_metadata::CalendarMetadataInput, meeting::MeetingsRepository,
+            setting::SettingsRepository, transcript::TranscriptsRepository,
         },
     },
     poly_config::config::PolyConfig,
@@ -176,6 +176,32 @@ pub struct SaveMeetingSummaryRequest {
 pub struct SaveTranscriptRequest {
     pub meeting_title: String,
     pub transcripts: Vec<TranscriptSegment>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CalendarMetadataRequest {
+    pub provider_kind: String,
+    pub provider_event_id: String,
+    pub occurrence_start_utc: String,
+    pub occurrence_end_utc: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organizer_email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organizer_display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attendees_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invite_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meeting_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_provider_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_calendar_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1180,13 +1206,15 @@ pub async fn api_save_transcript<R: Runtime>(
     meeting_title: String,
     transcripts: Vec<serde_json::Value>,
     folder_path: Option<String>,
+    calendar_metadata: Option<serde_json::Value>,
     auth_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     log_info!(
-        "api_save_transcript called for meeting: {}, transcripts: {}, folder_path: {:?}, auth_token: {}",
+        "api_save_transcript called for meeting: {}, transcripts: {}, folder_path: {:?}, calendar_metadata: {}, auth_token: {}",
         meeting_title,
         transcripts.len(),
         folder_path,
+        calendar_metadata.is_some(),
         auth_token.is_some()
     );
 
@@ -1222,12 +1250,48 @@ pub async fn api_save_transcript<R: Runtime>(
 
     let pool = state.db_manager.pool();
 
+    // Parse optional calendar metadata
+    let calendar_meta = match calendar_metadata {
+        Some(ref val) if !val.is_null() => {
+            match serde_json::from_value::<CalendarMetadataRequest>(val.clone()) {
+                Ok(meta) => {
+                    log_info!(
+                        "Parsed calendar metadata: provider={}, event={}",
+                        meta.provider_kind,
+                        meta.provider_event_id
+                    );
+                    Some(CalendarMetadataInput {
+                        provider_kind: meta.provider_kind,
+                        provider_event_id: meta.provider_event_id,
+                        occurrence_start_utc: meta.occurrence_start_utc,
+                        occurrence_end_utc: meta.occurrence_end_utc,
+                        event_title: meta.event_title,
+                        organizer_email: meta.organizer_email,
+                        organizer_display_name: meta.organizer_display_name,
+                        attendees_json: meta.attendees_json,
+                        invite_body: meta.invite_body,
+                        meeting_url: meta.meeting_url,
+                        location: meta.location,
+                        source_provider_kind: meta.source_provider_kind,
+                        source_calendar_id: meta.source_calendar_id,
+                    })
+                }
+                Err(e) => {
+                    log_error!("Failed to parse calendar metadata: {}", e);
+                    return Err(format!("Invalid calendar_metadata format: {}", e));
+                }
+            }
+        }
+        _ => None,
+    };
+
     // Now, call the repository with the correctly typed data.
     match TranscriptsRepository::save_transcript(
         pool,
         &meeting_title,
         &transcripts_to_save,
         folder_path,
+        calendar_meta.as_ref(),
     )
     .await
     {

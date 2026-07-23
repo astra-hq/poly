@@ -47,10 +47,7 @@ async fn model_config_roundtrip_via_yaml_and_secret_store() {
     let loaded = repo.load().unwrap();
     assert_eq!(loaded.summary.provider_id, "openai");
     assert_eq!(loaded.summary.model, "gpt-4o");
-    assert_eq!(
-        loaded.summary._whisper_model,
-        None
-    );
+    assert_eq!(loaded.summary._whisper_model, None);
 
     let api_key_status = build_api_key_status(&store, &secret_ref).await.unwrap();
     assert!(api_key_status.has_secret);
@@ -168,7 +165,10 @@ async fn provider_config_roundtrip() {
     assert_eq!(saved_provider.default_model, provider.default_model);
 
     let secret_exists = store.exists(&secret_ref).await.unwrap();
-    assert!(secret_exists, "provider API key should be stored in SecretStore");
+    assert!(
+        secret_exists,
+        "provider API key should be stored in SecretStore"
+    );
 
     let mut cfg = loaded;
     cfg.providers.retain(|p| p.id != provider.id);

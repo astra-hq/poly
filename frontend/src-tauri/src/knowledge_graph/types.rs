@@ -124,6 +124,16 @@ pub struct KnowledgeGraphPipelineStatus {
     pub pending_documents: usize,
     pub indexing_documents: usize,
     pub failed_documents: usize,
+    #[serde(default)]
+    pub busy: bool,
+    #[serde(default, rename = "destructive_busy")]
+    pub destructive_busy: bool,
+    #[serde(default)]
+    pub scanning: bool,
+    #[serde(default, rename = "scanning_exclusive")]
+    pub scanning_exclusive: bool,
+    #[serde(default, rename = "pending_enqueues")]
+    pub pending_enqueues: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -259,6 +269,14 @@ pub struct DocumentQueryResponse {
     pub pagination: PaginationInfo,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub status_counts: BTreeMap<String, usize>,
+}
+
+/// Response from `GET /documents` (LightRAG list-all-documents endpoint).
+/// Documents are grouped by status string in a `statuses` map.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentListResponse {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub statuses: BTreeMap<String, Vec<DocumentStatus>>,
 }
 
 #[cfg(test)]

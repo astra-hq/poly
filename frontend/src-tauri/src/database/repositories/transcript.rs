@@ -1,4 +1,7 @@
 use crate::api::{TranscriptSearchResult, TranscriptSegment};
+use crate::database::repositories::calendar_metadata::{
+    CalendarMetadataInput, CalendarMetadataRepository,
+};
 use chrono::Utc;
 use sqlx::{Connection, Error as SqlxError, SqlitePool};
 use tracing::{error, info};
@@ -8,13 +11,15 @@ pub struct TranscriptsRepository;
 
 impl TranscriptsRepository {
     /// Saves a new meeting and its associated transcript segments.
-    /// This function uses a transaction to ensure that either both the meeting
-    /// and all its transcripts are saved, or none of them are.
+    /// Optionally saves calendar metadata in the same transaction.
+    /// Uses a transaction to ensure that all operations (meeting + transcripts
+    /// + calendar metadata) succeed or roll back together.
     pub async fn save_transcript(
         pool: &SqlitePool,
         meeting_title: &str,
         transcripts: &[TranscriptSegment],
         folder_path: Option<String>,
+        calendar_metadata: Option<&CalendarMetadataInput>,
     ) -> Result<String, SqlxError> {
         let meeting_id = format!("meeting-{}", Uuid::new_v4());
 
@@ -63,6 +68,24 @@ impl TranscriptsRepository {
             if let Err(e) = result {
                 error!(
                     "Failed to save transcript segment for meeting {}: {}",
+                    meeting_id, e
+                );
+                transaction.rollback().await?;
+                return Err(e);
+            }
+        }
+
+        // 3. Save calendar metadata if provided (same transaction)
+        if let Some(metadata) = calendar_metadata {
+            if let Err(e) = CalendarMetadataRepository::insert_with_transaction(
+                &mut *transaction,
+                &meeting_id,
+                metadata,
+            )
+            .await
+            {
+                error!(
+                    "Failed to save calendar metadata for meeting {}: {}",
                     meeting_id, e
                 );
                 transaction.rollback().await?;

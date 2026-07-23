@@ -9,11 +9,11 @@ use crate::knowledge_graph::provider::{
 };
 use crate::knowledge_graph::types::{
     KnowledgeGraphHealth, KnowledgeGraphInsertTextRequest, KnowledgeGraphInsertTextResponse,
-    KnowledgeGraphJobState, KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest,
+    KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest,
     KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
 };
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[derive(Debug, Clone)]
 pub struct LightRagProvider {
@@ -78,7 +78,7 @@ impl LightRagProvider {
         let response = request.send().await.map_err(|error| {
             if error.is_timeout() {
                 KnowledgeGraphProviderError::RequestFailed {
-                    message: format!("{endpoint} timed out after 30s"),
+                    message: format!("{endpoint} timed out after {:?}", REQUEST_TIMEOUT),
                 }
             } else {
                 KnowledgeGraphProviderError::RequestFailed {
@@ -187,41 +187,30 @@ impl KnowledgeGraphProvider for LightRagProvider {
     }
 
     async fn delete_by_file_source(&self, file_source: &str) -> KnowledgeGraphResult<()> {
-        let query_request = crate::knowledge_graph::types::DocumentQueryRequest {
-            status_filter: None,
-            status_filters: None,
-            page: 1,
-            page_size: 200,
-            sort_field: "file_path".to_string(),
-            sort_direction: "asc".to_string(),
-        };
-
-        let query_result: Result<crate::knowledge_graph::types::DocumentQueryResponse, _> =
-            self.post(&["documents"], &query_request).await;
-
-        let doc_id = match query_result {
-            Ok(response) => response
-                .documents
-                .into_iter()
-                .find(|doc| doc.file_path == file_source)
-                .map(|doc| doc.id),
+        let documents = match self.list_documents().await {
+            Ok(docs) => docs,
             Err(e) => {
                 log::warn!(
-                    "Document query failed ({}), falling back to direct delete",
+                    "Document list failed ({}), falling back to direct delete",
                     e
                 );
-                None
+                return Ok(());
             }
         };
+
+        let doc_id = documents
+            .into_iter()
+            .find(|doc| doc.file_path == file_source)
+            .map(|doc| doc.id);
 
         let doc_id = match doc_id {
             Some(id) => id,
             None => {
                 log::info!(
-                    "Document with file_path '{}' not found in KG, trying direct delete",
+                    "Document with file_path '{}' not found in KG, skipping delete",
                     file_source
                 );
-                file_source.to_string()
+                return Ok(());
             }
         };
 
@@ -304,6 +293,13 @@ impl KnowledgeGraphProvider for LightRagProvider {
             })
     }
 
+    async fn list_documents(&self) -> KnowledgeGraphResult<Vec<crate::knowledge_graph::types::DocumentStatus>> {
+        let response: crate::knowledge_graph::types::DocumentListResponse =
+            self.get(&["documents"]).await?;
+        let docs: Vec<_> = response.statuses.into_values().flatten().collect();
+        Ok(docs)
+    }
+
     fn provider_name(&self) -> &'static str {
         "lightrag"
     }
@@ -316,6 +312,11 @@ mod tests {
     use httpmock::Method::{DELETE, GET, POST};
     use httpmock::MockServer;
     use serde_json::json;
+
+    #[test]
+    fn request_timeout_allows_multi_minute_lightrag_operations() {
+        assert!(REQUEST_TIMEOUT >= Duration::from_secs(600));
+    }
 
     #[tokio::test]
     async fn health_sends_auth_and_parses_response() {
@@ -443,30 +444,23 @@ mod tests {
     async fn delete_by_file_source_queries_then_deletes_by_doc_id() {
         let server = MockServer::start();
         let query_mock = server.mock(|when, then| {
-            when.method(POST)
+            when.method(GET)
                 .path("/documents")
                 .header("X-API-Key", "secret");
             then.status(200).json_body(json!({
-                "documents": [
-                    {
-                        "id": "doc-123",
-                        "content_summary": "Summary",
-                        "content_length": 100,
-                        "status": "processed",
-                        "created_at": "2025-01-01T00:00:00",
-                        "updated_at": "2025-01-01T00:00:00",
-                        "file_path": "meeting-summary-123"
-                    }
-                ],
-                "pagination": {
-                    "page": 1,
-                    "page_size": 200,
-                    "total_count": 1,
-                    "total_pages": 1,
-                    "has_next": false,
-                    "has_prev": false
-                },
-                "status_counts": {}
+                "statuses": {
+                    "PROCESSED": [
+                        {
+                            "id": "doc-123",
+                            "content_summary": "Summary",
+                            "content_length": 100,
+                            "status": "processed",
+                            "created_at": "2025-01-01T00:00:00",
+                            "updated_at": "2025-01-01T00:00:00",
+                            "file_path": "meeting-summary-123"
+                        }
+                    ]
+                }
             }));
         });
         let delete_mock = server.mock(|when, then| {

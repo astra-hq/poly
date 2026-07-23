@@ -49,7 +49,26 @@ pnpm install
 echo "Building Next.js application..."
 pnpm run build
 
+if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+    echo "No Tauri signing key found. Generating temporary key for local build..."
+    TEMP_KEY_DIR=$(mktemp -d)
+    pnpm exec tauri signer generate -w "$TEMP_KEY_DIR/tauri-signing-key" --ci -f
+    export TAURI_SIGNING_PRIVATE_KEY=$(cat "$TEMP_KEY_DIR/tauri-signing-key")
+    echo "Temporary signing key generated and exported"
+fi
+
+echo "Disabling hardened runtime and updater artifacts for local ad-hoc build..."
+sed -i '' 's/"hardenedRuntime": true/"hardenedRuntime": false/' src-tauri/tauri.conf.json
+sed -i '' 's/"createUpdaterArtifacts": true/"createUpdaterArtifacts": false/' src-tauri/tauri.conf.json
+
 echo "Building Tauri app..."
-pnpm run tauri build
+pnpm run tauri build || BUILD_EXIT=$?
+
+echo "Restoring tauri.conf.json..."
+git checkout src-tauri/tauri.conf.json
+
+if [[ -n "$BUILD_EXIT" ]]; then
+    exit $BUILD_EXIT
+fi
 sleep
 

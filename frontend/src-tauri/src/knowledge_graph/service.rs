@@ -477,9 +477,9 @@ mod tests {
 
     use crate::knowledge_graph::provider::*;
     use crate::knowledge_graph::types::{
-        KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse, KnowledgeGraphPipelineStatus,
-        KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId,
-        KnowledgeGraphTrackStatus,
+        DocumentStatus, KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse,
+        KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse,
+        KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
     };
 
     /// A mock provider that records every `insert_text` call and can be
@@ -574,6 +574,10 @@ mod tests {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "track_status",
             })
+        }
+
+        async fn list_documents(&self) -> KnowledgeGraphResult<Vec<DocumentStatus>> {
+            Ok(vec![])
         }
 
         fn provider_name(&self) -> &'static str {

@@ -2,6 +2,12 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { recordingService } from '@/services/recordingService';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import {
+  showCalendarSchedulerNotification,
+  SchedulerNotificationPayload,
+} from '@/lib/recordingNotification';
+import { SchedulerStatus } from '@/components/CalendarSchedulerStatus';
 
 /**
  * Recording state synchronized with backend
@@ -25,22 +31,18 @@ export enum RecordingStatus {
 }
 
 interface RecordingState {
-  isRecording: boolean;           // Is a recording session active
-  isPaused: boolean;              // Is the recording paused
-  isActive: boolean;              // Is actively recording (recording && !paused)
-  recordingDuration: number | null;  // Total duration including pauses
-  activeDuration: number | null;     // Active recording time (excluding pauses)
-
-  // NEW: Lifecycle status
+  isRecording: boolean;
+  isPaused: boolean;
+  isActive: boolean;
+  recordingDuration: number | null;
+  activeDuration: number | null;
   status: RecordingStatus;
-  statusMessage?: string;  // Optional message for current status
+  statusMessage?: string;
+  schedulerStatus: SchedulerStatus | null;
 }
 
 interface RecordingStateContextType extends RecordingState {
-  // NEW: Setters for status management
   setStatus: (status: RecordingStatus, message?: string) => void;
-
-  // Computed helpers (derived from status)
   isStopping: boolean;
   isProcessing: boolean;
   isSaving: boolean;
@@ -63,8 +65,9 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
     isActive: false,
     recordingDuration: null,
     activeDuration: null,
-    status: RecordingStatus.IDLE,  // NEW: Initialize with IDLE status
-    statusMessage: undefined,       // NEW: No message initially
+    status: RecordingStatus.IDLE,
+    statusMessage: undefined,
+    schedulerStatus: null,
   });
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -200,6 +203,20 @@ export function RecordingStateProvider({ children }: { children: React.ReactNode
           }));
         });
         unsubscribers.push(unlistenResumed);
+
+        const unlistenScheduler = await listen<SchedulerStatus & SchedulerNotificationPayload>(
+          'calendar-scheduler-status',
+          (event) => {
+            const payload = event.payload;
+            console.log('[RecordingStateContext] Calendar scheduler status:', payload.type);
+            setState(prev => ({
+              ...prev,
+              schedulerStatus: payload,
+            }));
+            showCalendarSchedulerNotification(payload.type, payload);
+          }
+        );
+        unsubscribers.push(unlistenScheduler);
 
         console.log('[RecordingStateContext] Event listeners set up successfully');
       } catch (error) {

@@ -61,3 +61,104 @@ export async function showRecordingNotification(): Promise<void> {
     // Don't fail the recording if notification fails
   }
 }
+
+export interface SchedulerNotificationPayload {
+  event_id?: string;
+  title?: string;
+  start?: string;
+  end?: string;
+  reason?: string;
+  message?: string;
+}
+
+export function showCalendarAutoStartNotification(): void {
+  try {
+    toast.success('Auto-Recording Started', {
+      description: 'A scheduled meeting is now being recorded automatically.',
+      duration: 6000,
+      position: 'bottom-right',
+    });
+  } catch (e) {
+    console.error('Failed to show calendar auto-start notification:', e);
+  }
+}
+
+export function showCalendarSkipNotification(reason: string): void {
+  try {
+    const reasonText = skipReasonToText(reason);
+    toast.warning('Auto-Record Skipped', {
+      description: reasonText,
+      duration: 5000,
+      position: 'bottom-right',
+    });
+  } catch (e) {
+    console.error('Failed to show calendar skip notification:', e);
+  }
+}
+
+export function showCalendarSchedulerNotification(
+  type: string,
+  payload: SchedulerNotificationPayload
+): void {
+  try {
+    switch (type) {
+      case 'candidate_found': {
+        break;
+      }
+      case 'recording_started': {
+        showCalendarAutoStartNotification();
+        break;
+      }
+      case 'recording_skipped_active': {
+        showCalendarSkipNotification('recording_active');
+        break;
+      }
+      case 'skipped': {
+        showCalendarSkipNotification(payload.reason ?? 'unknown');
+        break;
+      }
+      case 'error': {
+        toast.error('Scheduler Error', {
+          description: payload.message ?? 'An error occurred while checking your calendar.',
+          duration: 8000,
+          position: 'bottom-right',
+        });
+        break;
+      }
+      case 'stopped': {
+        toast.info('Scheduler Stopped', {
+          description: 'Calendar auto-record monitoring has stopped.',
+          duration: 4000,
+          position: 'bottom-right',
+        });
+        break;
+      }
+      default: {
+        console.warn('Unknown calendar scheduler notification type:', type);
+      }
+    }
+  } catch (e) {
+    console.error('Failed to show calendar scheduler notification:', e);
+  }
+}
+
+function skipReasonToText(reason: string): string {
+  switch (reason) {
+    case 'recording_active':
+      return 'A recording is already in progress. The scheduled meeting will not be recorded automatically.';
+    case 'permission_denied':
+      return 'Calendar access is not granted. Please enable calendar permissions in settings to use auto-record.';
+    case 'outside_grace_window':
+      return 'The meeting is outside the automatic start window. You can start recording manually.';
+    case 'all_deduped':
+      return 'This meeting has already been recorded automatically.';
+    case 'no_candidates':
+      return 'No eligible meetings were found in the current time window.';
+    case 'conflict':
+      return 'Multiple overlapping meetings were detected. Recording was skipped to avoid ambiguity.';
+    case 'manual_skip':
+      return 'This meeting was skipped and will not be recorded automatically.';
+    default:
+      return 'The scheduled meeting was not recorded automatically.';
+  }
+}

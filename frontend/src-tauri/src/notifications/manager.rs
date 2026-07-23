@@ -206,6 +206,42 @@ impl<R: Runtime> NotificationManager<R> {
         self.show_notification(notification).await
     }
 
+    pub async fn show_calendar_auto_record_started(&self) -> Result<()> {
+        let settings = self.settings.read().await;
+        if !settings
+            .notification_preferences
+            .show_calendar_auto_record_started
+        {
+            return Ok(());
+        }
+        let notification = Notification::calendar_auto_record_started();
+        self.show_notification(notification).await
+    }
+
+    pub async fn show_calendar_auto_record_skipped(&self, reason: impl Into<String>) -> Result<()> {
+        let settings = self.settings.read().await;
+        if !settings
+            .notification_preferences
+            .show_calendar_auto_record_skipped
+        {
+            return Ok(());
+        }
+        let notification = Notification::calendar_auto_record_skipped(reason);
+        self.show_notification(notification).await
+    }
+
+    pub async fn show_calendar_scheduler_error(&self, error: impl Into<String>) -> Result<()> {
+        let settings = self.settings.read().await;
+        if !settings
+            .notification_preferences
+            .show_calendar_scheduler_errors
+        {
+            return Ok(());
+        }
+        let notification = Notification::calendar_scheduler_error(error);
+        self.show_notification(notification).await
+    }
+
     /// Show a test notification
     pub async fn show_test_notification(&self) -> Result<()> {
         let notification = Notification::test_notification();
@@ -345,7 +381,22 @@ impl<R: Runtime> NotificationManager<R> {
             NotificationType::SystemError(_) => {
                 settings.notification_preferences.show_system_errors
             }
-            NotificationType::Test => true, // Always show test notifications
+            NotificationType::CalendarAutoRecordStarted => {
+                settings
+                    .notification_preferences
+                    .show_calendar_auto_record_started
+            }
+            NotificationType::CalendarAutoRecordSkipped => {
+                settings
+                    .notification_preferences
+                    .show_calendar_auto_record_skipped
+            }
+            NotificationType::CalendarSchedulerError => {
+                settings
+                    .notification_preferences
+                    .show_calendar_scheduler_errors
+            }
+            NotificationType::Test => true,
         }
     }
 

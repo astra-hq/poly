@@ -468,6 +468,17 @@ impl RecordingManager {
         self.recording_saver.set_meeting_name(name);
     }
 
+    /// Set safe calendar context for this recording session.
+    ///
+    /// Provider kind, event id, occurrence times, event title, and metadata
+    /// status only.  No attendees, body, meeting link, or raw provider payloads.
+    pub fn set_calendar_context(
+        &mut self,
+        context: crate::calendar::recording_metadata::CalendarRecordingContext,
+    ) {
+        self.recording_saver.set_calendar_context(context);
+    }
+
     /// Add a structured transcript segment to be saved later
     pub fn add_transcript_segment(&self, segment: super::recording_saver::TranscriptSegment) {
         self.recording_saver.add_transcript_segment(segment);
@@ -515,6 +526,13 @@ impl RecordingManager {
     /// Returns None if no meeting name was set or folder structure not initialized
     pub fn get_meeting_folder(&self) -> Option<std::path::PathBuf> {
         self.recording_saver.get_meeting_folder().map(|p| p.clone())
+    }
+
+    /// Get the calendar context stored for this recording session (if any).
+    pub fn get_calendar_context(
+        &self,
+    ) -> Option<&crate::calendar::recording_metadata::CalendarRecordingContext> {
+        self.recording_saver.get_calendar_context()
     }
 
     /// Check for device events (disconnects/reconnects)
