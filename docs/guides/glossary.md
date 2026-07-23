@@ -26,18 +26,19 @@ Each entry contains the following fields:
 | Field | Required | Description |
 |---|---|---|
 | `term` | Yes | Canonical name (e.g. "Parakeet") |
+| `id` | Yes | Stable entry ID. Older files without IDs are assigned IDs on load. |
 | `kind` | Yes | One of: `person`, `team`, `project`, `code_name`, `component`, `acronym`, `other` |
 | `aliases` | No | Comma-separated alternative names (e.g. "PK, Parakeet TDT") |
 | `pronunciation` | No | Phonetic hint for transcription |
 | `definition` | No | Short description |
 | `notes` | No | Additional context for summarization |
+| `references` | No | HTTP(S) links, one URL per line in the Settings UI |
 
 ## Knowledge Graph sync
 
-- **Sync to KG** pushes the current glossary as a document to the active global Knowledge Graph profile.
-- **Delete from KG** removes the glossary document from the active profile.
-- Both actions are manual. There is no automatic sync.
-- If no active KG profile is configured, the action is skipped with a clear reason.
+- Saving glossary changes syncs changed entries to the active Knowledge Graph profile.
+- Sync uses one Knowledge Graph document per entry, so adding one entry does not delete and reupload the whole glossary.
+- If no active KG profile is configured, the sync is skipped with a clear reason in the UI.
 
 ## Safety semantics
 
