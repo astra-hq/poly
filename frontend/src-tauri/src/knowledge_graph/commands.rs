@@ -1,12 +1,16 @@
 use log::info;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tokio::time::interval;
 
-use crate::glossary::GlossaryRepository;
+use crate::glossary::render::render_kg_entry_document;
+use crate::glossary::{Glossary, GlossaryEntry, GlossaryRepository};
 use crate::knowledge_graph::config::KnowledgeGraphSelection;
 use crate::knowledge_graph::lightrag::LightRagProvider;
-use crate::knowledge_graph::provider::{KnowledgeGraphProvider, KnowledgeGraphProviderError};
+use crate::knowledge_graph::provider::{
+    KnowledgeGraphProvider, KnowledgeGraphProviderError, KnowledgeGraphResult,
+};
 use crate::knowledge_graph::service::{
     IngestionSummary, KnowledgeGraphIngestionService, MeetingKnowledgeGraphStatus,
 };
@@ -22,8 +26,25 @@ use crate::secrets::store::SecretStore;
 use crate::state::AppState;
 
 const TRACK_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
-const TRACK_STATUS_MAX_WAIT: Duration = Duration::from_secs(120);
+const TRACK_STATUS_MAX_WAIT: Duration = Duration::from_secs(600);
 const SUMMARY_CHUNK_TOKEN_SIZE: usize = 1000;
+
+async fn delete_glossary_document_for_user_request(
+    provider: &dyn KnowledgeGraphProvider,
+    glossary: &Glossary,
+) -> KnowledgeGraphResult<()> {
+    let mut error = None;
+    for file_source in glossary_delete_file_sources(glossary) {
+        if let Err(e) = provider.delete_by_file_source(&file_source).await {
+            error = Some(e);
+        }
+    }
+
+    match error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
 
 fn is_final_status(status: &str) -> bool {
     matches!(status.to_uppercase().as_str(), "PROCESSED" | "FAILED")
@@ -68,6 +89,45 @@ async fn poll_track_status_until_final(
             }
             Err(e) => {
                 log::warn!("Track status poll failed for {}: {}", track_id, e);
+            }
+        }
+    }
+}
+
+async fn wait_for_pipeline_clear(provider: &dyn KnowledgeGraphProvider) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let mut ticker = interval(TRACK_STATUS_POLL_INTERVAL);
+
+    loop {
+        ticker.tick().await;
+
+        if start.elapsed() > TRACK_STATUS_MAX_WAIT {
+            return Err(format!(
+                "Timeout waiting for pipeline to clear after {:?}",
+                TRACK_STATUS_MAX_WAIT
+            ));
+        }
+
+        match provider.pipeline_status().await {
+            Ok(status) => {
+                if !status.destructive_busy && !status.scanning_exclusive && status.pending_enqueues == 0 {
+                    log::info!(
+                        "Pipeline clear (destructive_busy={}, scanning_exclusive={}, pending_enqueues={})",
+                        status.destructive_busy,
+                        status.scanning_exclusive,
+                        status.pending_enqueues
+                    );
+                    return Ok(());
+                }
+                log::debug!(
+                    "Pipeline still busy (destructive_busy={}, scanning_exclusive={}, pending_enqueues={}) — waiting",
+                    status.destructive_busy,
+                    status.scanning_exclusive,
+                    status.pending_enqueues
+                );
+            }
+            Err(e) => {
+                log::warn!("Pipeline status poll failed: {}", e);
             }
         }
     }
@@ -568,6 +628,20 @@ pub async fn api_ingest_summary_to_knowledge_graph<R: Runtime>(
 
     // ── Insert to KG ────────────────────────────────────────────
     let file_source = summary_file_source(&meeting_id);
+
+    // LightRAG rejects duplicate file_source with 409; upsert by deleting first.
+    match provider.delete_by_file_source(&file_source).await {
+        Ok(()) => {
+            info!("Deleted existing summary from KG for meeting {} (file_source: {})", meeting_id, file_source);
+            if let Err(e) = wait_for_pipeline_clear(&provider).await {
+                log::warn!("Pipeline did not clear after summary delete — proceeding anyway: {}", e);
+            }
+        }
+        Err(e) => {
+            log::info!("No existing summary to delete for meeting {} (or deletion failed): {}", meeting_id, e);
+        }
+    }
+
     let request = crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest {
         text: markdown,
         source: Some(file_source.clone()),
@@ -862,6 +936,13 @@ pub async fn api_delete_summary_from_knowledge_graph<R: Runtime>(
         }
     }
 
+    if let Err(e) = wait_for_pipeline_clear(&provider).await {
+        log::warn!(
+            "Pipeline did not clear after summary delete — proceeding anyway: {}",
+            e
+        );
+    }
+
     if let Err(track_err) = service
         .track_summary_document(
             &meeting_id,
@@ -994,6 +1075,88 @@ pub async fn api_get_summary_track_status<R: Runtime>(
 // ── Glossary KG sync / delete ──────────────────────────────────────────
 
 const GLOBAL_GLOSSARY_FILE_SOURCE: &str = "poly/glossary.yml";
+const LIGHTRAG_GLOSSARY_BASENAME_FILE_SOURCE: &str = "glossary.yml";
+const GLOSSARY_ENTRY_FILE_SOURCE_PREFIX: &str = "poly/glossary/entries";
+const GLOSSARY_DELETE_FILE_SOURCES: &[&str] = &[
+    GLOBAL_GLOSSARY_FILE_SOURCE,
+    LIGHTRAG_GLOSSARY_BASENAME_FILE_SOURCE,
+];
+
+fn glossary_entry_file_source(entry_id: &str) -> String {
+    format!("{}/{}.md", GLOSSARY_ENTRY_FILE_SOURCE_PREFIX, entry_id)
+}
+
+fn glossary_delete_file_sources(glossary: &Glossary) -> Vec<String> {
+    let mut file_sources: Vec<String> = glossary
+        .entries
+        .iter()
+        .map(|entry| glossary_entry_file_source(&entry.id))
+        .collect();
+    file_sources.extend(
+        GLOSSARY_DELETE_FILE_SOURCES
+            .iter()
+            .map(|file_source| (*file_source).to_string()),
+    );
+    file_sources
+}
+
+fn glossary_entries_by_id(glossary: &Glossary) -> BTreeMap<&str, &GlossaryEntry> {
+    glossary
+        .entries
+        .iter()
+        .map(|entry| (entry.id.as_str(), entry))
+        .collect()
+}
+
+async fn insert_glossary_entry_document(
+    provider: &dyn KnowledgeGraphProvider,
+    entry: &GlossaryEntry,
+) -> KnowledgeGraphResult<KnowledgeGraphTrackId> {
+    let response = provider
+        .insert_text(crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest {
+            text: render_kg_entry_document(entry),
+            source: Some(glossary_entry_file_source(&entry.id)),
+            chunking: None,
+        })
+        .await?;
+
+    Ok(response.track_id)
+}
+
+async fn sync_glossary_entries_to_knowledge_graph(
+    provider: &dyn KnowledgeGraphProvider,
+    current: &Glossary,
+    previous: Option<&Glossary>,
+) -> KnowledgeGraphResult<Vec<KnowledgeGraphTrackId>> {
+    let current_by_id = glossary_entries_by_id(current);
+    let previous_by_id = previous.map(glossary_entries_by_id).unwrap_or_default();
+    let current_ids: BTreeSet<&str> = current_by_id.keys().copied().collect();
+    let previous_ids: BTreeSet<&str> = previous_by_id.keys().copied().collect();
+    let mut track_ids = Vec::new();
+
+    for removed_id in previous_ids.difference(&current_ids) {
+        provider
+            .delete_by_file_source(&glossary_entry_file_source(removed_id))
+            .await?;
+    }
+
+    for entry in &current.entries {
+        match previous_by_id.get(entry.id.as_str()) {
+            None => {
+                track_ids.push(insert_glossary_entry_document(provider, entry).await?);
+            }
+            Some(previous_entry) if *previous_entry != entry => {
+                provider
+                    .delete_by_file_source(&glossary_entry_file_source(&entry.id))
+                    .await?;
+                track_ids.push(insert_glossary_entry_document(provider, entry).await?);
+            }
+            Some(_) => {}
+        }
+    }
+
+    Ok(track_ids)
+}
 
 /// Result returned by glossary Knowledge Graph sync/delete operations.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -1009,12 +1172,12 @@ pub struct GlossarySyncResult {
 /// Sync the global glossary to the Knowledge Graph for the active profile.
 ///
 /// Uses the global active KG profile only — does not query per-meeting
-/// selection.  Inserts the rendered glossary markdown as a single document
-/// with file_source `poly/glossary.yml`.  Best-effort deletes any prior
-/// glossary document by that file_source before inserting.
+/// selection. Inserts each changed entry as its own document with file_source
+/// `poly/glossary/entries/{entry.id}.md`.
 #[tauri::command]
 pub async fn api_sync_glossary_to_knowledge_graph<R: Runtime>(
     _app: AppHandle<R>,
+    previous_glossary: Option<Glossary>,
 ) -> Result<GlossarySyncResult, String> {
     info!("api_sync_glossary_to_knowledge_graph");
 
@@ -1035,9 +1198,7 @@ pub async fn api_sync_glossary_to_knowledge_graph<R: Runtime>(
                 track_id: None,
                 document_id: None,
                 error: None,
-                skipped_reason: Some(
-                    "No active knowledge graph profile configured".to_string(),
-                ),
+                skipped_reason: Some("No active knowledge graph profile configured".to_string()),
             });
         }
     };
@@ -1063,11 +1224,23 @@ pub async fn api_sync_glossary_to_knowledge_graph<R: Runtime>(
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
     // ── Load glossary ───────────────────────────────────────────────
-    let glossary = GlossaryRepository::new()
+    let repo = GlossaryRepository::new();
+    let mut glossary = repo
         .load()
         .map_err(|e| format!("Failed to load glossary: {}", e))?;
+    glossary.normalize();
+    glossary.validate()?;
+    let previous_glossary = previous_glossary.map(|mut previous| {
+        previous.normalize();
+        previous
+    });
 
-    if glossary.entries.is_empty() {
+    if glossary.entries.is_empty()
+        && previous_glossary
+            .as_ref()
+            .map(|previous| previous.entries.is_empty())
+            .unwrap_or(true)
+    {
         info!("Glossary is empty — skipping KG sync");
         return Ok(GlossarySyncResult {
             profile_id: Some(profile_id),
@@ -1079,103 +1252,27 @@ pub async fn api_sync_glossary_to_knowledge_graph<R: Runtime>(
         });
     }
 
-    // ── Best-effort delete old glossary document by file_source ──
-    match provider
-        .delete_by_file_source(GLOBAL_GLOSSARY_FILE_SOURCE)
+    match sync_glossary_entries_to_knowledge_graph(&provider, &glossary, previous_glossary.as_ref())
         .await
     {
-        Ok(()) => {
-            info!(
-                "Deleted previous glossary document from KG with file_source={}",
-                GLOBAL_GLOSSARY_FILE_SOURCE
-            );
-        }
-        Err(e) => {
-            log::warn!(
-                "Failed to delete previous glossary document from KG (non-fatal): {}",
-                e
-            );
-        }
-    }
-
-    // ── Render and insert glossary document ────────────────────────
-    let kg_document = glossary.to_kg_document();
-    let request = crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest {
-        text: kg_document,
-        source: Some(GLOBAL_GLOSSARY_FILE_SOURCE.to_string()),
-        chunking: None,
-    };
-
-    match provider.insert_text(request).await {
-        Ok(insert_response) => {
-            let track_id = insert_response.track_id.0.clone();
-            info!(
-                "Glossary insert accepted (profile: {}) track_id={}",
-                profile_id, track_id
-            );
-
-            // ── Poll track status immediately ──────────────────────
-            match poll_track_status_until_final(&provider, &track_id).await {
-                Ok(track_status) => {
-                    let document_id =
-                        track_status.documents.first().map(|doc| doc.id.clone());
-
-                    if let Some(combined_error) =
-                        collect_track_failures(&track_status, &track_id)
-                    {
-                        Ok(GlossarySyncResult {
-                            profile_id: Some(profile_id),
-                            synced: false,
-                            track_id: Some(track_id),
-                            document_id,
-                            error: Some(combined_error),
-                            skipped_reason: None,
-                        })
-                    } else {
-                        info!(
-                            "Glossary synced to KG (profile: {}) track_id={} document_id={:?}",
-                            profile_id, track_id, document_id
-                        );
-                        Ok(GlossarySyncResult {
-                            profile_id: Some(profile_id),
-                            synced: true,
-                            track_id: Some(track_id),
-                            document_id,
-                            error: None,
-                            skipped_reason: None,
-                        })
-                    }
-                }
-                Err(poll_err) => {
-                    log::error!(
-                        "Track status poll failed for glossary track {}: {}",
-                        track_id,
-                        poll_err
-                    );
-                    Ok(GlossarySyncResult {
-                        profile_id: Some(profile_id),
-                        synced: false,
-                        track_id: Some(track_id),
-                        document_id: None,
-                        error: Some(format!(
-                            "Glossary inserted but track status poll failed: {}",
-                            poll_err
-                        )),
-                        skipped_reason: None,
-                    })
-                }
-            }
-        }
+        Ok(track_ids) => Ok(GlossarySyncResult {
+            profile_id: Some(profile_id),
+            synced: true,
+            track_id: track_ids.first().map(|track_id| track_id.0.clone()),
+            document_id: None,
+            error: None,
+            skipped_reason: None,
+        }),
         Err(e) => {
             let error_msg = e.to_string();
-            log::error!("Failed to insert glossary to KG: {}", error_msg);
+            log::error!("Failed to sync glossary entries to KG: {}", error_msg);
             Ok(GlossarySyncResult {
                 profile_id: Some(profile_id),
                 synced: false,
                 track_id: None,
                 document_id: None,
                 error: Some(format!(
-                    "Failed to insert glossary to KG: {}",
+                    "Failed to sync glossary entries to KG: {}",
                     error_msg
                 )),
                 skipped_reason: None,
@@ -1184,10 +1281,11 @@ pub async fn api_sync_glossary_to_knowledge_graph<R: Runtime>(
     }
 }
 
-/// Delete the glossary document from the Knowledge Graph.
+/// Delete glossary documents from the Knowledge Graph.
 ///
 /// Uses the global active KG profile only — does not query per-meeting
-/// selection.  Best-effort deletes by file_source `poly/glossary.yml`.
+/// selection. Deletes current per-entry file sources and legacy aggregate
+/// file sources.
 #[tauri::command]
 pub async fn api_delete_glossary_from_knowledge_graph<R: Runtime>(
     _app: AppHandle<R>,
@@ -1211,9 +1309,7 @@ pub async fn api_delete_glossary_from_knowledge_graph<R: Runtime>(
                 track_id: None,
                 document_id: None,
                 error: None,
-                skipped_reason: Some(
-                    "No active knowledge graph profile configured".to_string(),
-                ),
+                skipped_reason: Some("No active knowledge graph profile configured".to_string()),
             });
         }
     };
@@ -1238,16 +1334,16 @@ pub async fn api_delete_glossary_from_knowledge_graph<R: Runtime>(
     let provider = LightRagProvider::new(&profile.lightrag_url, api_key)
         .map_err(|e| format!("Failed to create LightRag provider: {}", e))?;
 
-    // ── Best-effort delete by file_source ─────────────────────────
-    match provider
-        .delete_by_file_source(GLOBAL_GLOSSARY_FILE_SOURCE)
-        .await
-    {
+    let repo = GlossaryRepository::new();
+    let glossary = repo
+        .load()
+        .map_err(|e| format!("Failed to load glossary: {}", e))?;
+
+    let delete_result = delete_glossary_document_for_user_request(&provider, &glossary).await;
+
+    match delete_result {
         Ok(()) => {
-            info!(
-                "Glossary document deleted from KG with file_source={}",
-                GLOBAL_GLOSSARY_FILE_SOURCE
-            );
+            info!("Glossary document deleted from KG");
             Ok(GlossarySyncResult {
                 profile_id: Some(profile_id),
                 synced: true,
@@ -1277,12 +1373,17 @@ mod poll_track_status_tests {
     use super::*;
     use crate::knowledge_graph::provider::*;
     use crate::knowledge_graph::types::{
-        KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse, KnowledgeGraphPipelineStatus,
-        KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
-        TrackStatusDocument,
+        DocumentStatus, KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse,
+        KnowledgeGraphPipelineStatus, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId,
+        KnowledgeGraphTrackStatus, TrackStatusDocument,
     };
     use async_trait::async_trait;
     use std::sync::Mutex;
+
+    #[test]
+    fn track_status_wait_allows_multi_minute_lightrag_operations() {
+        assert!(TRACK_STATUS_MAX_WAIT >= Duration::from_secs(600));
+    }
 
     struct TrackStatusMockProvider {
         /// Responses returned in order by `track_status`. Once exhausted,
@@ -1356,6 +1457,12 @@ mod poll_track_status_tests {
             } else {
                 Ok(responses.last().cloned().unwrap())
             }
+        }
+
+        async fn list_documents(&self) -> KnowledgeGraphResult<Vec<DocumentStatus>> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "list_documents",
+            })
         }
 
         fn provider_name(&self) -> &'static str {
@@ -1611,20 +1718,20 @@ mod glossary_kg_sync_tests {
     use crate::knowledge_graph::config::KnowledgeGraphSettings;
     use crate::knowledge_graph::provider::*;
     use crate::knowledge_graph::types::{
-        KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse, KnowledgeGraphPipelineStatus,
-        KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
+        DocumentStatus, KnowledgeGraphHealth, KnowledgeGraphInsertTextResponse,
+        KnowledgeGraphPipelineStatus, KnowledgeGraphQueryResponse, KnowledgeGraphTrackId,
+        KnowledgeGraphTrackStatus,
     };
     use async_trait::async_trait;
     use std::sync::Mutex;
 
-    // ── Constant test ────────────────────────────────────────────────
-
     #[test]
-    fn glossary_file_source_is_stable() {
-        assert_eq!(GLOBAL_GLOSSARY_FILE_SOURCE, "poly/glossary.yml");
+    fn glossary_entry_file_source_is_stable() {
+        assert_eq!(
+            glossary_entry_file_source("project-poly"),
+            "poly/glossary/entries/project-poly.md"
+        );
     }
-
-    // ── Result type tests ────────────────────────────────────────────
 
     #[test]
     fn glossary_sync_result_roundtrip_serialization() {
@@ -1675,8 +1782,6 @@ mod glossary_kg_sync_tests {
         assert!(json.contains("connection refused"));
     }
 
-    // ── Active profile resolution tests ─────────────────────────────
-
     #[test]
     fn config_resolve_returns_none_for_none_selection() {
         let settings = KnowledgeGraphSettings {
@@ -1718,22 +1823,21 @@ mod glossary_kg_sync_tests {
         assert!(crate::knowledge_graph::config::resolve(&settings).is_none());
     }
 
-    // ── Mock provider for insert/delete tests ───────────────────────
-
     struct GlossaryMockProvider {
         insert_captures: Mutex<Vec<crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest>>,
         delete_file_source_captures: Mutex<Vec<String>>,
-        insert_response: Mutex<Result<KnowledgeGraphInsertTextResponse, KnowledgeGraphProviderError>>,
+        delete_doc_id_captures: Mutex<Vec<Vec<String>>>,
+        insert_response:
+            Mutex<Result<KnowledgeGraphInsertTextResponse, KnowledgeGraphProviderError>>,
         delete_response: Mutex<Result<(), KnowledgeGraphProviderError>>,
     }
 
     impl GlossaryMockProvider {
-        fn new_inserting(
-            track_id: &str,
-        ) -> Self {
+        fn new_inserting(track_id: &str) -> Self {
             Self {
                 insert_captures: Mutex::new(Vec::new()),
                 delete_file_source_captures: Mutex::new(Vec::new()),
+                delete_doc_id_captures: Mutex::new(Vec::new()),
                 insert_response: Mutex::new(Ok(KnowledgeGraphInsertTextResponse {
                     track_id: KnowledgeGraphTrackId(track_id.to_string()),
                     accepted: true,
@@ -1746,6 +1850,7 @@ mod glossary_kg_sync_tests {
             Self {
                 insert_captures: Mutex::new(Vec::new()),
                 delete_file_source_captures: Mutex::new(Vec::new()),
+                delete_doc_id_captures: Mutex::new(Vec::new()),
                 insert_response: Mutex::new(Err(error)),
                 delete_response: Mutex::new(Ok(())),
             }
@@ -1755,12 +1860,33 @@ mod glossary_kg_sync_tests {
             Self {
                 insert_captures: Mutex::new(Vec::new()),
                 delete_file_source_captures: Mutex::new(Vec::new()),
+                delete_doc_id_captures: Mutex::new(Vec::new()),
                 insert_response: Mutex::new(Ok(KnowledgeGraphInsertTextResponse {
                     track_id: KnowledgeGraphTrackId("unused".to_string()),
                     accepted: true,
                 })),
                 delete_response: Mutex::new(Err(error)),
             }
+        }
+    }
+
+    fn make_entry(id: &str, term: &str) -> GlossaryEntry {
+        GlossaryEntry {
+            id: id.to_string(),
+            term: term.to_string(),
+            kind: "project".to_string(),
+            pronunciation: None,
+            aliases: vec![],
+            definition: Some(format!("Definition for {}", term)),
+            notes: None,
+            references: vec!["https://example.com/reference".to_string()],
+        }
+    }
+
+    fn make_glossary(entries: Vec<GlossaryEntry>) -> Glossary {
+        Glossary {
+            version: 1,
+            entries,
         }
     }
 
@@ -1780,10 +1906,7 @@ mod glossary_kg_sync_tests {
             self.insert_response.lock().unwrap().clone()
         }
 
-        async fn delete_by_file_source(
-            &self,
-            file_source: &str,
-        ) -> KnowledgeGraphResult<()> {
+        async fn delete_by_file_source(&self, file_source: &str) -> KnowledgeGraphResult<()> {
             self.delete_file_source_captures
                 .lock()
                 .unwrap()
@@ -1791,10 +1914,12 @@ mod glossary_kg_sync_tests {
             self.delete_response.lock().unwrap().clone()
         }
 
-        async fn delete_by_doc_ids(&self, _doc_ids: &[String]) -> KnowledgeGraphResult<()> {
-            Err(KnowledgeGraphProviderError::UnsupportedOperation {
-                operation: "delete_by_doc_ids",
-            })
+        async fn delete_by_doc_ids(&self, doc_ids: &[String]) -> KnowledgeGraphResult<()> {
+            self.delete_doc_id_captures
+                .lock()
+                .unwrap()
+                .push(doc_ids.to_vec());
+            self.delete_response.lock().unwrap().clone()
         }
 
         async fn query(
@@ -1804,9 +1929,7 @@ mod glossary_kg_sync_tests {
             Err(KnowledgeGraphProviderError::UnsupportedOperation { operation: "query" })
         }
 
-        async fn pipeline_status(
-            &self,
-        ) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
+        async fn pipeline_status(&self) -> KnowledgeGraphResult<KnowledgeGraphPipelineStatus> {
             Err(KnowledgeGraphProviderError::UnsupportedOperation {
                 operation: "pipeline_status",
             })
@@ -1821,46 +1944,196 @@ mod glossary_kg_sync_tests {
             })
         }
 
+        async fn list_documents(&self) -> KnowledgeGraphResult<Vec<DocumentStatus>> {
+            Err(KnowledgeGraphProviderError::UnsupportedOperation {
+                operation: "list_documents",
+            })
+        }
+
         fn provider_name(&self) -> &'static str {
             "glossary-mock"
         }
     }
 
-    // ── File source assertion tests ──────────────────────────────────
+    #[test]
+    fn glossary_delete_file_sources_include_entries_and_legacy_sources() {
+        let glossary = make_glossary(vec![make_entry("project-poly", "Poly")]);
+
+        let file_sources = glossary_delete_file_sources(&glossary);
+
+        assert_eq!(
+            file_sources,
+            vec![
+                "poly/glossary/entries/project-poly.md".to_string(),
+                "poly/glossary.yml".to_string(),
+                "glossary.yml".to_string(),
+            ]
+        );
+    }
 
     #[test]
-    fn insert_request_uses_glossary_file_source() {
-        // Verify structurally: the constant is what we expect
+    fn legacy_aggregate_file_source_remains_available_for_explicit_delete() {
         assert_eq!(GLOBAL_GLOSSARY_FILE_SOURCE, "poly/glossary.yml");
-
-        // Build an insert request like the sync command would
-        let request = crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest {
-            text: "# Glossary\n\n## Test\n\n- **Kind:** person\n".to_string(),
-            source: Some(GLOBAL_GLOSSARY_FILE_SOURCE.to_string()),
-            chunking: None,
-        };
-        assert_eq!(request.source, Some("poly/glossary.yml".to_string()));
+        assert_eq!(LIGHTRAG_GLOSSARY_BASENAME_FILE_SOURCE, "glossary.yml");
     }
 
-    #[test]
-    fn delete_uses_glossary_file_source() {
-        // The delete command calls provider.delete_by_file_source(GLOBAL_GLOSSARY_FILE_SOURCE)
-        let file_source = GLOBAL_GLOSSARY_FILE_SOURCE;
-        assert_eq!(file_source, "poly/glossary.yml");
+    #[tokio::test]
+    async fn insert_glossary_entry_document_uses_per_entry_file_source_and_references() {
+        let provider = GlossaryMockProvider::new_inserting("track-1");
+        let entry = make_entry("project-poly", "Poly");
+
+        let response = insert_glossary_entry_document(&provider, &entry).await.unwrap();
+
+        assert_eq!(response.0, "track-1");
+        let captures = provider.insert_captures.lock().unwrap();
+        assert_eq!(captures.len(), 1);
+        assert_eq!(
+            captures[0].source,
+            Some("poly/glossary/entries/project-poly.md".to_string())
+        );
+        assert!(captures[0].text.contains("# Glossary Entry: Poly"));
+        assert!(captures[0].text.contains("  - https://example.com/reference"));
     }
 
-    // ── Mocked provider behavior tests ───────────────────────────────
+    #[tokio::test]
+    async fn added_entry_inserts_without_delete() {
+        let provider = GlossaryMockProvider::new_inserting("track-1");
+        let current = make_glossary(vec![make_entry("project-poly", "Poly")]);
+
+        let result = sync_glossary_entries_to_knowledge_graph(&provider, &current, None)
+            .await
+            .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert!(provider.delete_file_source_captures.lock().unwrap().is_empty());
+        let captures = provider.insert_captures.lock().unwrap();
+        assert_eq!(captures.len(), 1);
+        assert_eq!(
+            captures[0].source,
+            Some("poly/glossary/entries/project-poly.md".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn updated_entry_deletes_and_reinserts_only_changed_source() {
+        let provider = GlossaryMockProvider::new_inserting("track-1");
+        let previous = make_glossary(vec![
+            make_entry("project-poly", "Poly"),
+            make_entry("project-parakeet", "Parakeet"),
+        ]);
+        let mut changed = make_entry("project-poly", "Poly");
+        changed.definition = Some("Updated definition".to_string());
+        let current = make_glossary(vec![changed, make_entry("project-parakeet", "Parakeet")]);
+
+        sync_glossary_entries_to_knowledge_graph(&provider, &current, Some(&previous))
+            .await
+            .unwrap();
+
+        let deletes = provider.delete_file_source_captures.lock().unwrap();
+        assert_eq!(
+            deletes.as_slice(),
+            &["poly/glossary/entries/project-poly.md".to_string()]
+        );
+        let inserts = provider.insert_captures.lock().unwrap();
+        assert_eq!(inserts.len(), 1);
+        assert_eq!(
+            inserts[0].source,
+            Some("poly/glossary/entries/project-poly.md".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn deleted_entry_deletes_only_removed_source() {
+        let provider = GlossaryMockProvider::new_inserting("track-1");
+        let previous = make_glossary(vec![
+            make_entry("project-poly", "Poly"),
+            make_entry("project-parakeet", "Parakeet"),
+        ]);
+        let current = make_glossary(vec![make_entry("project-parakeet", "Parakeet")]);
+
+        sync_glossary_entries_to_knowledge_graph(&provider, &current, Some(&previous))
+            .await
+            .unwrap();
+
+        let deletes = provider.delete_file_source_captures.lock().unwrap();
+        assert_eq!(
+            deletes.as_slice(),
+            &["poly/glossary/entries/project-poly.md".to_string()]
+        );
+        assert!(provider.insert_captures.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn normal_sync_does_not_delete_legacy_aggregate_glossary_source() {
+        let provider = GlossaryMockProvider::new_inserting("track-1");
+        let previous = make_glossary(vec![make_entry("project-poly", "Poly")]);
+        let mut changed = make_entry("project-poly", "Poly");
+        changed.definition = Some("Updated definition".to_string());
+        let current = make_glossary(vec![changed]);
+
+        sync_glossary_entries_to_knowledge_graph(&provider, &current, Some(&previous))
+            .await
+            .unwrap();
+
+        let deletes = provider.delete_file_source_captures.lock().unwrap();
+        assert!(!deletes.iter().any(|source| source == "poly/glossary.yml"));
+        assert!(!deletes.iter().any(|source| source == "glossary.yml"));
+    }
+
+    #[tokio::test]
+    async fn explicit_delete_deletes_current_entry_sources_and_legacy_sources() {
+        let provider = GlossaryMockProvider::new_inserting("track-1");
+        let glossary = make_glossary(vec![make_entry("project-poly", "Poly")]);
+
+        delete_glossary_document_for_user_request(&provider, &glossary)
+            .await
+            .unwrap();
+
+        let file_sources = provider.delete_file_source_captures.lock().unwrap();
+        assert_eq!(
+            file_sources.as_slice(),
+            &[
+                "poly/glossary/entries/project-poly.md".to_string(),
+                "poly/glossary.yml".to_string(),
+                "glossary.yml".to_string(),
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn delete_by_file_source_called_with_correct_path() {
         let provider = GlossaryMockProvider::new_inserting("track-1");
         provider
-            .delete_by_file_source("poly/glossary.yml")
+            .delete_by_file_source("poly/glossary/entries/project-poly.md")
             .await
             .unwrap();
         let captures = provider.delete_file_source_captures.lock().unwrap();
         assert_eq!(captures.len(), 1);
-        assert_eq!(captures[0], "poly/glossary.yml");
+        assert_eq!(captures[0], "poly/glossary/entries/project-poly.md");
+    }
+
+    #[tokio::test]
+    async fn user_delete_does_not_trust_document_ids() {
+        let provider =
+            GlossaryMockProvider::new_failing_delete(KnowledgeGraphProviderError::RequestFailed {
+                message: "not found".to_string(),
+            });
+        let glossary = make_glossary(vec![make_entry("project-poly", "Poly")]);
+
+        let result = delete_glossary_document_for_user_request(&provider, &glossary).await;
+
+        assert!(result.is_err());
+        let doc_ids = provider.delete_doc_id_captures.lock().unwrap();
+        let file_sources = provider.delete_file_source_captures.lock().unwrap();
+        assert!(doc_ids.is_empty());
+        assert_eq!(
+            file_sources.as_slice(),
+            &[
+                "poly/glossary/entries/project-poly.md".to_string(),
+                "poly/glossary.yml".to_string(),
+                "glossary.yml".to_string(),
+            ]
+        );
     }
 
     #[tokio::test]
@@ -1868,23 +2141,25 @@ mod glossary_kg_sync_tests {
         let provider = GlossaryMockProvider::new_inserting("track-1");
         let request = crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest {
             text: "test glossary".to_string(),
-            source: Some("poly/glossary.yml".to_string()),
+            source: Some("poly/glossary/entries/project-poly.md".to_string()),
             chunking: None,
         };
         let response = provider.insert_text(request).await.unwrap();
         assert_eq!(response.track_id.0, "track-1");
         let captures = provider.insert_captures.lock().unwrap();
         assert_eq!(captures.len(), 1);
-        assert_eq!(captures[0].source, Some("poly/glossary.yml".to_string()));
+        assert_eq!(
+            captures[0].source,
+            Some("poly/glossary/entries/project-poly.md".to_string())
+        );
     }
 
     #[tokio::test]
     async fn insert_failure_returns_error() {
-        let provider = GlossaryMockProvider::new_failing_insert(
-            KnowledgeGraphProviderError::RequestFailed {
+        let provider =
+            GlossaryMockProvider::new_failing_insert(KnowledgeGraphProviderError::RequestFailed {
                 message: "connection refused".to_string(),
-            },
-        );
+            });
         let request = crate::knowledge_graph::types::KnowledgeGraphInsertTextRequest {
             text: "test".to_string(),
             source: Some("poly/glossary.yml".to_string()),
@@ -1896,28 +2171,18 @@ mod glossary_kg_sync_tests {
 
     #[tokio::test]
     async fn delete_failure_returns_error() {
-        let provider = GlossaryMockProvider::new_failing_delete(
-            KnowledgeGraphProviderError::RequestFailed {
+        let provider =
+            GlossaryMockProvider::new_failing_delete(KnowledgeGraphProviderError::RequestFailed {
                 message: "connection refused".to_string(),
-            },
-        );
+            });
         let result = provider.delete_by_file_source("poly/glossary.yml").await;
         assert!(result.is_err());
     }
 
-    // ── Active-profile-only resolution test ──────────────────────────
-
     #[test]
     fn glossary_commands_do_not_reference_meeting_selection_table() {
-        // Structural test: verify the function signatures of the glossary
-        // commands prove they don't query knowledge_graph_meeting_selection.
-        // Both commands take only (_app: AppHandle<R>) — no state (pool),
-        // no meeting_id. The compile-time signature is the proof.
-        //
-        // This test verifies the constant naming convention and ensures
-        // no one accidentally links glossary sync to meeting-specific paths.
         assert_ne!(
-            GLOBAL_GLOSSARY_FILE_SOURCE,
+            glossary_entry_file_source("project-poly"),
             "poly/meetings/glossary.yml"
         );
     }

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use url::Url;
 
 pub const VALID_KINDS: &[&str] = &[
     "person",
@@ -13,6 +14,8 @@ pub const VALID_KINDS: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GlossaryEntry {
+    #[serde(default)]
+    pub id: String,
     pub term: String,
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -23,6 +26,8 @@ pub struct GlossaryEntry {
     pub definition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -37,6 +42,23 @@ fn default_version() -> u32 {
     1
 }
 
+fn normalize_http_reference(reference: &str) -> Result<String, String> {
+    let trimmed = reference.trim();
+    let parsed = Url::parse(trimmed).map_err(|e| format!("invalid URL '{}': {}", trimmed, e))?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(parsed.to_string()),
+        scheme => Err(format!(
+            "reference '{}' must use http or https, got '{}'",
+            trimmed, scheme
+        )),
+    }
+}
+
+fn is_valid_entry_id(id: &str) -> bool {
+    id.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+}
+
 impl Default for Glossary {
     fn default() -> Self {
         Self {
@@ -48,9 +70,24 @@ impl Default for Glossary {
 
 impl Glossary {
     pub fn validate(&self) -> Result<(), String> {
+        let mut seen_ids: HashSet<String> = HashSet::new();
         let mut seen_terms: HashSet<String> = HashSet::new();
 
         for (i, entry) in self.entries.iter().enumerate() {
+            let id = entry.id.trim();
+            if id.is_empty() {
+                return Err(format!("entry {}: id must be non-empty after trimming", i));
+            }
+            if !is_valid_entry_id(id) {
+                return Err(format!(
+                    "entry {}: id may contain only letters, numbers, hyphens, and underscores",
+                    i
+                ));
+            }
+            if !seen_ids.insert(id.to_string()) {
+                return Err(format!("entry {}: duplicate id '{}'", i, entry.id));
+            }
+
             let term = entry.term.trim();
             if term.is_empty() {
                 return Err(format!(
@@ -77,13 +114,21 @@ impl Glossary {
                 ));
             }
 
+            for reference in &entry.references {
+                normalize_http_reference(reference).map_err(|e| {
+                    format!("entry {} ('{}'): reference error: {}", i, term, e)
+                })?;
+            }
+
             let all_text = format!(
-                "{} {} {:?} {:?} {:?}",
+                "{} {} {} {:?} {:?} {:?} {}",
+                entry.id,
                 entry.term,
                 entry.aliases.join(" "),
                 entry.pronunciation,
                 entry.definition,
-                entry.notes
+                entry.notes,
+                entry.references.join(" ")
             );
             let lower = all_text.to_lowercase();
             let secret_patterns = ["api_key", "apikey", "token", "password", "secret"];
@@ -102,6 +147,7 @@ impl Glossary {
 
     pub fn normalize(&mut self) {
         for entry in &mut self.entries {
+            entry.id = entry.id.trim().to_string();
             entry.term = entry.term.trim().to_string();
             entry.kind = entry.kind.trim().to_string();
             entry.pronunciation = entry
@@ -125,6 +171,15 @@ impl Glossary {
                 .map(|a| a.trim().to_string())
                 .filter(|a| !a.is_empty())
                 .collect();
+            entry.references = entry
+                .references
+                .iter()
+                .map(|reference| {
+                    normalize_http_reference(reference)
+                        .unwrap_or_else(|_| reference.trim().to_string())
+                })
+                .filter(|reference| !reference.is_empty())
+                .collect();
         }
     }
 
@@ -144,14 +199,23 @@ impl Glossary {
 mod tests {
     use super::*;
 
-    fn make_entry(term: &str, kind: &str) -> GlossaryEntry {
+    fn make_entry(id: &str, term: &str, kind: &str) -> GlossaryEntry {
         GlossaryEntry {
+            id: id.to_string(),
             term: term.to_string(),
             kind: kind.to_string(),
             pronunciation: None,
             aliases: vec![],
             definition: None,
             notes: None,
+            references: vec![],
+        }
+    }
+
+    fn make_glossary(entries: Vec<GlossaryEntry>) -> Glossary {
+        Glossary {
+            version: 1,
+            entries,
         }
     }
 
@@ -164,148 +228,154 @@ mod tests {
 
     #[test]
     fn validate_accepts_valid_entries() {
-        let g = Glossary {
-            version: 1,
-            entries: vec![
-                make_entry("Sujith", "person"),
-                make_entry("Parakeet", "project"),
-                make_entry("TLA", "acronym"),
-            ],
-        };
+        let g = make_glossary(vec![
+            make_entry("person-sujith", "Sujith", "person"),
+            make_entry("project-parakeet", "Parakeet", "project"),
+            make_entry("acronym-tla", "TLA", "acronym"),
+        ]);
         assert!(g.validate().is_ok());
     }
 
     #[test]
+    fn validate_rejects_empty_id() {
+        let g = make_glossary(vec![make_entry("   ", "Sujith", "person")]);
+
+        let err = g.validate().unwrap_err();
+
+        assert!(err.contains("id must be non-empty"));
+    }
+
+    #[test]
+    fn validate_rejects_path_like_id() {
+        let g = make_glossary(vec![make_entry("../entry", "Sujith", "person")]);
+
+        let err = g.validate().unwrap_err();
+
+        assert!(err.contains("id may contain only"));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_ids() {
+        let g = make_glossary(vec![
+            make_entry("entry-1", "Sujith", "person"),
+            make_entry("entry-1", "Parakeet", "project"),
+        ]);
+
+        let err = g.validate().unwrap_err();
+
+        assert!(err.contains("duplicate id"));
+    }
+
+    #[test]
     fn validate_rejects_empty_term() {
-        let g = Glossary {
-            version: 1,
-            entries: vec![
-                GlossaryEntry {
-                    term: "   ".to_string(),
-                    kind: "person".to_string(),
-                    pronunciation: None,
-                    aliases: vec![],
-                    definition: None,
-                    notes: None,
-                },
-            ],
-        };
+        let g = make_glossary(vec![make_entry("entry-1", "   ", "person")]);
         let err = g.validate().unwrap_err();
         assert!(err.contains("must be non-empty"));
     }
 
     #[test]
     fn validate_rejects_duplicate_terms_case_insensitive() {
-        let g = Glossary {
-            version: 1,
-            entries: vec![
-                make_entry("Sujith", "person"),
-                make_entry("sujith", "person"),
-            ],
-        };
+        let g = make_glossary(vec![
+            make_entry("person-sujith", "Sujith", "person"),
+            make_entry("person-sujith-2", "sujith", "person"),
+        ]);
         let err = g.validate().unwrap_err();
         assert!(err.contains("duplicate"));
     }
 
     #[test]
     fn validate_rejects_invalid_kind() {
-        let g = Glossary {
-            version: 1,
-            entries: vec![
-                GlossaryEntry {
-                    term: "test".to_string(),
-                    kind: "invalid_kind".to_string(),
-                    pronunciation: None,
-                    aliases: vec![],
-                    definition: None,
-                    notes: None,
-                },
-            ],
-        };
+        let g = make_glossary(vec![make_entry("entry-1", "test", "invalid_kind")]);
         let err = g.validate().unwrap_err();
         assert!(err.contains("kind 'invalid_kind'"));
     }
 
     #[test]
+    fn validate_accepts_http_and_https_references() {
+        let mut entry = make_entry("entry-1", "Poly", "project");
+        entry.references = vec![
+            "https://example.com/poly".to_string(),
+            "http://example.com/spec".to_string(),
+        ];
+        let g = make_glossary(vec![entry]);
+
+        assert!(g.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_non_http_references() {
+        let mut entry = make_entry("entry-1", "Poly", "project");
+        entry.references = vec!["ftp://example.com/poly".to_string()];
+        let g = make_glossary(vec![entry]);
+
+        let err = g.validate().unwrap_err();
+
+        assert!(err.contains("must use http or https"));
+    }
+
+    #[test]
+    fn validate_rejects_malformed_references() {
+        let mut entry = make_entry("entry-1", "Poly", "project");
+        entry.references = vec!["not a url".to_string()];
+        let g = make_glossary(vec![entry]);
+
+        let err = g.validate().unwrap_err();
+
+        assert!(err.contains("invalid URL"));
+    }
+
+    #[test]
     fn validate_rejects_secret_patterns() {
-        let g = Glossary {
-            version: 1,
-            entries: vec![
-                GlossaryEntry {
-                    term: "my_api_key".to_string(),
-                    kind: "other".to_string(),
-                    pronunciation: None,
-                    aliases: vec![],
-                    definition: None,
-                    notes: None,
-                },
-            ],
-        };
+        let g = make_glossary(vec![make_entry("my_api_key", "SafeTerm", "other")]);
         let err = g.validate().unwrap_err();
         assert!(err.contains("secret"));
     }
 
     #[test]
     fn validate_rejects_secret_patterns_in_aliases() {
-        let g = Glossary {
-            version: 1,
-            entries: vec![
-                GlossaryEntry {
-                    term: "SafeTerm".to_string(),
-                    kind: "other".to_string(),
-                    pronunciation: None,
-                    aliases: vec!["my_password".to_string()],
-                    definition: None,
-                    notes: None,
-                },
-            ],
-        };
+        let mut entry = make_entry("entry-1", "SafeTerm", "other");
+        entry.aliases = vec!["my_password".to_string()];
+        let g = make_glossary(vec![entry]);
+
         let err = g.validate().unwrap_err();
+
         assert!(err.contains("secret"));
         assert!(err.contains("password"));
     }
 
     #[test]
-    fn normalize_trims_all_strings() {
-        let mut g = Glossary {
-            version: 1,
-            entries: vec![
-                GlossaryEntry {
-                    term: "  Sujith  ".to_string(),
-                    kind: "  person  ".to_string(),
-                    pronunciation: Some("  soo-jith  ".to_string()),
-                    aliases: vec!["  Suj  ".to_string(), "  ".to_string(), "".to_string()],
-                    definition: Some("  A person  ".to_string()),
-                    notes: Some("  ".to_string()),
-                },
-            ],
-        };
+    fn normalize_trims_all_strings_and_references() {
+        let mut entry = make_entry("  person-sujith  ", "  Sujith  ", "  person  ");
+        entry.pronunciation = Some("  soo-jith  ".to_string());
+        entry.aliases = vec!["  Suj  ".to_string(), "  ".to_string(), "".to_string()];
+        entry.definition = Some("  A person  ".to_string());
+        entry.notes = Some("  ".to_string());
+        entry.references = vec!["  https://example.com/poly  ".to_string(), "".to_string()];
+        let mut g = make_glossary(vec![entry]);
+
         g.normalize();
+
         let e = &g.entries[0];
+        assert_eq!(e.id, "person-sujith");
         assert_eq!(e.term, "Sujith");
         assert_eq!(e.kind, "person");
-        assert_eq!(e.pronunciation, Some("soo-jith".to_string()));
+        assert_eq!(e.pronunciation.as_deref(), Some("soo-jith"));
         assert_eq!(e.aliases, vec!["Suj"]);
-        assert_eq!(e.definition, Some("A person".to_string()));
+        assert_eq!(e.definition.as_deref(), Some("A person"));
         assert_eq!(e.notes, None);
+        assert_eq!(e.references, vec!["https://example.com/poly"]);
     }
 
     #[test]
     fn normalize_removes_empty_optionals() {
-        let mut g = Glossary {
-            version: 1,
-            entries: vec![
-                GlossaryEntry {
-                    term: "Test".to_string(),
-                    kind: "other".to_string(),
-                    pronunciation: Some("".to_string()),
-                    aliases: vec![],
-                    definition: Some("  ".to_string()),
-                    notes: Some("".to_string()),
-                },
-            ],
-        };
+        let mut entry = make_entry("entry-1", "Test", "other");
+        entry.pronunciation = Some("".to_string());
+        entry.definition = Some("  ".to_string());
+        entry.notes = Some("".to_string());
+        let mut g = make_glossary(vec![entry]);
+
         g.normalize();
+
         let e = &g.entries[0];
         assert_eq!(e.pronunciation, None);
         assert_eq!(e.definition, None);
@@ -323,24 +393,29 @@ mod tests {
         let g = Glossary::default();
         let yaml = serde_yaml::to_string(&g).unwrap();
         assert!(yaml.contains("entries"));
+        assert!(!yaml.contains("document_id"));
+    }
+
+    #[test]
+    fn serialize_roundtrips_entry_id_and_references() {
+        let mut entry = make_entry("entry-1", "Test", "other");
+        entry.references = vec!["https://example.com/test".to_string()];
+        let g = make_glossary(vec![entry]);
+
+        let yaml = serde_yaml::to_string(&g).unwrap();
+        let decoded: Glossary = serde_yaml::from_str(&yaml).unwrap();
+
+        assert!(yaml.contains("id: entry-1"));
+        assert!(yaml.contains("references:"));
+        assert_eq!(decoded.entries[0].id, "entry-1");
+        assert_eq!(decoded.entries[0].references, vec!["https://example.com/test"]);
     }
 
     #[test]
     fn serialize_skips_none_optionals() {
-        let g = Glossary {
-            version: 1,
-            entries: vec![
-                GlossaryEntry {
-                    term: "Test".to_string(),
-                    kind: "other".to_string(),
-                    pronunciation: None,
-                    aliases: vec![],
-                    definition: None,
-                    notes: None,
-                },
-            ],
-        };
+        let g = make_glossary(vec![make_entry("entry-1", "Test", "other")]);
         let yaml = serde_yaml::to_string(&g).unwrap();
+        assert!(!yaml.contains("document_id"));
         assert!(!yaml.contains("pronunciation"));
         assert!(!yaml.contains("definition"));
         assert!(!yaml.contains("notes"));

@@ -139,6 +139,10 @@ export class ConfigService {
     return invoke<{ id: string; title: string }[]>('get_apple_calendars');
   }
 
+  async skipCalendarOccurrence(eventId: string, occurrenceStart: string): Promise<void> {
+    await invoke('skip_calendar_occurrence', { eventId, occurrenceStart });
+  }
+
   /**
    * Get all configured providers from poly.yml.
    */

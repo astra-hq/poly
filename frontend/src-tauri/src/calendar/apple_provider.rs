@@ -142,7 +142,13 @@ fn convert_raw_event(raw: RawCalendarEvent) -> Option<CalendarEvent> {
         raw.calendar_id.unwrap_or_default(),
     );
 
-    let meeting_link = raw.url.map(CalendarMeetingLink::new);
+    let meeting_link = raw
+        .url
+        .as_deref()
+        .and_then(|url| extract_meeting_link(Some(url)))
+        .or_else(|| extract_meeting_link(raw.notes.as_deref()))
+        .or_else(|| extract_meeting_link(raw.location.as_deref()))
+        .map(CalendarMeetingLink::new);
     let body = raw.notes.map(CalendarEventBody::new);
 
     let organizer = raw
@@ -175,4 +181,129 @@ fn convert_raw_event(raw: RawCalendarEvent) -> Option<CalendarEvent> {
         is_cancelled: raw.is_cancelled,
         organizer_is_current_user: raw.organizer_is_current_user,
     })
+}
+
+#[cfg(target_os = "macos")]
+fn extract_meeting_link(text: Option<&str>) -> Option<String> {
+    let text = text?;
+    text.split_whitespace()
+        .map(clean_link_candidate)
+        .find(|candidate| is_meeting_link(candidate))
+        .map(str::to_string)
+}
+
+#[cfg(target_os = "macos")]
+fn clean_link_candidate(candidate: &str) -> &str {
+    candidate.trim_matches(|ch: char| {
+        matches!(
+            ch,
+            '<' | '>' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ';'
+        )
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn is_meeting_link(candidate: &str) -> bool {
+    if !candidate.starts_with("https://") && !candidate.starts_with("http://") {
+        return false;
+    }
+
+    [
+        "zoom.us/",
+        "meet.google.com/",
+        "teams.microsoft.com/",
+        "webex.com/",
+        "meet.jit.si/",
+    ]
+    .iter()
+    .any(|domain| candidate.contains(domain))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{convert_raw_event, extract_meeting_link};
+    use crate::calendar::types::RawCalendarEvent;
+
+    fn raw_event(
+        url: Option<&str>,
+        notes: Option<&str>,
+        location: Option<&str>,
+    ) -> RawCalendarEvent {
+        RawCalendarEvent::with_traditional_fields(
+            "evt-url-test".to_string(),
+            Some("URL Test".to_string()),
+            Some(1_752_069_600.0),
+            Some(1_752_071_400.0),
+            Vec::new(),
+            notes.map(str::to_string),
+            url.map(str::to_string),
+            location.map(str::to_string),
+        )
+    }
+
+    #[test]
+    fn extract_meeting_link_reads_known_video_links_from_notes() {
+        let text = "Join with Google Meet: https://meet.google.com/abc-defg-hij";
+
+        assert_eq!(
+            extract_meeting_link(Some(text)).as_deref(),
+            Some("https://meet.google.com/abc-defg-hij")
+        );
+    }
+
+    #[test]
+    fn extract_meeting_link_trims_common_calendar_punctuation() {
+        let text = "Join Zoom Meeting <https://zoom.us/j/123456789>;";
+
+        assert_eq!(
+            extract_meeting_link(Some(text)).as_deref(),
+            Some("https://zoom.us/j/123456789")
+        );
+    }
+
+    #[test]
+    fn convert_raw_event_ignores_non_meeting_event_url_without_fallback_link() {
+        let event = convert_raw_event(raw_event(
+            Some("https://example.com/unrelated"),
+            Some("Agenda only"),
+            Some("Conference room"),
+        ))
+        .expect("raw event should convert");
+
+        assert!(event.details.meeting_link.is_none());
+    }
+
+    #[test]
+    fn convert_raw_event_accepts_event_url_when_it_is_a_meeting_link() {
+        let event = convert_raw_event(raw_event(Some("https://zoom.us/j/123456789"), None, None))
+            .expect("raw event should convert");
+
+        assert_eq!(
+            event
+                .details
+                .meeting_link
+                .as_ref()
+                .map(|link| link.as_str()),
+            Some("https://zoom.us/j/123456789")
+        );
+    }
+
+    #[test]
+    fn convert_raw_event_falls_back_to_notes_when_event_url_is_not_a_meeting_link() {
+        let event = convert_raw_event(raw_event(
+            Some("https://example.com/unrelated"),
+            Some("Join with Google Meet: https://meet.google.com/abc-defg-hij"),
+            None,
+        ))
+        .expect("raw event should convert");
+
+        assert_eq!(
+            event
+                .details
+                .meeting_link
+                .as_ref()
+                .map(|link| link.as_str()),
+            Some("https://meet.google.com/abc-defg-hij")
+        );
+    }
 }

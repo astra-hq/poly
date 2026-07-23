@@ -23,9 +23,17 @@ use crate::poly_config::ConfigRepository;
 /// Dedupe key: `"{provider_kind}:{event_id}:{occurrence_start_rfc3339}"`
 type DedupeKey = String;
 
+/// Notification dedupe key: `"{provider_kind}:{event_id}:{occurrence_start}:{minutes_before}"`
+/// Tracks which reminder notifications (5-min, 1-min) have already been sent for an event.
+type NotificationDedupeKey = String;
+
 /// Outcome of a scheduler tick — computed by `compute_scheduler_action`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchedulerAction {
+    StopRecording {
+        event_title: String,
+        end_utc: DateTime<Utc>,
+    },
     /// Pop this meeting's cork.
     StartRecording {
         event_id: CalendarEventId,
@@ -63,10 +71,28 @@ pub struct SchedulerTickInput {
     pub is_recording: bool,
     /// Previously-recorded dedupe keys.
     pub dedupe: HashSet<DedupeKey>,
+    pub active_calendar_recording: Option<ActiveCalendarRecording>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveCalendarRecording {
+    pub event_title: String,
+    pub end_utc: DateTime<Utc>,
 }
 
 /// Pure function — no I/O, no side-effects.  Test the scheduler's brain here.
 pub fn compute_scheduler_action(input: &SchedulerTickInput) -> SchedulerAction {
+    if input.is_recording {
+        if let Some(active) = &input.active_calendar_recording {
+            if input.now.as_utc() >= active.end_utc {
+                return SchedulerAction::StopRecording {
+                    event_title: active.event_title.clone(),
+                    end_utc: active.end_utc,
+                };
+            }
+        }
+    }
+
     if !input.config.auto_record_enabled {
         return SchedulerAction::SkipNoCandidates;
     }
@@ -103,16 +129,14 @@ pub fn compute_scheduler_action(input: &SchedulerTickInput) -> SchedulerAction {
     }
 
     let now_dt = input.now.as_utc();
-    let start_grace = Duration::minutes(input.config.start_grace_window_minutes as i64);
     let end_grace = Duration::minutes(input.config.end_grace_window_minutes as i64);
 
     // Find the first candidate within its grace window.
     for event in &candidates {
         let event_start = event.time_range.start.as_utc();
-        let grace_start = event_start - start_grace;
         let grace_end = event_start + end_grace;
 
-        if now_dt < grace_start || now_dt > grace_end {
+        if now_dt < event_start || now_dt > grace_end {
             continue; // outside grace window — try next candidate
         }
 
@@ -161,6 +185,40 @@ fn make_dedupe_key(event: &CalendarEvent) -> DedupeKey {
     )
 }
 
+fn make_notification_dedupe_key(
+    event: &CalendarEvent,
+    minutes_before: u64,
+) -> NotificationDedupeKey {
+    format!(
+        "{:?}:{}:{}:{}",
+        event.source.provider_kind,
+        event.id.as_str(),
+        event.time_range.start.as_utc().to_rfc3339(),
+        minutes_before
+    )
+}
+
+fn active_calendar_recording_from_context(
+    context: Option<CalendarRecordingContext>,
+) -> Option<ActiveCalendarRecording> {
+    let context = context?;
+    let end_utc = match DateTime::parse_from_rfc3339(&context.occurrence_end) {
+        Ok(end) => end.with_timezone(&Utc),
+        Err(e) => {
+            warn!(
+                "Calendar scheduler: invalid active calendar recording end time {:?}: {}",
+                context.occurrence_end, e
+            );
+            return None;
+        }
+    };
+
+    Some(ActiveCalendarRecording {
+        event_title: context.event_title,
+        end_utc,
+    })
+}
+
 /// Serializable payload emitted to the frontend on each scheduler tick.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -175,6 +233,10 @@ pub enum SchedulerStatusEvent {
         event_id: String,
         title: String,
         start: String,
+    },
+    RecordingStopped {
+        title: String,
+        end: String,
     },
     RecordingSkippedActive {
         event_id: String,
@@ -193,6 +255,7 @@ pub enum SchedulerStatusEvent {
 /// background tokio task polling the calendar provider.
 pub struct CalendarRecordingScheduler {
     dedupe: Arc<RwLock<HashSet<DedupeKey>>>,
+    notified: Arc<RwLock<HashSet<NotificationDedupeKey>>>,
     config_repo: Arc<ConfigRepository>,
 }
 
@@ -200,12 +263,25 @@ impl CalendarRecordingScheduler {
     pub fn new(config_repo: Arc<ConfigRepository>) -> Self {
         Self {
             dedupe: Arc::new(RwLock::new(HashSet::new())),
+            notified: Arc::new(RwLock::new(HashSet::new())),
             config_repo,
         }
     }
 
-    /// Spawn the polling loop.  Returns `true` if a scheduler was started,
-    /// `false` if auto-record is disabled in the current config.
+    pub async fn skip_occurrence(
+        &self,
+        event_id: &str,
+        occurrence_start: &str,
+    ) -> anyhow::Result<()> {
+        let start = DateTime::parse_from_rfc3339(occurrence_start)
+            .map_err(|e| anyhow::anyhow!("Invalid occurrence start: {e}"))?
+            .with_timezone(&Utc);
+        let dedupe_key = format!("Apple:{event_id}:{}", start.to_rfc3339());
+        self.dedupe.write().await.insert(dedupe_key);
+        Ok(())
+    }
+
+    /// Spawn the polling loop.
     pub async fn start<R: Runtime>(self: Arc<Self>, app: AppHandle<R>) {
         let config = match self.config_repo.load() {
             Ok(c) => c,
@@ -215,15 +291,11 @@ impl CalendarRecordingScheduler {
             }
         };
 
-        if !config.calendar.auto_record_enabled {
-            info!("Calendar auto-record is disabled; scheduler will not start.");
-            return;
-        }
-
         let interval_secs = config.calendar.poll_interval_seconds.max(10) as u64;
 
         info!(
-            "Calendar auto-record scheduler started (poll every {}s, lookahead {}m, grace {}m before / {}m after)",
+            "Calendar auto-record scheduler started (enabled: {}, poll every {}s, lookahead {}m, grace {}m before / {}m after)",
+            config.calendar.auto_record_enabled,
             interval_secs,
             config.calendar.lookahead_window_minutes,
             config.calendar.start_grace_window_minutes,
@@ -249,13 +321,37 @@ impl CalendarRecordingScheduler {
             }
         };
 
+        let clock = SystemClock::default();
+        let now = clock.now();
+        let is_recording = crate::audio::recording_commands::is_recording().await;
+        let active_calendar_recording = if is_recording {
+            active_calendar_recording_from_context(
+                crate::audio::recording_commands::active_calendar_recording_context(),
+            )
+        } else {
+            None
+        };
+
+        if let Some(active_calendar_recording) = active_calendar_recording.as_ref() {
+            let event_title = active_calendar_recording.event_title.clone();
+            let end_utc = active_calendar_recording.end_utc;
+
+            if now.as_utc() >= end_utc {
+                info!(
+                    "Calendar scheduler: auto-stopping recording (title redacted) at {}",
+                    end_utc
+                );
+
+                stop_active_calendar_recording(app, event_title, end_utc).await;
+
+                return;
+            }
+        }
+
         if !config.calendar.auto_record_enabled {
             perf_debug!("Calendar scheduler: auto_record disabled, skipping tick");
             return;
         }
-
-        let clock = SystemClock::default();
-        let now = clock.now();
         let lookahead = Duration::minutes(config.calendar.lookahead_window_minutes as i64);
         let lookahead_end = CalendarInstant::from_utc(now.as_utc() + lookahead);
 
@@ -292,7 +388,71 @@ impl CalendarRecordingScheduler {
             }
         };
 
-        let is_recording = crate::audio::recording_commands::is_recording().await;
+        // ── pre-meeting notification check ───────────────────────────────────
+        // Scan eligible events and send 5-minute / 1-minute reminders.
+        let selected_ids: Option<&Vec<String>> = {
+            let ids = &config.calendar.selected_apple_calendar_identifiers;
+            if ids.is_empty() {
+                None
+            } else {
+                Some(ids)
+            }
+        };
+        let clock = SystemClock;
+        let now_dt = now.as_utc();
+
+        for event in &page.events {
+            // Calendar filtering
+            if let Some(ids) = selected_ids {
+                if !ids.contains(&event.source.calendar_id) {
+                    continue;
+                }
+            }
+            // Eligibility
+            if !auto_record_eligibility(event, &clock).is_eligible() {
+                continue;
+            }
+
+            let event_start = event.time_range.start.as_utc();
+            let mins_until = (event_start - now_dt).num_minutes();
+
+            // 5-minute reminder
+            if mins_until <= 5 && mins_until > 1 {
+                let key = make_notification_dedupe_key(event, 5);
+                let should_notify = { self.notified.read().await.contains(&key) };
+                if !should_notify {
+                    info!("Calendar scheduler: sending 5-minute reminder (title redacted)");
+                    let manager_state: State<'_, NotificationManagerState<R>> = app.state();
+                    let _ = crate::notifications::commands::show_meeting_reminder_notification(
+                        app,
+                        &manager_state,
+                        5,
+                        Some(event.details.title.clone()),
+                    )
+                    .await;
+                    self.notified.write().await.insert(key);
+                }
+            }
+
+            // 1-minute reminder
+            if mins_until <= 1 && mins_until > 0 {
+                let key = make_notification_dedupe_key(event, 1);
+                let should_notify = { self.notified.read().await.contains(&key) };
+                if !should_notify {
+                    info!("Calendar scheduler: sending 1-minute reminder (title redacted)");
+                    let manager_state: State<'_, NotificationManagerState<R>> = app.state();
+                    let _ = crate::notifications::commands::show_meeting_reminder_notification(
+                        app,
+                        &manager_state,
+                        1,
+                        Some(event.details.title.clone()),
+                    )
+                    .await;
+                    self.notified.write().await.insert(key);
+                }
+            }
+        }
+        // ── end pre-meeting notification check ─────────────────────────────
 
         let input = SchedulerTickInput {
             now,
@@ -300,11 +460,24 @@ impl CalendarRecordingScheduler {
             events: page.events,
             is_recording,
             dedupe: self.dedupe.read().await.clone(),
+            active_calendar_recording,
         };
 
         let action = compute_scheduler_action(&input);
 
         match action {
+            SchedulerAction::StopRecording {
+                event_title,
+                end_utc,
+            } => {
+                info!(
+                    "Calendar scheduler: auto-stopping recording (title redacted) at {}",
+                    end_utc
+                );
+
+                stop_active_calendar_recording(app, event_title, end_utc).await;
+            }
+
             SchedulerAction::StartRecording {
                 event_id,
                 occurrence_key: _,
@@ -314,8 +487,8 @@ impl CalendarRecordingScheduler {
                 dedupe_key,
             } => {
                 info!(
-                    "Calendar scheduler: auto-starting recording for \"{}\" at {}",
-                    event_title, start_utc
+                    "Calendar scheduler: auto-starting recording (title redacted) at {}",
+                    start_utc
                 );
 
                 // Persist dedupe state BEFORE starting recording — prevents
@@ -333,10 +506,8 @@ impl CalendarRecordingScheduler {
                     metadata_status: "enriched".to_string(),
                 };
 
-                match crate::audio::recording_commands::start_recording_with_devices_and_meeting(
+                match crate::audio::recording_commands::start_recording_with_meeting_name(
                     app.clone(),
-                    None,
-                    None,
                     Some(event_title.clone()),
                     Some(context),
                 )
@@ -387,8 +558,7 @@ impl CalendarRecordingScheduler {
                 event_title,
             } => {
                 perf_debug!(
-                    "Calendar scheduler: recording already active, skipping \"{}\"",
-                    event_title
+                    "Calendar scheduler: recording already active, skipping (title redacted)"
                 );
                 let _ = app.emit(
                     "calendar-scheduler-status",
@@ -410,10 +580,7 @@ impl CalendarRecordingScheduler {
                 event_id,
                 event_title,
             } => {
-                perf_debug!(
-                    "Calendar scheduler: \"{}\" is outside grace window",
-                    event_title
-                );
+                perf_debug!("Calendar scheduler: event is outside grace window (title redacted)");
                 let _ = app.emit(
                     "calendar-scheduler-status",
                     SchedulerStatusEvent::CandidateFound {
@@ -441,6 +608,50 @@ impl CalendarRecordingScheduler {
     }
 }
 
+async fn stop_active_calendar_recording<R: Runtime>(
+    app: &AppHandle<R>,
+    event_title: String,
+    end_utc: DateTime<Utc>,
+) {
+    match crate::audio::recording_commands::stop_recording(
+        app.clone(),
+        crate::audio::recording_commands::RecordingArgs {
+            save_path: String::new(),
+        },
+    )
+    .await
+    {
+        Ok(()) => {
+            let _ = app.emit(
+                "calendar-scheduler-status",
+                SchedulerStatusEvent::RecordingStopped {
+                    title: event_title,
+                    end: end_utc.to_rfc3339(),
+                },
+            );
+            if let Err(e) = app.emit("recording-stop-complete", true) {
+                error!("Calendar scheduler failed to emit recording-stop-complete event: {e}");
+            }
+        }
+        Err(e) => {
+            error!("Calendar scheduler failed to stop recording: {e}");
+            let _ = app.emit(
+                "calendar-scheduler-status",
+                SchedulerStatusEvent::Error {
+                    message: format!("Failed to stop recording: {e}"),
+                },
+            );
+            let manager_state: State<'_, NotificationManagerState<R>> = app.state();
+            let _ = crate::notifications::commands::show_calendar_scheduler_error_notification(
+                app,
+                &manager_state,
+                format!("Failed to stop recording: {e}"),
+            )
+            .await;
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -453,7 +664,6 @@ mod tests {
         CalendarMeetingLink, CalendarOrganizer, CalendarProviderKind, EventCategory,
         EventResponseStatus,
     };
-    use crate::calendar::eligibility::AutoRecordEligibility;
 
     // ── helpers ───────────────────────────────────────────────────────────
 
@@ -488,6 +698,7 @@ mod tests {
             response_status: EventResponseStatus::Accepted,
             category: EventCategory::Timed,
             is_cancelled: false,
+            organizer_is_current_user: false,
         }
     }
 
@@ -509,6 +720,7 @@ mod tests {
             events,
             is_recording,
             dedupe,
+            active_calendar_recording: None,
         }
     }
 
@@ -559,6 +771,29 @@ mod tests {
     }
 
     #[test]
+    fn does_not_start_before_event_start_even_inside_start_grace_window() {
+        let now = Utc::now();
+        let start = now + Duration::minutes(1);
+        let end = start + Duration::minutes(30);
+        let evt = event(
+            "evt-early",
+            "Soon",
+            start,
+            end,
+            Some("https://zoom.us/j/soon"),
+        );
+
+        let input = make_input(now, vec![evt.clone()], false, HashSet::new());
+
+        match compute_scheduler_action(&input) {
+            SchedulerAction::SkipOutsideGraceWindow { event_title, .. } => {
+                assert_eq!(event_title, "Soon");
+            }
+            other => panic!("Expected SkipOutsideGraceWindow, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn skip_when_recording_active() {
         let start = Utc::now();
         let end = start + Duration::minutes(30);
@@ -571,6 +806,68 @@ mod tests {
                 assert_eq!(event_title, "Sync");
             }
             other => panic!("Expected SkipRecordingActive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stops_scheduled_recording_after_event_end() {
+        let now = Utc::now();
+        let end = now - Duration::minutes(1);
+        let mut config = CalendarConfig::default();
+        config.auto_record_enabled = true;
+
+        let input = SchedulerTickInput {
+            now: CalendarInstant::from_utc(now),
+            config,
+            events: Vec::new(),
+            is_recording: true,
+            dedupe: HashSet::new(),
+            active_calendar_recording: Some(ActiveCalendarRecording {
+                event_title: "Ended Sync".to_string(),
+                end_utc: end,
+            }),
+        };
+
+        match compute_scheduler_action(&input) {
+            SchedulerAction::StopRecording {
+                event_title,
+                end_utc,
+            } => {
+                assert_eq!(event_title, "Ended Sync");
+                assert_eq!(end_utc, end);
+            }
+            other => panic!("Expected StopRecording, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stops_active_calendar_recording_even_when_auto_record_disabled() {
+        let now = Utc::now();
+        let end = now - Duration::minutes(1);
+        let mut config = CalendarConfig::default();
+        config.auto_record_enabled = false;
+
+        let input = SchedulerTickInput {
+            now: CalendarInstant::from_utc(now),
+            config,
+            events: Vec::new(),
+            is_recording: true,
+            dedupe: HashSet::new(),
+            active_calendar_recording: Some(ActiveCalendarRecording {
+                event_title: "Ended Sync".to_string(),
+                end_utc: end,
+            }),
+        };
+
+        match compute_scheduler_action(&input) {
+            SchedulerAction::StopRecording {
+                event_title,
+                end_utc,
+            } => {
+                assert_eq!(event_title, "Ended Sync");
+                assert_eq!(end_utc, end);
+            }
+            other => panic!("Expected StopRecording, got {other:?}"),
         }
     }
 
@@ -717,12 +1014,37 @@ mod tests {
         assert_ne!(make_dedupe_key(&evt_a), make_dedupe_key(&evt_b));
     }
 
+    #[tokio::test]
+    async fn manual_skip_adds_matching_dedupe_key() {
+        let start = Utc::now();
+        let end = start + Duration::minutes(30);
+        let evt = event(
+            "evt-manual-skip",
+            "Skip Me",
+            start,
+            end,
+            Some("https://zoom.us/j/skip"),
+        );
+        let scheduler = CalendarRecordingScheduler::new(Arc::new(ConfigRepository::new()));
+
+        scheduler
+            .skip_occurrence(evt.id.as_str(), &start.to_rfc3339())
+            .await
+            .unwrap();
+
+        assert!(scheduler
+            .dedupe
+            .read()
+            .await
+            .contains(&make_dedupe_key(&evt)));
+    }
+
     #[test]
     fn next_candidate_selected_after_first_is_deduped() {
         let now = Utc::now();
-        let start_a = now + Duration::minutes(1); // within grace
+        let start_a = now - Duration::minutes(1);
         let end_a = start_a + Duration::minutes(30);
-        let start_b = now + Duration::minutes(2); // also within grace
+        let start_b = now;
         let end_b = start_b + Duration::minutes(30);
 
         let evt_a = event(
@@ -785,6 +1107,47 @@ mod tests {
         assert_eq!(
             compute_scheduler_action(&input),
             SchedulerAction::SkipNoCandidates
+        );
+    }
+
+    // ── notification dedupe tests ────────────────────────────────────────
+
+    #[test]
+    fn notification_dedupe_key_is_deterministic() {
+        let start = Utc::now();
+        let end = start + Duration::minutes(30);
+        let evt = event("evt-n1", "Notify", start, end, Some("https://zoom.us/j/n"));
+
+        let k1 = make_notification_dedupe_key(&evt, 5);
+        let k2 = make_notification_dedupe_key(&evt, 5);
+
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn notification_dedupe_key_differs_by_minutes() {
+        let start = Utc::now();
+        let end = start + Duration::minutes(30);
+        let evt = event("evt-n2", "Notify", start, end, Some("https://zoom.us/j/n"));
+
+        let k5 = make_notification_dedupe_key(&evt, 5);
+        let k1 = make_notification_dedupe_key(&evt, 1);
+
+        assert_ne!(k5, k1);
+    }
+
+    #[test]
+    fn notification_dedupe_key_differs_by_start_time() {
+        let start_a = Utc::now();
+        let start_b = start_a + Duration::hours(1);
+        let end_a = start_a + Duration::minutes(30);
+        let end_b = start_b + Duration::minutes(30);
+        let evt_a = event("evt-n3", "A", start_a, end_a, Some("https://zoom.us/j/a"));
+        let evt_b = event("evt-n3", "A", start_b, end_b, Some("https://zoom.us/j/a"));
+
+        assert_ne!(
+            make_notification_dedupe_key(&evt_a, 5),
+            make_notification_dedupe_key(&evt_b, 5)
         );
     }
 }

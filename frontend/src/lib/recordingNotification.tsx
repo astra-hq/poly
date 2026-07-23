@@ -103,11 +103,6 @@ export function showCalendarSchedulerNotification(
   try {
     switch (type) {
       case 'candidate_found': {
-        toast.info('Upcoming Meeting Detected', {
-          description: 'An eligible meeting was found in your calendar. Recording will start automatically when the meeting begins.',
-          duration: 5000,
-          position: 'bottom-right',
-        });
         break;
       }
       case 'recording_started': {
@@ -161,6 +156,8 @@ function skipReasonToText(reason: string): string {
       return 'No eligible meetings were found in the current time window.';
     case 'conflict':
       return 'Multiple overlapping meetings were detected. Recording was skipped to avoid ambiguity.';
+    case 'manual_skip':
+      return 'This meeting was skipped and will not be recorded automatically.';
     default:
       return 'The scheduled meeting was not recorded automatically.';
   }

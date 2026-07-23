@@ -28,12 +28,14 @@ const FIXTURE_EMPTY_GLOSSARY: Glossary = {
 };
 
 const FIXTURE_SAMPLE_ENTRY: GlossaryEntry = {
+  id: 'entry-parakeet-1',
   term: 'Parakeet',
   kind: 'project',
   pronunciation: 'pair-uh-keet',
   aliases: ['PK'],
   definition: 'Real-time speech recognition model by NVIDIA',
   notes: 'Used for local transcription',
+  references: ['https://github.com/NVIDIA/parakeet'],
 };
 
 const FIXTURE_GLOSSARY_WITH_ENTRY: Glossary = {
@@ -45,7 +47,7 @@ const FIXTURE_SYNC_SUCCESS: GlossarySyncResult = {
   profile_id: 'local-1',
   synced: true,
   track_id: 'track-abc-123',
-  document_id: 'doc-xyz-789',
+  document_id: null,
   error: null,
   skipped_reason: null,
 };
@@ -208,7 +210,7 @@ describe('GlossaryService', () => {
 
     const invalid: Glossary = {
       version: 1,
-      entries: [{ term: '', kind: 'other', aliases: [] }],
+      entries: [{ id: 'entry-invalid', term: '', kind: 'other', aliases: [] }],
     };
 
     const service = new GlossaryService();
@@ -219,11 +221,15 @@ describe('GlossaryService', () => {
 
   // ── syncGlossaryToKnowledgeGraph ─────────────────────────────────
 
-  test('syncGlossaryToKnowledgeGraph calls api_sync_glossary_to_knowledge_graph with no args', async () => {
+  test('syncGlossaryToKnowledgeGraph calls api_sync_glossary_to_knowledge_graph with previousGlossary', async () => {
     mockState.register('api_sync_glossary_to_knowledge_graph', () => FIXTURE_SYNC_SUCCESS);
 
     const service = new GlossaryService();
-    const result = await service.syncGlossaryToKnowledgeGraph();
+    const previous: Glossary = {
+      version: 1,
+      entries: [{ id: 'entry-old', term: 'Old', kind: 'other', aliases: [] }],
+    };
+    const result = await service.syncGlossaryToKnowledgeGraph(previous);
 
     expect(result).toEqual(FIXTURE_SYNC_SUCCESS);
     expect(result.profile_id).toBe('local-1');
@@ -232,7 +238,20 @@ describe('GlossaryService', () => {
 
     const calls = mockState.getCallsFor('api_sync_glossary_to_knowledge_graph');
     expect(calls.length).toBe(1);
-    expect(calls[0].args).toEqual({});
+    expect(calls[0].args).toEqual({ previousGlossary: previous });
+  });
+
+  test('syncGlossaryToKnowledgeGraph calls api_sync_glossary_to_knowledge_graph with no previousGlossary when omitted', async () => {
+    mockState.register('api_sync_glossary_to_knowledge_graph', () => FIXTURE_SYNC_SUCCESS);
+
+    const service = new GlossaryService();
+    const result = await service.syncGlossaryToKnowledgeGraph();
+
+    expect(result).toEqual(FIXTURE_SYNC_SUCCESS);
+
+    const calls = mockState.getCallsFor('api_sync_glossary_to_knowledge_graph');
+    expect(calls.length).toBe(1);
+    expect(calls[0].args).toEqual({ previousGlossary: undefined });
   });
 
   test('syncGlossaryToKnowledgeGraph returns skipped when no active profile', async () => {
@@ -340,16 +359,19 @@ describe('Glossary type shapes', () => {
 
   test('GlossaryEntry matches Rust serde shape', () => {
     const entry: GlossaryEntry = FIXTURE_SAMPLE_ENTRY;
+    expect(entry.id).toBe('entry-parakeet-1');
     expect(entry.term).toBe('Parakeet');
     expect(entry.kind).toBe('project');
     expect(entry.pronunciation).toBe('pair-uh-keet');
     expect(entry.aliases).toEqual(['PK']);
     expect(entry.definition).toBe('Real-time speech recognition model by NVIDIA');
     expect(entry.notes).toBe('Used for local transcription');
+    expect(entry.references).toEqual(['https://github.com/NVIDIA/parakeet']);
   });
 
   test('GlossaryEntry optional fields can be omitted', () => {
     const entry: GlossaryEntry = {
+      id: 'entry-api',
       term: 'API',
       kind: 'acronym',
       aliases: [],
@@ -357,6 +379,7 @@ describe('Glossary type shapes', () => {
     expect(entry.pronunciation).toBeUndefined();
     expect(entry.definition).toBeUndefined();
     expect(entry.notes).toBeUndefined();
+    expect(entry.references).toBeUndefined();
   });
 
   test('Glossary matches Rust serde shape with version and entries', () => {
@@ -376,9 +399,16 @@ describe('Glossary type shapes', () => {
     expect(result.profile_id).toBe('local-1');
     expect(result.synced).toBe(true);
     expect(result.track_id).toBe('track-abc-123');
-    expect(result.document_id).toBe('doc-xyz-789');
+    expect(result.document_id).toBeNull();
     expect(result.error).toBeNull();
     expect(result.skipped_reason).toBeNull();
+  });
+
+  test('generateEntryId returns a non-empty string', () => {
+    const { generateEntryId } = require('../../src/types/glossary');
+    const id = generateEntryId();
+    expect(typeof id).toBe('string');
+    expect(id.length).toBeGreaterThan(0);
   });
 
   test('GlossarySyncResult skipped_reason is non-null when not synced', () => {

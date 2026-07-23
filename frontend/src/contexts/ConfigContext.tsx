@@ -43,6 +43,16 @@ export interface NotificationSettings {
   };
 }
 
+type CalendarSchedulerStatusPayload = {
+  readonly type: string;
+  readonly event_id?: string;
+  readonly title?: string;
+  readonly start?: string;
+  readonly end?: string;
+  readonly reason?: string;
+  readonly message?: string;
+};
+
 const DEFAULT_CALENDAR_SETTINGS: CalendarConfig = {
   metadata_pull_enabled: true,
   auto_record_enabled: false,
@@ -54,6 +64,52 @@ const DEFAULT_CALENDAR_SETTINGS: CalendarConfig = {
   show_calendar_status: true,
   show_next_meeting_banner: true,
 };
+
+export function calendarStatusCanRead(status: CalendarPermissionStatus): boolean {
+  return status === 'authorized' || status === 'full_access';
+}
+
+function calendarStatusIsExplicitDenial(status: CalendarPermissionStatus): boolean {
+  return status === 'denied'
+    || status === 'restricted'
+    || status === 'write_only'
+    || status === 'unsupported_platform';
+}
+
+export function reconcileCalendarPermissionStatus(
+  status: CalendarPermissionStatus,
+  health: CalendarProviderHealth | null,
+  previousStatus: CalendarPermissionStatus | null = null
+): CalendarPermissionStatus {
+  if (calendarStatusCanRead(status)) {
+    return status;
+  }
+  if (health?.permission_granted && calendarStatusCanRead(health.permission_status)) {
+    return health.permission_status;
+  }
+  if (
+    previousStatus !== null
+    && calendarStatusCanRead(previousStatus)
+    && !calendarStatusIsExplicitDenial(status)
+  ) {
+    return previousStatus;
+  }
+  return status;
+}
+
+export function reconcileCalendarDerivedItems<T>(
+  previousItems: T[],
+  nextItems: T[],
+  permissionStatus: CalendarPermissionStatus | null,
+): T[] {
+  if (permissionStatus !== null && !calendarStatusCanRead(permissionStatus)) {
+    return [];
+  }
+  if (nextItems.length === 0 && previousItems.length > 0) {
+    return previousItems;
+  }
+  return nextItems;
+}
 
 interface ConfigContextType {
   // Model configuration
@@ -87,11 +143,12 @@ interface ConfigContextType {
   calendarPermissionStatus: CalendarPermissionStatus | null;
   calendarProviderHealth: CalendarProviderHealth | null;
   upcomingCalendarCandidates: CalendarCandidate[];
-  schedulerStatus: { type: string; event_id?: string; title?: string; start?: string; end?: string; reason?: string; message?: string } | null;
+  schedulerStatus: CalendarSchedulerStatusPayload | null;
   isLoadingCalendar: boolean;
   availableCalendars: { id: string; title: string }[];
   loadCalendarStatus: () => Promise<void>;
   requestCalendarPermission: () => Promise<CalendarPermissionStatus>;
+  skipCalendarOccurrence: (eventId: string, occurrenceStart: string) => Promise<void>;
 
   // Ollama models
   models: OllamaModel[];
@@ -177,9 +234,10 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const [calendarPermissionStatus, setCalendarPermissionStatus] = useState<CalendarPermissionStatus | null>(null);
   const [calendarProviderHealth, setCalendarProviderHealth] = useState<CalendarProviderHealth | null>(null);
   const [upcomingCalendarCandidates, setUpcomingCalendarCandidates] = useState<CalendarCandidate[]>([]);
-  const [schedulerStatus, setSchedulerStatus] = useState<{ type: string; event_id?: string; title?: string; start?: string; end?: string; reason?: string; message?: string } | null>(null);
+  const [schedulerStatus, setSchedulerStatus] = useState<CalendarSchedulerStatusPayload | null>(null);
   const [isLoadingCalendar, setIsLoadingCalendar] = useState(false);
   const [availableCalendars, setAvailableCalendars] = useState<{ id: string; title: string }[]>([]);
+  const calendarPermissionStatusRef = useRef<CalendarPermissionStatus | null>(null);
 
   // Preference settings state (lazy loaded)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings | null>(null);
@@ -322,16 +380,43 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const loadCalendarStatus = useCallback(async () => {
     setIsLoadingCalendar(true);
     try {
-      const [status, health, upcoming, calendars] = await Promise.all([
-        configService.getCalendarPermissionStatus(),
-        configService.getCalendarProviderHealth(),
-        configService.getUpcomingCalendarCandidates(),
-        configService.getAppleCalendars().catch(() => [] as { id: string; title: string }[]),
-      ]);
-      setCalendarPermissionStatus(status);
-      setCalendarProviderHealth(health);
-      setUpcomingCalendarCandidates(upcoming.candidates.filter((c) => c.eligible));
-      setAvailableCalendars(calendars);
+      const status = await configService.getCalendarPermissionStatus();
+      let effectivePermissionStatus = calendarPermissionStatusRef.current;
+
+      effectivePermissionStatus = reconcileCalendarPermissionStatus(
+        status,
+        null,
+        calendarPermissionStatusRef.current,
+      );
+      calendarPermissionStatusRef.current = effectivePermissionStatus;
+      setCalendarPermissionStatus(effectivePermissionStatus);
+
+      const loadedHealth = await configService.getCalendarProviderHealth();
+      setCalendarProviderHealth(loadedHealth);
+      effectivePermissionStatus = reconcileCalendarPermissionStatus(
+        effectivePermissionStatus,
+        loadedHealth,
+        calendarPermissionStatusRef.current,
+      );
+      calendarPermissionStatusRef.current = effectivePermissionStatus;
+      setCalendarPermissionStatus(effectivePermissionStatus);
+
+      if (!calendarStatusCanRead(effectivePermissionStatus)) {
+        setUpcomingCalendarCandidates([]);
+        setAvailableCalendars([]);
+        return;
+      }
+
+      const upcoming = await configService.getUpcomingCalendarCandidates();
+      const eligibleCandidates = upcoming.candidates.filter((candidate) => candidate.eligible);
+      setUpcomingCalendarCandidates((previousCandidates) =>
+        reconcileCalendarDerivedItems(previousCandidates, eligibleCandidates, effectivePermissionStatus),
+      );
+
+      const calendars = await configService.getAppleCalendars();
+      setAvailableCalendars((previousCalendars) =>
+        reconcileCalendarDerivedItems(previousCalendars, calendars, effectivePermissionStatus),
+      );
     } catch (error) {
       console.error('[ConfigContext] Failed to load calendar status:', error);
     } finally {
@@ -342,19 +427,20 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const requestCalendarPermission = useCallback(async () => {
     try {
       const status = await configService.requestCalendarPermission();
-      setCalendarPermissionStatus(status);
-      try {
-        const health = await configService.getCalendarProviderHealth();
-        setCalendarProviderHealth(health);
-      } catch (healthErr) {
-        console.error('[ConfigContext] Failed to refresh calendar health after permission grant:', healthErr);
-      }
+      const effectivePermissionStatus = reconcileCalendarPermissionStatus(
+        status,
+        null,
+        calendarPermissionStatusRef.current,
+      );
+      calendarPermissionStatusRef.current = effectivePermissionStatus;
+      setCalendarPermissionStatus(effectivePermissionStatus);
+      await loadCalendarStatus();
       return status;
     } catch (error) {
       console.error('[ConfigContext] Failed to request calendar permission:', error);
       throw error;
     }
-  }, []);
+  }, [loadCalendarStatus]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -362,8 +448,19 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     const setupListener = async () => {
       try {
         const { listen } = await import('@tauri-apps/api/event');
-        unlisten = await listen('calendar-scheduler-status', (event) => {
-          setSchedulerStatus(event.payload as { type: string; event_id?: string; title?: string; start?: string; end?: string; reason?: string; message?: string });
+        unlisten = await listen<CalendarSchedulerStatusPayload>('calendar-scheduler-status', (event) => {
+          const payload = event.payload;
+          if (payload.type === 'stopped' && payload.event_id) {
+            setUpcomingCalendarCandidates((previousCandidates) =>
+              previousCandidates.filter((candidate) => candidate.id !== payload.event_id)
+            );
+          }
+          setSchedulerStatus(payload);
+          if (payload.type === 'stopped') {
+            loadCalendarStatus().catch((err: unknown) => {
+              console.error('[ConfigContext] Failed to refresh calendar status after scheduler stopped:', err);
+            });
+          }
         });
       } catch (err) {
         console.error('[ConfigContext] Failed to listen for scheduler status:', err);
@@ -375,7 +472,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [loadCalendarStatus]);
 
   // Listen for model config updates from other components
   useEffect(() => {
@@ -471,8 +568,18 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
   const updateCalendarSettings = useCallback(async (settings: CalendarConfig) => {
     const saved = await configService.saveCalendarSettings(settings);
     setCalendarSettings(saved);
+    try {
+      await loadCalendarStatus();
+    } catch (err) {
+      console.error('[ConfigContext] Failed to refresh calendar status after save:', err);
+    }
     return saved;
-  }, []);
+  }, [loadCalendarStatus]);
+
+  const skipCalendarOccurrence = useCallback(async (eventId: string, occurrenceStart: string) => {
+    await configService.skipCalendarOccurrence(eventId, occurrenceStart);
+    await loadCalendarStatus();
+  }, [loadCalendarStatus]);
 
   // Lazy load preference settings (only loads if not already cached)
   const loadPreferences = useCallback(async () => {
@@ -574,6 +681,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     availableCalendars,
     loadCalendarStatus,
     requestCalendarPermission,
+    skipCalendarOccurrence,
     models,
     modelOptions,
     error,
@@ -606,6 +714,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     availableCalendars,
     loadCalendarStatus,
     requestCalendarPermission,
+    skipCalendarOccurrence,
     models,
     modelOptions,
     error,

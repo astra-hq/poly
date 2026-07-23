@@ -143,7 +143,7 @@ fn build_glossary_context_block(prompt_context: &str) -> String {
         return String::new();
     }
     format!(
-        "<glossary_context>\n{trimmed}\n\nThe above glossary is provided only for accurately interpreting names, terms, and aliases. Do not introduce any glossary entry as a meeting fact unless the source text explicitly supports it.\n</glossary_context>"
+        "<glossary_context>\n{trimmed}\n\nMANDATORY: Use the glossary to standardize all glossary terminology in the summary/report. When source text uses a listed alias, write the canonical glossary term, not the alias. Confirm that no listed aliases remain before output; if any are present, replace them with the canonical glossary terms. For example, if `acabee` is an alias for `Acapella B`, output `Acapella B`. This terminology standardization is required so downstream knowledge graph ingestion preserves the conversation structure. Do not introduce any glossary entry as a meeting fact unless the source text explicitly supports it.\n</glossary_context>"
     )
 }
 
@@ -925,6 +925,22 @@ mod tests {
         assert!(block.contains("Do not introduce any glossary entry as a meeting fact"));
     }
 
+    #[test]
+    fn glossary_context_instructs_aliases_to_use_canonical_terms_in_output() {
+        let ctx = "## Glossary\n\n- **Acapella B** (project) [Aliases: acabee]:\n  Definition: Customer project";
+        let block = build_glossary_context_block(ctx);
+
+        assert!(block.contains("MANDATORY"));
+        assert!(block.contains("standardize all glossary terminology"));
+        assert!(block.contains("When source text uses a listed alias"));
+        assert!(block.contains("write the canonical glossary term"));
+        assert!(block.contains("not the alias"));
+        assert!(block.contains("Confirm that no listed aliases remain"));
+        assert!(block.contains("replace them with the canonical glossary terms"));
+        assert!(block.contains("acabee"));
+        assert!(block.contains("Acapella B"));
+    }
+
     // ── Chunk prompts with glossary ──────────────────────────────────
 
     #[test]
@@ -947,6 +963,8 @@ mod tests {
         assert!(prompt.contains("JAYN doh"));
         assert!(prompt.contains("[Aliases: JD, Janie]"));
         assert!(prompt.contains("<transcript_chunk>"));
+        assert!(prompt.contains("standardize all glossary terminology"));
+        assert!(prompt.contains("Confirm that no listed aliases remain"));
         assert!(prompt.contains("Do not introduce any glossary entry as a meeting fact"));
     }
 

@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 use crate::knowledge_graph::types::{
-    KnowledgeGraphHealth, KnowledgeGraphInsertTextRequest, KnowledgeGraphInsertTextResponse,
-    KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest, KnowledgeGraphQueryResponse,
-    KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
+    DocumentStatus, KnowledgeGraphHealth, KnowledgeGraphInsertTextRequest,
+    KnowledgeGraphInsertTextResponse, KnowledgeGraphPipelineStatus, KnowledgeGraphQueryRequest,
+    KnowledgeGraphQueryResponse, KnowledgeGraphTrackId, KnowledgeGraphTrackStatus,
 };
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -43,6 +43,8 @@ pub trait KnowledgeGraphProvider: Send + Sync {
         &self,
         track_id: KnowledgeGraphTrackId,
     ) -> KnowledgeGraphResult<KnowledgeGraphTrackStatus>;
+
+    async fn list_documents(&self) -> KnowledgeGraphResult<Vec<DocumentStatus>>;
 
     fn provider_name(&self) -> &'static str;
 }
@@ -113,6 +115,11 @@ mod tests {
                 pending_documents: 1,
                 indexing_documents: 2,
                 failed_documents: 0,
+                busy: false,
+                destructive_busy: false,
+                scanning: false,
+                scanning_exclusive: false,
+                pending_enqueues: 0,
             })
         }
 
@@ -126,6 +133,10 @@ mod tests {
                 total_count: 0,
                 status_summary: BTreeMap::new(),
             })
+        }
+
+        async fn list_documents(&self) -> KnowledgeGraphResult<Vec<DocumentStatus>> {
+            Ok(vec![])
         }
 
         fn provider_name(&self) -> &'static str {

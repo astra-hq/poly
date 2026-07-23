@@ -7,15 +7,18 @@ import type { Glossary, GlossaryEntry, GlossarySyncResult } from '../../src/type
 const FIXTURE_EMPTY_GLOSSARY: Glossary = { version: 1, entries: [] };
 
 const FIXTURE_ENTRY_1: GlossaryEntry = {
+  id: 'entry-parakeet',
   term: 'Parakeet',
   kind: 'project',
   pronunciation: 'pair-uh-keet',
   aliases: ['PK'],
   definition: 'Real-time speech recognition model by NVIDIA',
   notes: 'Used for local transcription',
+  references: ['https://github.com/NVIDIA/parakeet'],
 };
 
 const FIXTURE_ENTRY_2: GlossaryEntry = {
+  id: 'entry-api',
   term: 'API',
   kind: 'acronym',
   aliases: ['Application Programming Interface'],
@@ -30,7 +33,7 @@ const FIXTURE_SYNC_SUCCESS: GlossarySyncResult = {
   profile_id: 'local-1',
   synced: true,
   track_id: 'track-abc',
-  document_id: 'doc-xyz',
+  document_id: null,
   error: null,
   skipped_reason: null,
 };
@@ -82,8 +85,23 @@ mock.module('sonner', () => ({
     info: (message: string, opts?: { description?: string }) => {
       toastCalls.push({ type: 'info', message, description: opts?.description });
     },
+    loading: (message: string) => {
+      toastCalls.push({ type: 'loading', message });
+      return 'toast-id';
+    },
+    dismiss: (_id: string) => {},
   },
 }));
+
+mock.module('@/components/ui/tooltip', () => {
+  const React = require('react');
+  return {
+    Tooltip: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    TooltipContent: ({ children }: { children: React.ReactNode }) => React.createElement('div', null, children),
+    TooltipTrigger: ({ children }: { children: React.ReactNode }) => React.createElement('div', null, children),
+    TooltipProvider: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+  };
+});
 
 // Mock Dialog to render children directly in static markup
 mock.module('@/components/ui/dialog', () => {
@@ -106,7 +124,9 @@ mock.module('@/components/ui/dialog', () => {
 
 // ── Import components after mocks ────────────────────────────────────
 
-const { GlossarySettings, persistGlossary, syncGlossary, deleteGlossaryFromKg } = await import('../../src/components/GlossarySettings');
+const { GlossarySettings, GLOSSARY_SYNC_TIMEOUT_MS, applySyncResult, persistGlossary, syncGlossary } = await import(
+  '../../src/components/GlossarySettings'
+);
 const { GlossaryEditor, computeNextGlossary, computeGlossaryAfterDelete } = await import('../../src/components/GlossaryEditor');
 const { GlossaryEntryDialog, emptyForm, entryToForm, formToEntry, validateForm } = await import('../../src/components/GlossaryEntryDialog');
 const { GlossaryService } = await import('../../src/services/glossaryService');
@@ -145,52 +165,55 @@ describe('GlossarySettings', () => {
     expect(html).toContain('acronym');
   });
 
-  test('renders sync and delete-from-kg buttons', () => {
-    const html = renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_EMPTY_GLOSSARY} />);
-    expect(html).toContain('Sync to KG');
-    expect(html).toContain('Delete from KG');
-  });
-
-  test('renders save button when entries exist', () => {
+  test('shows Add Entry button in view mode', () => {
     const html = renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_GLOSSARY_WITH_ENTRIES} />);
-    expect(html).toContain('Save Glossary');
+    expect(html).toContain('Add Entry');
   });
 
-  test('does not render save button when glossary is empty', () => {
-    const html = renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_EMPTY_GLOSSARY} />);
-    expect(html).not.toContain('Save Glossary');
+  test('shows Edit button in view mode when entries exist', () => {
+    const html = renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_GLOSSARY_WITH_ENTRIES} />);
+    expect(html).toContain('Edit');
+  });
+
+  test('does not show Save button in view mode', () => {
+    const html = renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_GLOSSARY_WITH_ENTRIES} />);
+    expect(html).not.toContain('>Save<');
   });
 });
 
 describe('GlossaryEditor', () => {
   test('renders empty state with add button', () => {
     const html = renderToStaticMarkup(
-      <GlossaryEditor
-        glossary={FIXTURE_EMPTY_GLOSSARY}
-        onChange={() => {}}
-        onSave={() => {}}
-        onSync={() => {}}
-        onDeleteFromKg={() => {}}
+          <GlossaryEditor
+            glossary={FIXTURE_EMPTY_GLOSSARY}
+            isEditing={false}
+            onEnterEdit={() => {}}
+            onSaveEdit={() => {}}
+            onCancelEdit={() => {}}
+            onUpdateDraft={() => {}}
+            onStartAddEntry={() => {}}
+
         saving={false}
-        syncing={false}
-        deletingFromKg={false}
+
       />
     );
     expect(html).toContain('No Glossary Entries');
     expect(html).toContain('Add First Entry');
   });
 
-  test('renders entries with edit and delete buttons', () => {
+  test('renders view mode with edit and delete buttons', () => {
     const html = renderToStaticMarkup(
-      <GlossaryEditor
-        glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
-        onChange={() => {}}
-        onSave={() => {}}
-        onSync={() => {}}
-        onDeleteFromKg={() => {}}
+          <GlossaryEditor
+            glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
+            isEditing={false}
+            onEnterEdit={() => {}}
+            onSaveEdit={() => {}}
+            onCancelEdit={() => {}}
+            onUpdateDraft={() => {}}
+            onStartAddEntry={() => {}}
+
         saving={false}
-        syncing={false}
-        deletingFromKg={false}
+
       />
     );
     expect(html).toContain('Parakeet');
@@ -201,37 +224,112 @@ describe('GlossaryEditor', () => {
     expect(html).toContain('Delete API');
   });
 
-  test('disables buttons when saving is true', () => {
+  test('renders edit mode with Save and Cancel buttons at top', () => {
+    const html = renderToStaticMarkup(
+          <GlossaryEditor
+            glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
+            isEditing={true}
+            onEnterEdit={() => {}}
+            onSaveEdit={() => {}}
+            onCancelEdit={() => {}}
+            onUpdateDraft={() => {}}
+            onStartAddEntry={() => {}}
+
+        saving={false}
+
+      />
+    );
+    expect(html).toContain('Save');
+    expect(html).toContain('Cancel');
+    const topButtonSection = html.split('space-y-4')[0] || html;
+    expect(topButtonSection).not.toContain('>Add Entry<');
+  });
+
+  test('renders inline editable fields in edit mode', () => {
+    const html = renderToStaticMarkup(
+          <GlossaryEditor
+            glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
+            isEditing={true}
+            onEnterEdit={() => {}}
+            onSaveEdit={() => {}}
+            onCancelEdit={() => {}}
+            onUpdateDraft={() => {}}
+            onStartAddEntry={() => {}}
+
+        saving={false}
+
+      />
+    );
+    expect(html).toContain('edit-term-entry-parakeet');
+    expect(html).toContain('edit-kind-entry-parakeet');
+    expect(html).toContain('edit-pronunciation-entry-parakeet');
+    expect(html).toContain('edit-aliases-entry-parakeet');
+    expect(html).toContain('edit-definition-entry-parakeet');
+    expect(html).toContain('edit-notes-entry-parakeet');
+    expect(html).toContain('edit-references-entry-parakeet');
+  });
+
+  test('renders blank draft entry first when prepended in edit mode', () => {
+    const blank: GlossaryEntry = { id: 'blank-1', term: '', kind: 'other', aliases: [] };
+    const glossary: Glossary = { version: 1, entries: [blank, FIXTURE_ENTRY_1] };
     const html = renderToStaticMarkup(
       <GlossaryEditor
-        glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
-        onChange={() => {}}
-        onSave={() => {}}
-        onSync={() => {}}
-        onDeleteFromKg={() => {}}
+        glossary={glossary}
+        isEditing={true}
+        onEnterEdit={() => {}}
+        onSaveEdit={() => {}}
+        onCancelEdit={() => {}}
+        onUpdateDraft={() => {}}
+        onStartAddEntry={() => {}}
+        saving={false}
+      />
+    );
+    const firstTermInputMatch = html.match(/id="(edit-term-[^"]+)"[^>]*value=""/);
+    expect(firstTermInputMatch).not.toBeNull();
+    expect(firstTermInputMatch![1]).toBe('edit-term-blank-1');
+    expect(html).toContain('edit-term-entry-parakeet');
+    const parakeetInputMatch = html.match(/id="edit-term-entry-parakeet"[^>]*value="Parakeet"/);
+    expect(parakeetInputMatch).not.toBeNull();
+  });
+
+  test('renders reference links in view mode', () => {
+    const html = renderToStaticMarkup(
+          <GlossaryEditor
+            glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
+            isEditing={false}
+            onEnterEdit={() => {}}
+            onSaveEdit={() => {}}
+            onCancelEdit={() => {}}
+            onUpdateDraft={() => {}}
+            onStartAddEntry={() => {}}
+
+        saving={false}
+
+      />
+    );
+    expect(html).toContain('https://github.com/NVIDIA/parakeet');
+  });
+
+  test('disables buttons when saving is true', () => {
+    const html = renderToStaticMarkup(
+          <GlossaryEditor
+            glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
+            isEditing={false}
+            onEnterEdit={() => {}}
+            onSaveEdit={() => {}}
+            onCancelEdit={() => {}}
+            onUpdateDraft={() => {}}
+            onStartAddEntry={() => {}}
+
         saving={true}
-        syncing={false}
-        deletingFromKg={false}
+
       />
     );
     expect(html).toContain('disabled');
+    expect(html).toContain('Edit Parakeet');
+    expect(html).toContain('Delete Parakeet');
   });
 
-  test('shows loading spinner on sync button when syncing', () => {
-    const html = renderToStaticMarkup(
-      <GlossaryEditor
-        glossary={FIXTURE_GLOSSARY_WITH_ENTRIES}
-        onChange={() => {}}
-        onSave={() => {}}
-        onSync={() => {}}
-        onDeleteFromKg={() => {}}
-        saving={false}
-        syncing={true}
-        deletingFromKg={false}
-      />
-    );
-    expect(html).toContain('animate-spin');
-  });
 });
 
 describe('GlossaryEntryDialog', () => {
@@ -254,6 +352,7 @@ describe('GlossaryEntryDialog', () => {
     expect(html).toContain('g-aliases');
     expect(html).toContain('g-definition');
     expect(html).toContain('g-notes');
+    expect(html).toContain('g-references');
     expect(html).toContain('Add Entry');
   });
 
@@ -305,6 +404,23 @@ describe('GlossaryEntryDialog', () => {
     expect(html).toContain('Kind');
     expect(html).toContain('role="combobox"');
   });
+
+  test('disables inputs and save button when disabled is true', () => {
+    const html = renderToStaticMarkup(
+      <GlossaryEntryDialog
+        open={true}
+        onOpenChange={() => {}}
+        editingIndex={null}
+        form={emptyForm()}
+        formError={null}
+        onFormChange={() => {}}
+        onSave={() => {}}
+        disabled={true}
+      />
+    );
+    expect(html).toContain('disabled');
+    expect(html).toContain('Add Entry');
+  });
 });
 
 describe('Glossary form helpers', () => {
@@ -316,6 +432,7 @@ describe('Glossary form helpers', () => {
     expect(form.aliases).toBe('');
     expect(form.definition).toBe('');
     expect(form.notes).toBe('');
+    expect(form.references).toBe('');
   });
 
   test('entryToForm converts entry to form state', () => {
@@ -326,6 +443,7 @@ describe('Glossary form helpers', () => {
     expect(form.aliases).toBe('PK');
     expect(form.definition).toBe('Real-time speech recognition model by NVIDIA');
     expect(form.notes).toBe('Used for local transcription');
+    expect(form.references).toBe('https://github.com/NVIDIA/parakeet');
   });
 
   test('entryToForm handles optional fields', () => {
@@ -336,6 +454,7 @@ describe('Glossary form helpers', () => {
     expect(form.aliases).toBe('Application Programming Interface');
     expect(form.definition).toBe('');
     expect(form.notes).toBe('');
+    expect(form.references).toBe('');
   });
 
   test('formToEntry converts form to entry with trimming', () => {
@@ -346,65 +465,72 @@ describe('Glossary form helpers', () => {
       aliases: 'PK,  Parakeet TDT ',
       definition: '  A model  ',
       notes: '  Some notes  ',
+      references: 'https://example.com\n  http://example.org  ',
     };
-    const entry = formToEntry(form);
+    const entry = formToEntry(form, 'existing-id');
+    expect(entry.id).toBe('existing-id');
     expect(entry.term).toBe('Parakeet');
     expect(entry.kind).toBe('project');
     expect(entry.pronunciation).toBe('pair-uh-keet');
     expect(entry.aliases).toEqual(['PK', 'Parakeet TDT']);
     expect(entry.definition).toBe('A model');
     expect(entry.notes).toBe('Some notes');
+    expect(entry.references).toEqual(['https://example.com', 'http://example.org']);
   });
 
-  test('formToEntry omits optional fields when empty', () => {
+  test('formToEntry generates id when existingId is omitted', () => {
     const form = emptyForm();
     form.term = 'API';
     form.kind = 'acronym';
     const entry = formToEntry(form);
     expect(entry.term).toBe('API');
+    expect(entry.id).toBeDefined();
+    expect(entry.id.length).toBeGreaterThan(0);
     expect(entry.pronunciation).toBeUndefined();
     expect(entry.definition).toBeUndefined();
     expect(entry.notes).toBeUndefined();
-    expect(entry.aliases).toEqual([]);
+    expect(entry.references).toEqual([]);
   });
 });
 
 describe('validateForm', () => {
   test('returns valid for non-empty term', () => {
-    const result = validateForm({ term: 'Parakeet', kind: 'project', pronunciation: '', aliases: '', definition: '', notes: '' });
+    const result = validateForm({ term: 'Parakeet', kind: 'project', pronunciation: '', aliases: '', definition: '', notes: '', references: '' });
     expect(result.valid).toBe(true);
     expect(result.error).toBeNull();
   });
 
   test('returns invalid for empty term', () => {
-    const result = validateForm({ term: '', kind: 'other', pronunciation: '', aliases: '', definition: '', notes: '' });
+    const result = validateForm({ term: '', kind: 'other', pronunciation: '', aliases: '', definition: '', notes: '', references: '' });
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Term is required');
   });
 
   test('returns invalid for whitespace-only term', () => {
-    const result = validateForm({ term: '   ', kind: 'other', pronunciation: '', aliases: '', definition: '', notes: '' });
+    const result = validateForm({ term: '   ', kind: 'other', pronunciation: '', aliases: '', definition: '', notes: '', references: '' });
     expect(result.valid).toBe(false);
     expect(result.error).toBe('Term is required');
+  });
+
+  test('returns invalid for non-http reference URL', () => {
+    const result = validateForm({ term: 'Parakeet', kind: 'project', pronunciation: '', aliases: '', definition: '', notes: '', references: 'ftp://example.com' });
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('http or https');
   });
 });
 
 describe('computeNextGlossary', () => {
   test('adds new entry when editingIndex is null', () => {
-    const form = emptyForm();
-    form.term = 'New Term';
-    form.kind = 'person';
-    const next = computeNextGlossary(FIXTURE_EMPTY_GLOSSARY, form, null);
+    const entry: GlossaryEntry = { id: 'new', term: 'New Term', kind: 'person', aliases: [] };
+    const next = computeNextGlossary(FIXTURE_EMPTY_GLOSSARY, entry, null);
     expect(next.entries.length).toBe(1);
     expect(next.entries[0].term).toBe('New Term');
     expect(next.entries[0].kind).toBe('person');
   });
 
   test('edits existing entry when editingIndex is provided', () => {
-    const form = emptyForm();
-    form.term = 'Updated Parakeet';
-    form.kind = 'component';
-    const next = computeNextGlossary(FIXTURE_GLOSSARY_WITH_ENTRIES, form, 0);
+    const entry: GlossaryEntry = { id: FIXTURE_ENTRY_1.id, term: 'Updated Parakeet', kind: 'component', aliases: [] };
+    const next = computeNextGlossary(FIXTURE_GLOSSARY_WITH_ENTRIES, entry, 0);
     expect(next.entries.length).toBe(2);
     expect(next.entries[0].term).toBe('Updated Parakeet');
     expect(next.entries[0].kind).toBe('component');
@@ -412,9 +538,8 @@ describe('computeNextGlossary', () => {
   });
 
   test('preserves version when adding entry', () => {
-    const form = emptyForm();
-    form.term = 'New';
-    const next = computeNextGlossary(FIXTURE_EMPTY_GLOSSARY, form, null);
+    const entry: GlossaryEntry = { id: 'new', term: 'New', kind: 'other', aliases: [] };
+    const next = computeNextGlossary(FIXTURE_EMPTY_GLOSSARY, entry, null);
     expect(next.version).toBe(1);
   });
 });
@@ -464,7 +589,7 @@ describe('persistGlossary', () => {
     const service = new GlossaryService();
     const badGlossary: Glossary = {
       version: 1,
-      entries: [{ term: '', kind: 'other', aliases: [] }],
+      entries: [{ id: 'bad', term: '', kind: 'other', aliases: [] }],
     };
     const result = await persistGlossary(badGlossary, service);
     expect(result.success).toBe(false);
@@ -503,33 +628,41 @@ describe('syncGlossary', () => {
     calls.length = 0;
   });
 
-  test('calls service.syncGlossaryToKnowledgeGraph', async () => {
+  test('calls service.syncGlossaryToKnowledgeGraph with previousGlossary', async () => {
+    const service = new GlossaryService();
+    const previous: Glossary = {
+      version: 1,
+      entries: [{ id: 'old', term: 'Old', kind: 'other', aliases: [] }],
+    };
+    const result = await syncGlossary(service, previous);
+    expect(result.synced).toBe(true);
+    const syncCalls = calls.filter((c) => c.command === 'api_sync_glossary_to_knowledge_graph');
+    expect(syncCalls.length).toBe(1);
+    expect(syncCalls[0].args).toEqual({ previousGlossary: previous });
+  });
+
+  test('calls service.syncGlossaryToKnowledgeGraph without previousGlossary when omitted', async () => {
     const service = new GlossaryService();
     const result = await syncGlossary(service);
     expect(result.synced).toBe(true);
     const syncCalls = calls.filter((c) => c.command === 'api_sync_glossary_to_knowledge_graph');
     expect(syncCalls.length).toBe(1);
-    expect(syncCalls[0].args).toEqual({});
-  });
-});
-
-describe('deleteGlossaryFromKg', () => {
-  beforeEach(() => {
-    calls.length = 0;
-    resetMock();
+    expect(syncCalls[0].args).toEqual({ previousGlossary: undefined });
   });
 
-  afterEach(() => {
-    calls.length = 0;
+  test('allows multi-minute LightRAG glossary sync operations', () => {
+    expect(GLOSSARY_SYNC_TIMEOUT_MS >= 600_000).toBe(true);
   });
 
-  test('calls service.deleteGlossaryFromKnowledgeGraph', async () => {
-    const service = new GlossaryService();
-    const result = await deleteGlossaryFromKg(service);
-    expect(result.synced).toBe(true);
-    const deleteCalls = calls.filter((c) => c.command === 'api_delete_glossary_from_knowledge_graph');
-    expect(deleteCalls.length).toBe(1);
-    expect(deleteCalls[0].args).toEqual({});
+  test('applySyncResult returns glossary unchanged', () => {
+    const currentGlossary: Glossary = {
+      version: 1,
+      entries: [FIXTURE_ENTRY_2],
+    };
+
+    const result = applySyncResult(currentGlossary, FIXTURE_SYNC_SUCCESS);
+
+    expect(result.entries).toEqual([FIXTURE_ENTRY_2]);
   });
 });
 
@@ -546,5 +679,16 @@ describe('GlossarySettings service integration', () => {
   test('initialGlossary prop skips service call on mount', () => {
     renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_GLOSSARY_WITH_ENTRIES} />);
     expect(calls.filter((c) => c.command === 'api_get_glossary').length).toBe(0);
+  });
+
+  test('does not call api_save_glossary on mount in view mode', () => {
+    renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_GLOSSARY_WITH_ENTRIES} />);
+    expect(calls.filter((c) => c.command === 'api_save_glossary').length).toBe(0);
+  });
+
+  test('does not autosave when entering edit mode via Add Entry', () => {
+    renderToStaticMarkup(<GlossarySettings initialGlossary={FIXTURE_GLOSSARY_WITH_ENTRIES} />);
+    expect(calls.filter((c) => c.command === 'api_save_glossary').length).toBe(0);
+    expect(calls.filter((c) => c.command === 'api_sync_glossary_to_knowledge_graph').length).toBe(0);
   });
 });

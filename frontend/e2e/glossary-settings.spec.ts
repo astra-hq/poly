@@ -3,10 +3,12 @@
  *
  * Verifies the Settings > Glossary flow:
  * - Opens settings page, selects the Glossary tab
- * - Adds an entry (person / code_name / acronym) with aliases and definition
- * - Saves glossary and confirms success toast
- * - Triggers manual KG sync with mocked Tauri invoke and confirms success toast
+ * - Adds an entry (person / code_name / acronym) with aliases, definition, and references
+ * - Autosaves glossary and confirms success toast
+ * - Autosyncs to KG with mocked Tauri invoke and confirms success toast
  * - Tests validation failure for blank term
+ * - Tests edit mode with inline editing and Save button
+ * - Tests navigation away auto-save
  *
  * All Tauri invoke calls are mocked via addInitScript — no real Rust
  * backend, KG server, or personal glossary file is used.
@@ -25,12 +27,14 @@ const SAVED_GLOSSARY = {
   version: 1,
   entries: [
     {
+      id: 'entry-alice',
       term: 'Alice',
       kind: 'person',
       pronunciation: '',
       aliases: ['A. Smith'],
       definition: 'Team lead',
       notes: '',
+      references: ['https://example.com/alice'],
     },
   ],
 };
@@ -39,15 +43,6 @@ const SYNC_SUCCESS = {
   profile_id: 'local-1',
   synced: true,
   track_id: 'track-001',
-  document_id: 'doc-001',
-  error: null,
-  skipped_reason: null,
-};
-
-const DELETE_SUCCESS = {
-  profile_id: 'local-1',
-  synced: true,
-  track_id: null,
   document_id: null,
   error: null,
   skipped_reason: null,
@@ -65,7 +60,6 @@ function buildMockScript(glossaryOverrides: Record<string, unknown>): string {
     api_get_glossary: EMPTY_GLOSSARY,
     api_save_glossary: EMPTY_GLOSSARY,
     api_sync_glossary_to_knowledge_graph: SYNC_SUCCESS,
-    api_delete_glossary_from_knowledge_graph: DELETE_SUCCESS,
 
     // Onboarding bypass — required or the app redirects to onboarding and never shows Settings
     get_onboarding_status: { completed: true },
@@ -223,79 +217,72 @@ test.describe('Glossary Settings', () => {
 
   // ── Happy path: add entry, save, sync ──────────────────────────────────
 
-  test('adds an entry, saves glossary, and syncs to KG', async ({ page }) => {
+  test('adds an entry via inline edit, saves, and syncs to KG', async ({ page }) => {
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
 
     // Select Glossary tab
     await page.getByRole('tab', { name: /Glossary/i }).click();
 
-    // Open add-entry dialog
+    // Click Add First Entry — enters edit mode with a blank row
     await page.getByRole('button', { name: /Add First Entry/i }).click();
 
-    // Fill the form
-    await page.getByLabel(/Term/i).fill('Alice');
-    await page.getByLabel(/Kind/i).click();
+    // Verify Save button appears (edit mode)
+    await expect(page.getByRole('button', { name: /Save/i })).toBeVisible({ timeout: 10_000 });
+
+    // Fill the blank row inline
+    await page.locator('input[id^="edit-term-"]').fill('Alice');
+    await page.locator('button[id^="edit-kind-"]').click();
     await page.getByRole('option', { name: 'person' }).click();
-    await page.getByLabel(/Aliases/i).fill('A. Smith');
-    await page.getByLabel(/Definition/i).fill('Team lead');
+    await page.locator('input[id^="edit-aliases-"]').fill('A. Smith');
+    await page.locator('textarea[id^="edit-definition-"]').fill('Team lead');
+    await page.locator('textarea[id^="edit-references-"]').fill('https://example.com/alice');
 
-    // Save the entry
-    await page.getByRole('button', { name: /Add Entry/i }).click();
-
-    // Wait for dialog to close before asserting list content
-    await expect(page.getByRole('dialog')).not.toBeVisible({ timeout: 10_000 });
+    // Click Save to persist
+    await page.getByRole('button', { name: /Save/i }).click();
 
     // Verify the entry appears in the list
-    await expect(page.getByText('Alice')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Alice', { exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('person').first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('A. Smith')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Team lead').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('https://example.com/alice')).toBeVisible({ timeout: 10_000 });
 
-    // Save the glossary
-    await page.getByRole('button', { name: /Save Glossary/i }).click();
-
-    // Wait for toast
     await expect(page.getByText('Glossary saved')).toBeVisible({ timeout: 10_000 });
-
-    // Trigger manual KG sync
-    await page.getByRole('button', { name: /Sync to KG/i }).click();
-
-    // Wait for sync toast
     await expect(page.getByText('Glossary synced to Knowledge Graph')).toBeVisible({ timeout: 10_000 });
   });
 
   // ── Validation failure: blank term ─────────────────────────────────────
 
-  test('shows validation error when term is blank', async ({ page }) => {
+  test('shows validation error when term is blank in inline edit', async ({ page }) => {
     await page.goto('/settings');
     await page.waitForLoadState('networkidle');
 
     // Select Glossary tab
     await page.getByRole('tab', { name: /Glossary/i }).click();
 
-    // Open add-entry dialog
+    // Click Add First Entry — enters edit mode with a blank row
     await page.getByRole('button', { name: /Add First Entry/i }).click();
 
-    // Leave term blank and try to save
-    await page.getByRole('button', { name: /Add Entry/i }).click();
+    // Leave term blank and click Save
+    await page.getByRole('button', { name: /Save/i }).click();
 
-    // Validation error should appear inside the dialog
-    await expect(page.getByText('Term is required')).toBeVisible({ timeout: 10_000 });
+    // Validation error toast should appear
+    await expect(page.getByText('Cannot save: one or more entries have a blank term')).toBeVisible({ timeout: 10_000 });
 
-    // Dialog should still be open (no entry added)
-    await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
+    // Still in edit mode (Save button still visible)
+    await expect(page.getByRole('button', { name: /Save/i })).toBeVisible({ timeout: 10_000 });
 
-    // Close dialog
+    // Cancel to return to empty state
     await page.getByRole('button', { name: /Cancel/i }).click();
 
     // Empty state should still be present
     await expect(page.getByText('No Glossary Entries')).toBeVisible({ timeout: 10_000 });
   });
 
-  // ── Edit and delete entry ────────────────────────────────────────────
+  // ── Edit mode: inline editing and Save ────────────────────────────────
 
-  test('edits an existing entry and deletes it', async ({ page }) => {
+  test('enters edit mode, edits inline, and saves', async ({ page }) => {
     // Pre-populate glossary with one entry
     await page.addInitScript({
       content: buildMockScript({
@@ -310,33 +297,85 @@ test.describe('Glossary Settings', () => {
     await page.getByRole('tab', { name: /Glossary/i }).click();
 
     // Verify entry renders
-    await expect(page.getByText('Alice')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Alice', { exact: true })).toBeVisible({ timeout: 10_000 });
 
-    // Click edit
-    await page.getByRole('button', { name: /Edit Alice/i }).click();
+    // Click Edit button to enter edit mode
+    await page.getByRole('button', { name: /Edit$/i }).click();
 
-    // Update term
-    await page.getByLabel(/Term/i).fill('Alice Smith');
+    // Verify Save button appears
+    await expect(page.getByRole('button', { name: /Save/i })).toBeVisible({ timeout: 10_000 });
 
-    // Save update
-    await page.getByRole('button', { name: /Update Entry/i }).click();
+    // Edit the term inline
+    await page.locator('input[id^="edit-term-"]').fill('Alice Smith');
+
+    // Click Save
+    await page.getByRole('button', { name: /Save/i }).click();
 
     // Verify updated term
     await expect(page.getByText('Alice Smith')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Glossary saved')).toBeVisible({ timeout: 10_000 });
+  });
+
+  // ── Delete entry ─────────────────────────────────────────────────────
+
+  test('deletes an existing entry', async ({ page }) => {
+    // Pre-populate glossary with one entry
+    await page.addInitScript({
+      content: buildMockScript({
+        api_get_glossary: SAVED_GLOSSARY,
+      }),
+    });
+
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    // Select Glossary tab
+    await page.getByRole('tab', { name: /Glossary/i }).click();
+
+    // Verify entry renders
+    await expect(page.getByText('Alice', { exact: true })).toBeVisible({ timeout: 10_000 });
 
     // Click delete
-    await page.getByRole('button', { name: /Delete Alice Smith/i }).click();
+    await page.getByRole('button', { name: /Delete Alice/i }).click();
 
     // Confirm delete in dialog
     await page.getByRole('button', { name: /Delete$/i }).click();
+
+    // Delete enters edit mode; save to persist removal
+    await page.getByRole('button', { name: /Save/i }).click();
 
     // Verify empty state returns
     await expect(page.getByText('No Glossary Entries')).toBeVisible({ timeout: 10_000 });
   });
 
-  // ── Delete from KG ───────────────────────────────────────────────────
+  test('adds blank entry at top when glossary already has entries', async ({ page }) => {
+    await page.addInitScript({
+      content: buildMockScript({
+        api_get_glossary: SAVED_GLOSSARY,
+      }),
+    });
 
-  test('deletes glossary from KG with success toast', async ({ page }) => {
+    await page.goto('/settings');
+    await page.waitForLoadState('networkidle');
+
+    await page.getByRole('tab', { name: /Glossary/i }).click();
+
+    await expect(page.getByText('Alice', { exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: /Add Entry/i }).click();
+
+    await expect(page.getByRole('button', { name: /Save/i })).toBeVisible({ timeout: 10_000 });
+
+    const termInputs = page.locator('input[id^="edit-term-"]');
+    await expect(termInputs).toHaveCount(2, { timeout: 10_000 });
+    await expect(termInputs.nth(0)).toHaveValue('');
+    await expect(termInputs.nth(1)).toHaveValue('Alice');
+  });
+
+  // ── Navigation away auto-save ─────────────────────────────────────────
+
+  test('auto-saves pending edits when navigating away from glossary tab', async ({ page }) => {
+    // Pre-populate glossary with one entry
     await page.addInitScript({
       content: buildMockScript({
         api_get_glossary: SAVED_GLOSSARY,
@@ -349,72 +388,20 @@ test.describe('Glossary Settings', () => {
     // Select Glossary tab
     await page.getByRole('tab', { name: /Glossary/i }).click();
 
-    // Trigger delete from KG
-    await page.getByRole('button', { name: /Delete from KG/i }).click();
+    // Verify entry renders
+    await expect(page.getByText('Alice', { exact: true })).toBeVisible({ timeout: 10_000 });
 
-    // Wait for delete toast
-    await expect(page.getByText('Glossary removed from Knowledge Graph')).toBeVisible({ timeout: 10_000 });
+    // Enter edit mode
+    await page.getByRole('button', { name: /Edit$/i }).click();
+
+    // Edit the term inline
+    await page.locator('input[id^="edit-term-"]').fill('Alice Smith');
+
+    // Navigate to another tab
+    await page.getByRole('tab', { name: /General/i }).click();
+
+    await expect(page.getByText('Glossary saved')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('tab', { name: /General/i })).toHaveAttribute('data-state', 'active');
   });
 
-  // ── Sync skipped state ─────────────────────────────────────────────────
-
-  test('shows skipped info when KG sync is skipped', async ({ page }) => {
-    await page.addInitScript({
-      content: buildMockScript({
-        api_get_glossary: SAVED_GLOSSARY,
-        api_sync_glossary_to_knowledge_graph: {
-          profile_id: null,
-          synced: false,
-          track_id: null,
-          document_id: null,
-          error: null,
-          skipped_reason: 'No active KG profile selected',
-        },
-      }),
-    });
-
-    await page.goto('/settings');
-    await page.waitForLoadState('networkidle');
-
-    // Select Glossary tab
-    await page.getByRole('tab', { name: /Glossary/i }).click();
-
-    // Trigger sync
-    await page.getByRole('button', { name: /Sync to KG/i }).click();
-
-    // Wait for skipped toast
-    await expect(page.getByText('Sync skipped')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('No active KG profile selected')).toBeVisible({ timeout: 10_000 });
-  });
-
-  // ── Sync error state ───────────────────────────────────────────────────
-
-  test('shows error toast when KG sync fails', async ({ page }) => {
-    await page.addInitScript({
-      content: buildMockScript({
-        api_get_glossary: SAVED_GLOSSARY,
-        api_sync_glossary_to_knowledge_graph: {
-          profile_id: null,
-          synced: false,
-          track_id: null,
-          document_id: null,
-          error: 'LightRAG ingestion failed: HTTP 500',
-          skipped_reason: null,
-        },
-      }),
-    });
-
-    await page.goto('/settings');
-    await page.waitForLoadState('networkidle');
-
-    // Select Glossary tab
-    await page.getByRole('tab', { name: /Glossary/i }).click();
-
-    // Trigger sync
-    await page.getByRole('button', { name: /Sync to KG/i }).click();
-
-    // Wait for error toast
-    await expect(page.getByText('Sync failed')).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText('LightRAG ingestion failed: HTTP 500')).toBeVisible({ timeout: 10_000 });
-  });
 });

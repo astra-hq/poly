@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { ArrowLeft, Settings2, Mic, Database as DatabaseIcon, SparkleIcon, FlaskConical, Network, Server, BookOpen } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { invoke } from '@tauri-apps/api/core';
@@ -13,6 +13,8 @@ import { BetaSettings } from '@/components/BetaSettings';
 import { KnowledgeGraphSettings } from '@/components/KnowledgeGraphSettings';
 import { ProviderSettings } from '@/components/ProviderSettings';
 import { GlossarySettings } from '@/components/GlossarySettings';
+import type { GlossarySettingsHandle } from '@/components/GlossarySettings';
+import { GlossaryErrorBoundary } from '@/components/GlossaryErrorBoundary';
 import { useConfig } from '@/contexts/ConfigContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 
@@ -34,8 +36,10 @@ export default function SettingsPage() {
 
   // Animation state for tabs
   const [activeTab, setActiveTab] = useState('general');
+  const [pendingTab, setPendingTab] = useState<string | null>(null);
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [underlineStyle, setUnderlineStyle] = useState({ left: 0, width: 0 });
+  const glossaryRef = useRef<GlossarySettingsHandle>(null);
 
   // Load saved transcript configuration on mount
   useEffect(() => {
@@ -68,6 +72,17 @@ export default function SettingsPage() {
     }
   }, [activeTab]);
 
+  const handleTabChange = useCallback(async (value: string) => {
+    if (activeTab === 'glossary' && value !== 'glossary') {
+      const canLeave = await glossaryRef.current?.flushBeforeLeave();
+      if (canLeave) {
+        setActiveTab(value);
+      }
+    } else {
+      setActiveTab(value);
+    }
+  }, [activeTab]);
+
   return (
     <div className="h-screen bg-gray-50 flex flex-col">
       {/* Fixed Header */}
@@ -75,7 +90,16 @@ export default function SettingsPage() {
         <div className="max-w-6xl mx-auto px-8 py-6">
           <div className="flex items-center gap-4">
             <button
-              onClick={() => router.back()}
+              onClick={async () => {
+                if (activeTab === 'glossary') {
+                  const canLeave = await glossaryRef.current?.flushBeforeLeave();
+                  if (canLeave) {
+                    router.back();
+                  }
+                } else {
+                  router.back();
+                }
+              }}
               className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
             >
               <ArrowLeft className="w-5 h-5" />
@@ -90,7 +114,7 @@ export default function SettingsPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-6xl mx-auto p-8 pt-6">
           {/* Tabs */}
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="bg-transparent relative rounded-none border-b border-gray-200 p-0 h-auto">
               {TABS.map((tab, index) => {
                 const Icon = tab.icon;
@@ -137,7 +161,9 @@ export default function SettingsPage() {
               <KnowledgeGraphSettings />
             </TabsContent>
             <TabsContent value="glossary" className="mt-6">
-              <GlossarySettings />
+              <GlossaryErrorBoundary>
+                <GlossarySettings ref={glossaryRef} />
+              </GlossaryErrorBoundary>
             </TabsContent>
             <TabsContent value="beta" className="mt-6">
               <BetaSettings />

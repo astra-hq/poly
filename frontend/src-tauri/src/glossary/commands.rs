@@ -9,9 +9,12 @@ async fn load_glossary(repo: &GlossaryRepository) -> Result<Glossary, String> {
         .map_err(|e| format!("Failed to load glossary: {}", e))
 }
 
-async fn save_glossary(repo: &GlossaryRepository, mut glossary: Glossary) -> Result<Glossary, String> {
-    glossary.validate()?;
+async fn save_glossary(
+    repo: &GlossaryRepository,
+    mut glossary: Glossary,
+) -> Result<Glossary, String> {
     glossary.normalize();
+    glossary.validate()?;
     repo.save_atomic(&glossary)
         .map_err(|e| format!("Failed to save glossary: {}", e))?;
     Ok(glossary)
@@ -33,7 +36,10 @@ pub async fn api_save_glossary<R: Runtime>(
     _state: tauri::State<'_, AppState>,
     glossary: Glossary,
 ) -> Result<Glossary, String> {
-    info!("api_save_glossary called ({} entries)", glossary.entries.len());
+    info!(
+        "api_save_glossary called ({} entries)",
+        glossary.entries.len()
+    );
     let repo = GlossaryRepository::new();
     save_glossary(&repo, glossary).await
 }
@@ -44,19 +50,24 @@ mod tests {
     use crate::glossary::types::GlossaryEntry;
     use std::fs;
 
-    fn make_entry(term: &str, kind: &str) -> GlossaryEntry {
+    fn make_entry(id: &str, term: &str, kind: &str) -> GlossaryEntry {
         GlossaryEntry {
+            id: id.to_string(),
             term: term.to_string(),
             kind: kind.to_string(),
             pronunciation: None,
             aliases: vec![],
             definition: None,
             notes: None,
+            references: vec![],
         }
     }
 
     fn make_glossary(entries: Vec<GlossaryEntry>) -> Glossary {
-        Glossary { version: 1, entries }
+        Glossary {
+            version: 1,
+            entries,
+        }
     }
 
     #[tokio::test]
@@ -74,12 +85,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let repo = GlossaryRepository::with_path(dir.path().join("glossary.yml"));
         let glossary = make_glossary(vec![GlossaryEntry {
+            id: "person-sujith".to_string(),
             term: "  Sujith  ".to_string(),
             kind: "person".to_string(),
             pronunciation: Some("  soo-jith  ".to_string()),
             aliases: vec!["  Suj  ".to_string(), "  ".to_string(), "".to_string()],
             definition: Some("  A person  ".to_string()),
             notes: Some("  ".to_string()),
+            references: vec!["  https://example.com/sujith  ".to_string()],
         }]);
 
         let saved = save_glossary(&repo, glossary).await.unwrap();
@@ -90,6 +103,7 @@ mod tests {
         assert_eq!(saved.entries[0].aliases, vec!["Suj"]);
         assert_eq!(saved.entries[0].definition.as_deref(), Some("A person"));
         assert_eq!(saved.entries[0].notes, None);
+        assert_eq!(saved.entries[0].references, vec!["https://example.com/sujith"]);
 
         let persisted = repo.load().unwrap();
         assert_eq!(persisted, saved);
@@ -101,13 +115,13 @@ mod tests {
         let file_path = dir.path().join("glossary.yml");
         let repo = GlossaryRepository::with_path(file_path.clone());
 
-        let original = make_glossary(vec![make_entry("Original", "other")]);
+        let original = make_glossary(vec![make_entry("entry-original", "Original", "other")]);
         repo.save_atomic(&original).unwrap();
         let original_bytes = fs::read(&file_path).unwrap();
 
         let invalid = make_glossary(vec![
-            make_entry("Duplicate", "person"),
-            make_entry("duplicate", "team"),
+            make_entry("entry-1", "Duplicate", "person"),
+            make_entry("entry-2", "duplicate", "team"),
         ]);
 
         let err = save_glossary(&repo, invalid).await.unwrap_err();

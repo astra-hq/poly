@@ -11,7 +11,8 @@ pub(crate) fn read_event(event: *mut Object) -> RawCalendarEvent {
     let status_code: isize = unsafe { msg_send![event, status] };
     let is_cancelled = status_code == 3;
 
-    let (calendar_id, organizer_name, organizer_email, organizer_is_current_user) = read_event_extras(event);
+    let (calendar_id, organizer_name, organizer_email, organizer_is_current_user) =
+        read_event_extras(event);
 
     RawCalendarEvent {
         identifier: string_property(event, sel!(eventIdentifier))
@@ -57,7 +58,12 @@ fn read_event_extras(event: *mut Object) -> (Option<String>, Option<String>, Opt
         (name, email, is_current)
     };
 
-    (calendar_id, organizer_name, organizer_email, organizer_is_current_user)
+    (
+        calendar_id,
+        organizer_name,
+        organizer_email,
+        organizer_is_current_user,
+    )
 }
 
 /// Read an NSString property and return it as a Rust String.

@@ -5,15 +5,23 @@ use crate::calendar::types::{
 };
 use block::ConcreteBlock;
 use objc::rc::autoreleasepool;
-use objc::runtime::{Class, Object, BOOL};
+use objc::runtime::{Class, Object};
 use objc::{msg_send, sel, sel_impl};
+use std::cell::Cell;
 use std::ptr;
 use std::sync::mpsc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 const EK_ENTITY_TYPE_EVENT: u64 = 0;
 const LOOKBACK_SECONDS: f64 = -30.0 * 24.0 * 60.0 * 60.0;
 const LOOKAHEAD_SECONDS: f64 = 365.0 * 24.0 * 60.0 * 60.0;
+
+static EVENTKIT_ACCESS_LOCK: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    static EVENT_STORE: Cell<Option<usize>> = const { Cell::new(None) };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public EventKit bridge (called by apple_provider.rs on macOS)
@@ -26,49 +34,55 @@ pub fn eventkit_authorization_status() -> Result<CalendarPermissionStatus, Calen
 
 /// List all visible calendars that support events.
 pub fn list_calendars() -> Result<Vec<crate::calendar::types::CalendarInfo>, CalendarProbeError> {
-    autoreleasepool(|| {
-        let store = event_store()?;
+    with_serialized_eventkit_access(|| {
+        autoreleasepool(|| {
+            let store = event_store()?;
 
-        // SAFETY: [Category 8 — FFI boundary]
-        // `calendarsForEntityType:` returns an NSArray of EKCalendar objects.
-        let calendars: *mut Object = unsafe {
-            msg_send![store, calendarsForEntityType: EK_ENTITY_TYPE_EVENT]
-        };
-
-        if calendars.is_null() {
-            return Ok(Vec::new());
-        }
-
-        // SAFETY: [Category 8 — FFI boundary]
-        // `calendars` is an NSArray; `count` bounds all indexed access.
-        let count: usize = unsafe { msg_send![calendars, count] };
-        let mut out = Vec::with_capacity(count);
-
-        for i in 0..count {
             // SAFETY: [Category 8 — FFI boundary]
-            // `i` is bounded by `count`.
-            let calendar: *mut Object = unsafe { msg_send![calendars, objectAtIndex: i] };
-            if calendar.is_null() {
-                continue;
+            // `calendarsForEntityType:` returns an NSArray of EKCalendar objects.
+            let calendars: *mut Object =
+                unsafe { msg_send![store, calendarsForEntityType: EK_ENTITY_TYPE_EVENT] };
+
+            if calendars.is_null() {
+                return Ok(Vec::new());
             }
 
-            let id = crate::calendar::macos_values::string_property(calendar, sel!(calendarIdentifier))
+            // SAFETY: [Category 8 — FFI boundary]
+            // `calendars` is an NSArray; `count` bounds all indexed access.
+            let count: usize = unsafe { msg_send![calendars, count] };
+            let mut out = Vec::with_capacity(count);
+
+            for i in 0..count {
+                // SAFETY: [Category 8 — FFI boundary]
+                // `i` is bounded by `count`.
+                let calendar: *mut Object = unsafe { msg_send![calendars, objectAtIndex: i] };
+                if calendar.is_null() {
+                    continue;
+                }
+
+                let id = crate::calendar::macos_values::string_property(
+                    calendar,
+                    sel!(calendarIdentifier),
+                )
                 .unwrap_or_default();
-            let title = crate::calendar::macos_values::string_property(calendar, sel!(title))
-                .unwrap_or_else(|| "Untitled".to_string());
+                let title = crate::calendar::macos_values::string_property(calendar, sel!(title))
+                    .unwrap_or_else(|| "Untitled".to_string());
 
-            out.push(crate::calendar::types::CalendarInfo { id, title });
-        }
+                out.push(crate::calendar::types::CalendarInfo { id, title });
+            }
 
-        Ok(out)
+            Ok(out)
+        })
     })
 }
 
 /// Prompt the user for calendar access and return the resulting status.
 pub fn eventkit_request_access() -> Result<CalendarPermissionStatus, CalendarProbeError> {
-    autoreleasepool(|| {
-        let store = event_store()?;
-        request_calendar_access(store)
+    with_serialized_eventkit_access(|| {
+        autoreleasepool(|| {
+            let store = event_store()?;
+            request_calendar_access(store)
+        })
     })
 }
 
@@ -78,50 +92,53 @@ pub fn fetch_events(
     start_epoch: f64,
     end_epoch: f64,
 ) -> Result<Vec<RawCalendarEvent>, CalendarProbeError> {
-    autoreleasepool(|| {
-        let store = event_store()?;
-        let start = ns_date_from_epoch(start_epoch)?;
-        let end = ns_date_from_epoch(end_epoch)?;
+    with_serialized_eventkit_access(|| {
+        autoreleasepool(|| {
+            let store = event_store()?;
+            let start = ns_date_from_epoch(start_epoch)?;
+            let end = ns_date_from_epoch(end_epoch)?;
 
-        // SAFETY: [Category 8 — FFI boundary]
-        // `store` is a live EKEventStore; start/end are NSDate instances.
-        let predicate: *mut Object = unsafe {
-            msg_send![
-                store,
-                predicateForEventsWithStartDate: start
-                endDate: end
-                calendars: ptr::null_mut::<Object>()
-            ]
-        };
-
-        if predicate.is_null() {
-            return Err(CalendarProbeError::new(
-                CalendarProbeErrorKind::RequestFailed,
-                "EventKit failed to create an event query predicate.",
-            ));
-        }
-
-        // SAFETY: [Category 8 — FFI boundary]
-        // `predicate` was returned by EventKit for the same store.
-        let events: *mut Object = unsafe { msg_send![store, eventsMatchingPredicate: predicate] };
-        if events.is_null() {
-            return Ok(Vec::new());
-        }
-
-        // SAFETY: [Category 8 — FFI boundary]
-        // `events` is an NSArray; `count` bounds all indexed access.
-        let count: usize = unsafe { msg_send![events, count] };
-        let mut out = Vec::with_capacity(count);
-        for i in 0..count {
             // SAFETY: [Category 8 — FFI boundary]
-            // `i` is bounded by `count`.
-            let event: *mut Object = unsafe { msg_send![events, objectAtIndex: i] };
-            if event.is_null() {
-                continue;
+            // `store` is a live EKEventStore; start/end are NSDate instances.
+            let predicate: *mut Object = unsafe {
+                msg_send![
+                    store,
+                    predicateForEventsWithStartDate: start
+                    endDate: end
+                    calendars: ptr::null_mut::<Object>()
+                ]
+            };
+
+            if predicate.is_null() {
+                return Err(CalendarProbeError::new(
+                    CalendarProbeErrorKind::RequestFailed,
+                    "EventKit failed to create an event query predicate.",
+                ));
             }
-            out.push(read_event(event));
-        }
-        Ok(out)
+
+            // SAFETY: [Category 8 — FFI boundary]
+            // `predicate` was returned by EventKit for the same store.
+            let events: *mut Object =
+                unsafe { msg_send![store, eventsMatchingPredicate: predicate] };
+            if events.is_null() {
+                return Ok(Vec::new());
+            }
+
+            // SAFETY: [Category 8 — FFI boundary]
+            // `events` is an NSArray; `count` bounds all indexed access.
+            let count: usize = unsafe { msg_send![events, count] };
+            let mut out = Vec::with_capacity(count);
+            for i in 0..count {
+                // SAFETY: [Category 8 — FFI boundary]
+                // `i` is bounded by `count`.
+                let event: *mut Object = unsafe { msg_send![events, objectAtIndex: i] };
+                if event.is_null() {
+                    continue;
+                }
+                out.push(read_event(event));
+            }
+            Ok(out)
+        })
     })
 }
 
@@ -130,17 +147,19 @@ pub fn fetch_events(
 /// Returns `None` when the identifier does not match an existing event on any
 /// visible calendar.
 pub fn fetch_event_by_identifier(id: &str) -> Result<Option<RawCalendarEvent>, CalendarProbeError> {
-    autoreleasepool(|| {
-        let store = event_store()?;
-        let ns_id = ns_string_from_rust(id)?;
+    with_serialized_eventkit_access(|| {
+        autoreleasepool(|| {
+            let store = event_store()?;
+            let ns_id = ns_string_from_rust(id)?;
 
-        // SAFETY: [Category 8 — FFI boundary]
-        // `eventWithIdentifier:` searches all visible calendars on the store.
-        let event: *mut Object = unsafe { msg_send![store, eventWithIdentifier: ns_id] };
-        if event.is_null() {
-            return Ok(None);
-        }
-        Ok(Some(read_event(event)))
+            // SAFETY: [Category 8 — FFI boundary]
+            // `eventWithIdentifier:` searches all visible calendars on the store.
+            let event: *mut Object = unsafe { msg_send![store, eventWithIdentifier: ns_id] };
+            if event.is_null() {
+                return Ok(None);
+            }
+            Ok(Some(read_event(event)))
+        })
     })
 }
 
@@ -195,69 +214,90 @@ fn ns_string_from_rust(s: &str) -> Result<*mut Object, CalendarProbeError> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub fn probe_eventkit() -> Result<CalendarPermissionProbe, CalendarProbeError> {
-    autoreleasepool(|| {
-        let store = event_store()?;
-        let status = authorization_status()?;
-        let readable_status = match status {
-            CalendarPermissionStatus::NotDetermined => request_calendar_access(store)?,
-            CalendarPermissionStatus::Authorized | CalendarPermissionStatus::FullAccess => status,
-            CalendarPermissionStatus::Denied => {
-                return Ok(CalendarPermissionProbe::unavailable(
-                    CalendarPermissionStatus::Denied,
-                    CalendarProbeError::new(
-                        CalendarProbeErrorKind::PermissionDenied,
-                        "Calendar access is denied in macOS Privacy settings.",
-                    ),
-                ));
-            }
-            CalendarPermissionStatus::Restricted => {
-                return Ok(CalendarPermissionProbe::unavailable(
-                    CalendarPermissionStatus::Restricted,
-                    CalendarProbeError::new(
-                        CalendarProbeErrorKind::Restricted,
-                        "Calendar access is restricted by macOS policy.",
-                    ),
-                ));
-            }
-            CalendarPermissionStatus::WriteOnly => {
-                return Ok(CalendarPermissionProbe::unavailable(
-                    CalendarPermissionStatus::WriteOnly,
-                    CalendarProbeError::new(
-                        CalendarProbeErrorKind::PermissionDenied,
-                        "Calendar write-only access cannot read Apple Calendar events.",
-                    ),
-                ));
-            }
-            CalendarPermissionStatus::UnsupportedPlatform | CalendarPermissionStatus::Unknown => {
-                return Ok(CalendarPermissionProbe::unavailable(
-                    status,
-                    CalendarProbeError::new(
-                        CalendarProbeErrorKind::UnknownAuthorizationStatus,
-                        "EventKit returned an unknown calendar authorization status.",
-                    ),
-                ));
-            }
-        };
+    with_serialized_eventkit_access(|| {
+        autoreleasepool(|| {
+            let store = event_store()?;
+            let status = authorization_status()?;
+            let readable_status = match status {
+                CalendarPermissionStatus::NotDetermined => request_calendar_access(store)?,
+                CalendarPermissionStatus::Authorized | CalendarPermissionStatus::FullAccess => {
+                    status
+                }
+                CalendarPermissionStatus::Denied => {
+                    return Ok(CalendarPermissionProbe::unavailable(
+                        CalendarPermissionStatus::Denied,
+                        CalendarProbeError::new(
+                            CalendarProbeErrorKind::PermissionDenied,
+                            "Calendar access is denied in macOS Privacy settings.",
+                        ),
+                    ));
+                }
+                CalendarPermissionStatus::Restricted => {
+                    return Ok(CalendarPermissionProbe::unavailable(
+                        CalendarPermissionStatus::Restricted,
+                        CalendarProbeError::new(
+                            CalendarProbeErrorKind::Restricted,
+                            "Calendar access is restricted by macOS policy.",
+                        ),
+                    ));
+                }
+                CalendarPermissionStatus::WriteOnly => {
+                    return Ok(CalendarPermissionProbe::unavailable(
+                        CalendarPermissionStatus::WriteOnly,
+                        CalendarProbeError::new(
+                            CalendarProbeErrorKind::PermissionDenied,
+                            "Calendar write-only access cannot read Apple Calendar events.",
+                        ),
+                    ));
+                }
+                CalendarPermissionStatus::UnsupportedPlatform
+                | CalendarPermissionStatus::Unknown => {
+                    return Ok(CalendarPermissionProbe::unavailable(
+                        status,
+                        CalendarProbeError::new(
+                            CalendarProbeErrorKind::UnknownAuthorizationStatus,
+                            "EventKit returned an unknown calendar authorization status.",
+                        ),
+                    ));
+                }
+            };
 
-        if !readable_status.can_read_events() {
-            return Ok(CalendarPermissionProbe::unavailable(
+            if !readable_status.can_read_events() {
+                return Ok(CalendarPermissionProbe::unavailable(
+                    readable_status,
+                    CalendarProbeError::new(
+                        CalendarProbeErrorKind::PermissionDenied,
+                        "Calendar read access was not granted.",
+                    ),
+                ));
+            }
+
+            let sample_event = fetch_sample_event(store)?.map(NormalizedCalendarEvent::from);
+            Ok(CalendarPermissionProbe::available(
                 readable_status,
-                CalendarProbeError::new(
-                    CalendarProbeErrorKind::PermissionDenied,
-                    "Calendar read access was not granted.",
-                ),
-            ));
-        }
-
-        let sample_event = fetch_sample_event(store)?.map(NormalizedCalendarEvent::from);
-        Ok(CalendarPermissionProbe::available(
-            readable_status,
-            sample_event,
-        ))
+                sample_event,
+            ))
+        })
     })
 }
 
+fn with_serialized_eventkit_access<T>(
+    operation: impl FnOnce() -> Result<T, CalendarProbeError>,
+) -> Result<T, CalendarProbeError> {
+    let _guard = EVENTKIT_ACCESS_LOCK.lock().map_err(|_| {
+        CalendarProbeError::new(
+            CalendarProbeErrorKind::RequestFailed,
+            "EventKit access lock is unavailable.",
+        )
+    })?;
+    operation()
+}
+
 fn event_store() -> Result<*mut Object, CalendarProbeError> {
+    if let Some(store) = EVENT_STORE.with(Cell::get) {
+        return Ok(store as *mut Object);
+    }
+
     let class = event_store_class()?;
     // SAFETY: [Category 8 — FFI boundary]
     // `class` is the EKEventStore class object. NSObject alloc/init returns a valid object or nil,
@@ -274,6 +314,7 @@ fn event_store() -> Result<*mut Object, CalendarProbeError> {
         ));
     }
 
+    EVENT_STORE.with(|cached_store| cached_store.set(Some(store as usize)));
     Ok(store)
 }
 
@@ -319,8 +360,7 @@ fn request_calendar_access(
     };
 
     let store_usize = store as usize;
-    let completion_usize =
-        &*completion as *const block::Block<(bool, *mut Object), ()> as usize;
+    let completion_usize = &*completion as *const block::Block<(bool, *mut Object), ()> as usize;
 
     // Prevent the RcBlock from being dropped before the async dispatch runs.
     // EventKit retains the block when it receives it, so it remains valid
@@ -444,4 +484,44 @@ fn fetch_sample_event(store: *mut Object) -> Result<Option<RawCalendarEvent>, Ca
     }
 
     Ok(Some(read_event(event)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn serialized_eventkit_access_allows_only_one_operation_at_a_time() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let max_active = Arc::new(AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let active = Arc::clone(&active);
+                let max_active = Arc::clone(&max_active);
+                thread::spawn(move || {
+                    with_serialized_eventkit_access(|| {
+                        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        max_active.fetch_max(current, Ordering::SeqCst);
+                        thread::sleep(Duration::from_millis(5));
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        Ok(())
+                    })
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle
+                .join()
+                .expect("worker should not panic")
+                .expect("serialized access should succeed");
+        }
+
+        assert_eq!(max_active.load(Ordering::SeqCst), 1);
+    }
 }

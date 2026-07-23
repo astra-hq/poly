@@ -1075,12 +1075,10 @@ mod tests {
 
     #[test]
     fn test_different_glossary_fingerprints_are_unequal_sources() {
-        let fingerprint_a = stable_text_fingerprint(
-            "## Glossary\n\n- **Jane Doe** (person): Lead engineer",
-        );
-        let fingerprint_b = stable_text_fingerprint(
-            "## Glossary\n\n- **Bob Smith** (person): Architect",
-        );
+        let fingerprint_a =
+            stable_text_fingerprint("## Glossary\n\n- **Jane Doe** (person): Lead engineer");
+        let fingerprint_b =
+            stable_text_fingerprint("## Glossary\n\n- **Bob Smith** (person): Architect");
         assert_ne!(fingerprint_a, fingerprint_b);
 
         let source_a = SummaryCacheSource {

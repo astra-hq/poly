@@ -519,6 +519,7 @@ pub fn run() {
                 let scheduler = Arc::new(calendar::scheduler::CalendarRecordingScheduler::new(
                     Arc::new(config_repo),
                 ));
+                _app.manage(scheduler.clone());
                 tauri::async_runtime::spawn(async move {
                     scheduler.start(app_handle).await;
                 });
@@ -751,6 +752,7 @@ pub fn run() {
             calendar::commands::get_calendar_provider_health,
             calendar::commands::get_upcoming_calendar_candidates,
             calendar::commands::get_selected_calendars,
+            calendar::commands::skip_calendar_occurrence,
             calendar::commands::get_apple_calendars,
             // Database import commands
             database::commands::check_first_launch,

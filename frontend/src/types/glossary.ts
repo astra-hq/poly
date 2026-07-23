@@ -40,12 +40,14 @@ export const GLOSSARY_KINDS: GlossaryKind[] = [
 // ── Glossary Entry ───────────────────────────────────────────────────
 
 export interface GlossaryEntry {
+  id: string;
   term: string;
   kind: GlossaryKind;
   pronunciation?: string;
   aliases: string[];
   definition?: string;
   notes?: string;
+  references?: string[];
 }
 
 // ── Glossary ─────────────────────────────────────────────────────────
@@ -59,6 +61,13 @@ export const DEFAULT_GLOSSARY: Glossary = {
   version: 1,
   entries: [],
 };
+
+export function generateEntryId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
 
 // ── Glossary Sync Result (KG commands) ───────────────────────────────
 

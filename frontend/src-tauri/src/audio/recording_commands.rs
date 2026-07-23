@@ -933,6 +933,13 @@ pub async fn is_recording() -> bool {
     IS_RECORDING.load(Ordering::SeqCst)
 }
 
+pub(crate) fn active_calendar_recording_context() -> Option<CalendarRecordingContext> {
+    let manager_guard = RECORDING_MANAGER.lock().ok()?;
+    manager_guard
+        .as_ref()
+        .and_then(|manager| manager.get_calendar_context().cloned())
+}
+
 /// Get recording statistics
 pub async fn get_transcription_status() -> TranscriptionStatus {
     TranscriptionStatus {

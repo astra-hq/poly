@@ -38,15 +38,15 @@ impl GlossaryRepository {
             return Ok(Glossary::default());
         }
 
-        let glossary: Glossary = serde_yaml::from_str(&contents)
+        let mut glossary: Glossary = serde_yaml::from_str(&contents)
             .with_context(|| format!("Malformed YAML in glossary file {}", self.path.display()))?;
+        backfill_missing_entry_ids(&mut glossary);
 
         Ok(glossary)
     }
 
     pub fn save(&self, glossary: &Glossary) -> Result<()> {
-        paths::ensure_glossary_dir()
-            .with_context(|| "Failed to create glossary directory")?;
+        paths::ensure_glossary_dir().with_context(|| "Failed to create glossary directory")?;
 
         let yaml = serde_yaml::to_string(glossary)
             .with_context(|| "Failed to serialize glossary to YAML")?;
@@ -58,8 +58,7 @@ impl GlossaryRepository {
     }
 
     pub fn save_atomic(&self, glossary: &Glossary) -> Result<()> {
-        paths::ensure_glossary_dir()
-            .with_context(|| "Failed to create glossary directory")?;
+        paths::ensure_glossary_dir().with_context(|| "Failed to create glossary directory")?;
 
         let parent = self
             .path
@@ -93,6 +92,57 @@ impl GlossaryRepository {
         })?;
 
         Ok(())
+    }
+}
+
+fn backfill_missing_entry_ids(glossary: &mut Glossary) {
+    let mut used_ids = std::collections::HashSet::new();
+    for (index, entry) in glossary.entries.iter_mut().enumerate() {
+        let trimmed_id = entry.id.trim();
+        if !trimmed_id.is_empty() {
+            entry.id = trimmed_id.to_string();
+            used_ids.insert(entry.id.clone());
+            continue;
+        }
+
+        let base = legacy_entry_id_base(&entry.term, index);
+        entry.id = unique_legacy_entry_id(&base, &mut used_ids);
+    }
+}
+
+fn legacy_entry_id_base(term: &str, index: usize) -> String {
+    let mut out = String::from("entry-");
+    for ch in term.trim().chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+
+    let trimmed = out.trim_end_matches('-');
+    if trimmed == "entry" {
+        format!("entry-{}", index + 1)
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn unique_legacy_entry_id(
+    base: &str,
+    used_ids: &mut std::collections::HashSet<String>,
+) -> String {
+    if used_ids.insert(base.to_string()) {
+        return base.to_string();
+    }
+
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{}-{}", base, suffix);
+        if used_ids.insert(candidate.clone()) {
+            return candidate;
+        }
+        suffix += 1;
     }
 }
 
@@ -163,6 +213,41 @@ mod tests {
     }
 
     #[test]
+    fn load_backfills_missing_entry_ids_for_legacy_glossaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("legacy.yml");
+        std::fs::write(
+            &file_path,
+            "version: 1\nentries:\n  - term: Poly\n    kind: project\n    aliases: []\n  - term: API\n    kind: acronym\n    aliases: []\n",
+        )
+        .unwrap();
+        let repo = GlossaryRepository::with_path(file_path);
+
+        let glossary = repo.load().unwrap();
+
+        assert_eq!(glossary.entries[0].id, "entry-poly");
+        assert_eq!(glossary.entries[1].id, "entry-api");
+        assert!(glossary.validate().is_ok());
+    }
+
+    #[test]
+    fn load_backfills_unique_ids_when_legacy_terms_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("legacy.yml");
+        std::fs::write(
+            &file_path,
+            "version: 1\nentries:\n  - term: Poly!\n    kind: project\n    aliases: []\n  - term: Poly?\n    kind: component\n    aliases: []\n",
+        )
+        .unwrap();
+        let repo = GlossaryRepository::with_path(file_path);
+
+        let glossary = repo.load().unwrap();
+
+        assert_eq!(glossary.entries[0].id, "entry-poly");
+        assert_eq!(glossary.entries[1].id, "entry-poly-2");
+    }
+
+    #[test]
     fn save_and_load_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("glossary.yml");
@@ -171,12 +256,14 @@ mod tests {
         let glossary = Glossary {
             version: 1,
             entries: vec![GlossaryEntry {
+                id: "person-sujith".to_string(),
                 term: "Sujith".to_string(),
                 kind: "person".to_string(),
                 pronunciation: Some("soo-jith".to_string()),
                 aliases: vec!["Suj".to_string()],
                 definition: Some("Project lead".to_string()),
                 notes: Some("Based in SF".to_string()),
+                references: vec!["https://example.com/sujith".to_string()],
             }],
         };
 
@@ -197,20 +284,24 @@ mod tests {
             version: 1,
             entries: vec![
                 GlossaryEntry {
+                    id: "project-poly".to_string(),
                     term: "Poly".to_string(),
                     kind: "project".to_string(),
                     pronunciation: None,
                     aliases: vec![],
                     definition: Some("Privacy-first AI meeting assistant".to_string()),
                     notes: None,
+                    references: vec![],
                 },
                 GlossaryEntry {
+                    id: "project-parakeet".to_string(),
                     term: "Parakeet".to_string(),
                     kind: "project".to_string(),
                     pronunciation: Some("PAIR-uh-keet".to_string()),
                     aliases: vec!["PK".to_string()],
                     definition: Some("ONNX-based fast transcription".to_string()),
                     notes: None,
+                    references: vec!["https://example.com/parakeet".to_string()],
                 },
             ],
         };
@@ -234,12 +325,14 @@ mod tests {
         let original = Glossary {
             version: 1,
             entries: vec![GlossaryEntry {
+                id: "entry-original".to_string(),
                 term: "Original".to_string(),
                 kind: "other".to_string(),
                 pronunciation: None,
                 aliases: vec![],
                 definition: None,
                 notes: None,
+                references: vec![],
             }],
         };
         repo.save(&original).unwrap();
@@ -251,12 +344,14 @@ mod tests {
         let new_glossary = Glossary {
             version: 1,
             entries: vec![GlossaryEntry {
+                id: "entry-new".to_string(),
                 term: "New".to_string(),
                 kind: "other".to_string(),
                 pronunciation: None,
                 aliases: vec![],
                 definition: None,
                 notes: None,
+                references: vec![],
             }],
         };
         let result = repo.save_atomic(&new_glossary);
@@ -283,12 +378,14 @@ mod tests {
         let first = Glossary {
             version: 1,
             entries: vec![GlossaryEntry {
+                id: "entry-first".to_string(),
                 term: "First".to_string(),
                 kind: "other".to_string(),
                 pronunciation: None,
                 aliases: vec![],
                 definition: None,
                 notes: None,
+                references: vec![],
             }],
         };
         repo.save_atomic(&first).unwrap();
@@ -296,12 +393,14 @@ mod tests {
         let second = Glossary {
             version: 1,
             entries: vec![GlossaryEntry {
+                id: "entry-second".to_string(),
                 term: "Second".to_string(),
                 kind: "other".to_string(),
                 pronunciation: None,
                 aliases: vec![],
                 definition: None,
                 notes: None,
+                references: vec![],
             }],
         };
         repo.save_atomic(&second).unwrap();
@@ -320,12 +419,14 @@ mod tests {
         let glossary = Glossary {
             version: 1,
             entries: vec![GlossaryEntry {
+                id: "component-full-entry".to_string(),
                 term: "FullEntry".to_string(),
                 kind: "component".to_string(),
                 pronunciation: Some("full-EN-tree".to_string()),
                 aliases: vec!["FE".to_string(), "Full".to_string()],
                 definition: Some("A complete entry for testing".to_string()),
                 notes: Some("Created during roundtrip test".to_string()),
+                references: vec!["https://example.com/full-entry".to_string()],
             }],
         };
 
@@ -337,7 +438,10 @@ mod tests {
 
         let file_content = std::fs::read_to_string(&file_path).unwrap();
         assert!(file_content.contains("FullEntry"));
+        assert!(file_content.contains("id: component-full-entry"));
+        assert!(!file_content.contains("document_id"));
         assert!(file_content.contains("component"));
         assert!(file_content.contains("full-EN-tree"));
+        assert!(file_content.contains("https://example.com/full-entry"));
     }
 }

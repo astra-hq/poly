@@ -1,19 +1,17 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { Calendar, AlertCircle, CheckCircle, XCircle, HelpCircle, Loader2, Info } from 'lucide-react';
+import { Calendar, AlertCircle, XCircle, HelpCircle, Loader2, Info, ChevronDown, Clock, MoreHorizontal } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useConfig } from '@/contexts/ConfigContext';
 import { usePlatform } from '@/hooks/usePlatform';
 import type { CalendarConfig, CalendarPermissionStatus } from '@/services/configService';
 
 function permissionStatusLabel(status: CalendarPermissionStatus): string {
   switch (status) {
-    case 'authorized':
-    case 'full_access':
-      return 'Access granted';
     case 'denied':
       return 'Access denied';
     case 'restricted':
@@ -31,9 +29,6 @@ function permissionStatusLabel(status: CalendarPermissionStatus): string {
 
 function permissionStatusIcon(status: CalendarPermissionStatus) {
   switch (status) {
-    case 'authorized':
-    case 'full_access':
-      return <CheckCircle className="w-4 h-4 text-green-600" />;
     case 'denied':
       return <XCircle className="w-4 h-4 text-red-600" />;
     case 'restricted':
@@ -50,6 +45,59 @@ function permissionStatusIcon(status: CalendarPermissionStatus) {
 
 function permissionCanRead(status: CalendarPermissionStatus): boolean {
   return status === 'authorized' || status === 'full_access';
+}
+
+type SchedulerStatus = {
+  readonly type: string;
+  readonly event_id?: string;
+  readonly title?: string;
+  readonly start?: string;
+  readonly end?: string;
+  readonly reason?: string;
+  readonly message?: string;
+};
+
+type MeetingStatus = 'scheduled' | 'skipped' | 'recording';
+
+function meetingStatusFromScheduler(status: SchedulerStatus | null): MeetingStatus {
+  switch (status?.type) {
+    case 'recording_started':
+      return 'recording';
+    case 'recording_skipped_active':
+    case 'skipped':
+      return 'skipped';
+    default:
+      return 'scheduled';
+  }
+}
+
+function meetingStatusLabel(status: MeetingStatus): string {
+  switch (status) {
+    case 'recording':
+      return 'Recording';
+    case 'skipped':
+      return 'Skipped';
+    case 'scheduled':
+      return 'Scheduled';
+  }
+}
+
+function selectedCalendarSummary(selectedIds: readonly string[], calendars: readonly { id: string; title: string }[]): string {
+  if (calendars.length === 0) {
+    return 'No calendars available';
+  }
+  if (selectedIds.length === 0) {
+    return `All ${calendars.length} calendars`;
+  }
+  return `${selectedIds.length} of ${calendars.length} calendars`;
+}
+
+function monitoredCalendarTitles(selectedIds: readonly string[], calendars: readonly { id: string; title: string }[]): string[] {
+  if (selectedIds.length === 0) {
+    return calendars.map((calendar) => calendar.title);
+  }
+  const selected = new Set(selectedIds);
+  return calendars.filter((calendar) => selected.has(calendar.id)).map((calendar) => calendar.title);
 }
 
 function formatCandidateTime(start: string, end: string): string {
@@ -79,21 +127,54 @@ export function CalendarSettings() {
     loadCalendarStatus,
     requestCalendarPermission,
     availableCalendars,
+    skipCalendarOccurrence,
   } = useConfig();
 
   const platform = usePlatform();
   const isMacOS = platform === 'macos';
 
   const [isRequesting, setIsRequesting] = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
+  const [calendarsExpanded, setCalendarsExpanded] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const refreshedStatusRef = useRef(false);
+
+  const permissionStatus: CalendarPermissionStatus = calendarPermissionStatus ?? (isMacOS ? 'unknown' : 'unsupported_platform');
+  const canRead = permissionCanRead(permissionStatus);
 
   useEffect(() => {
-    if (isMacOS && calendarPermissionStatus === null && !isLoadingCalendar) {
-      loadCalendarStatus().catch((err: unknown) => {
-        console.error('[CalendarSettings] Failed to load calendar status:', err);
-      });
+    if (!isMacOS) {
+      refreshedStatusRef.current = false;
+      return;
     }
-  }, [isMacOS, calendarPermissionStatus, isLoadingCalendar, loadCalendarStatus]);
+    if (refreshedStatusRef.current) return;
+    refreshedStatusRef.current = true;
+    loadCalendarStatus().catch((err: unknown) => {
+      console.error('[CalendarSettings] Failed to load calendar status:', err);
+    });
+  }, [isMacOS, loadCalendarStatus]);
+
+  useEffect(() => {
+    if (!isMacOS) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadCalendarStatus().catch((err: unknown) => {
+          console.error('[CalendarSettings] Failed to refresh calendar status on visibility change:', err);
+        });
+      }
+    };
+    const handleFocus = () => {
+      loadCalendarStatus().catch((err: unknown) => {
+        console.error('[CalendarSettings] Failed to refresh calendar status on focus:', err);
+      });
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [isMacOS, loadCalendarStatus]);
 
   const handleRequestPermission = async () => {
     if (!isMacOS) return;
@@ -161,18 +242,49 @@ export function CalendarSettings() {
     }
   };
 
-  const permissionStatus: CalendarPermissionStatus = calendarPermissionStatus ?? (isMacOS ? 'unknown' : 'unsupported_platform');
-  const canRead = permissionCanRead(permissionStatus);
   const nextCandidate = upcomingCalendarCandidates[0] ?? null;
+  const meetingStatus = meetingStatusFromScheduler(schedulerStatus);
+  const monitoredTitles = monitoredCalendarTitles(calendarSettings.selected_apple_calendar_identifiers, availableCalendars);
+
+  const handleSkipCandidate = async () => {
+    if (!nextCandidate || meetingStatus !== 'scheduled') return;
+    setIsSkipping(true);
+    setLastError(null);
+    try {
+      await skipCalendarOccurrence(nextCandidate.id, nextCandidate.start);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to skip meeting';
+      setLastError(message);
+      console.error('[CalendarSettings] Failed to skip calendar occurrence:', err);
+    } finally {
+      setIsSkipping(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm space-y-6">
-      <div className="flex items-center gap-2">
-        <Calendar className="w-5 h-5 text-gray-700" />
-        <h3 className="text-lg font-semibold text-gray-900">Calendar</h3>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Calendar className="w-5 h-5 text-gray-700" />
+          <h3 className="text-lg font-semibold text-gray-900">Calendar</h3>
+        </div>
+        {isMacOS && canRead && (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="text-gray-400 hover:text-gray-600 transition-colors" aria-label="How to revoke calendar access">
+                  <Info className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                To revoke access, open System Settings → Privacy &amp; Security → Calendars, then toggle Poly off.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
       <p className="text-sm text-gray-600">
-        Connect to Apple Calendar to pull meeting metadata and automatically record eligible meetings.
+        Connect a calendar to pull meeting metadata and automatically record eligible meetings.
       </p>
 
       {!isMacOS && (
@@ -189,7 +301,7 @@ export function CalendarSettings() {
         </div>
       )}
 
-      {isMacOS && (
+      {isMacOS && !canRead && (
         <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -241,27 +353,57 @@ export function CalendarSettings() {
 
       {isMacOS && canRead && availableCalendars.length > 0 && (
         <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <h4 className="font-medium text-gray-800 mb-2">Monitored calendars</h4>
-          <div className="space-y-2">
-            {availableCalendars.map((cal) => (
-              <label key={cal.id} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  checked={calendarSettings.selected_apple_calendar_identifiers.includes(cal.id)}
-                  onChange={(e) => handleToggleCalendar(cal.id, e.target.checked)}
-                />
-                <span className="text-sm text-gray-700">{cal.title}</span>
-              </label>
-            ))}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h4 className="font-medium text-gray-800">Monitored calendars</h4>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <p className="text-sm text-gray-600 cursor-default">{selectedCalendarSummary(calendarSettings.selected_apple_calendar_identifiers, availableCalendars)}</p>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-xs">
+                    <div className="space-y-1">
+                      {monitoredTitles.map((title) => (
+                        <p key={title}>{title}</p>
+                      ))}
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setCalendarsExpanded((expanded) => !expanded)}
+              aria-expanded={calendarsExpanded}
+            >
+              {calendarsExpanded ? 'Hide' : 'Choose'}
+              <ChevronDown className={`ml-1 h-3.5 w-3.5 transition-transform ${calendarsExpanded ? 'rotate-180' : ''}`} />
+            </Button>
           </div>
-          {calendarSettings.selected_apple_calendar_identifiers.length === 0 && (
-            <p className="text-xs text-gray-500 mt-2">All calendars are monitored by default. Select specific calendars to limit auto-record to those only.</p>
+          {calendarsExpanded && (
+            <div className="mt-3 space-y-2">
+              {availableCalendars.map((cal) => (
+                <label key={cal.id} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    checked={calendarSettings.selected_apple_calendar_identifiers.includes(cal.id)}
+                    onChange={(e) => handleToggleCalendar(cal.id, e.target.checked)}
+                  />
+                  <span className="text-sm text-gray-700">{cal.title}</span>
+                </label>
+              ))}
+              {calendarSettings.selected_apple_calendar_identifiers.length === 0 && (
+                <p className="text-xs text-gray-500">All calendars are monitored by default. Select specific calendars to limit auto-record to those only.</p>
+              )}
+            </div>
           )}
         </div>
       )}
 
-      <div className="space-y-4">
+      {isMacOS && canRead && <div className="space-y-4">
         <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
           <div>
             <h4 className="font-medium text-gray-800">Pull meeting metadata</h4>
@@ -294,7 +436,7 @@ export function CalendarSettings() {
             disabled={!isMacOS || !canRead}
           />
         </div>
-      </div>
+      </div>}
 
       {isMacOS && canRead && (
         <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -327,23 +469,39 @@ export function CalendarSettings() {
               Loading...
             </div>
           ) : nextCandidate ? (
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-gray-900">{nextCandidate.title}</p>
-              <p className="text-xs text-gray-600">{formatCandidateTime(nextCandidate.start, nextCandidate.end)}</p>
-              {nextCandidate.meeting_link && (
-                <p className="text-xs text-gray-500">Has meeting link</p>
-              )}
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-medium text-gray-900 truncate">{nextCandidate.title}</p>
+                  <p className="text-xs text-gray-600">{formatCandidateTime(nextCandidate.start, nextCandidate.end)}</p>
+                  <p className="text-xs text-gray-500">Calendar: {nextCandidate.calendar_id}</p>
+                  {nextCandidate.meeting_link && (
+                    <p className="text-xs text-gray-500">Has meeting link</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${meetingStatus === 'recording' ? 'bg-red-50 text-red-700' : meetingStatus === 'skipped' ? 'bg-gray-100 text-gray-600' : 'bg-blue-50 text-blue-700'}`}>
+                    <Clock className="h-3.5 w-3.5" />
+                    {meetingStatusLabel(meetingStatus)}
+                  </span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="ghost" size="icon" className="h-8 w-8" aria-label="Meeting recording options">
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={handleSkipCandidate} disabled={meetingStatus !== 'scheduled' || isSkipping}>
+                        {isSkipping ? 'Skipping...' : 'Skip this recording'}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-gray-600">No upcoming meetings found in the next {calendarSettings.lookahead_window_minutes} minutes.</p>
           )}
-        </div>
-      )}
-
-      {isMacOS && schedulerStatus && (
-        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-          <h4 className="font-medium text-gray-800 mb-2">Scheduler status</h4>
-          <SchedulerStatusDisplay status={schedulerStatus} />
         </div>
       )}
 
@@ -354,57 +512,4 @@ export function CalendarSettings() {
       )}
     </div>
   );
-}
-
-function SchedulerStatusDisplay({ status }: { status: { type: string; event_id?: string; title?: string; start?: string; end?: string; reason?: string; message?: string } }) {
-  switch (status.type) {
-    case 'recording_started':
-      return (
-        <div className="flex items-center gap-2 text-sm text-green-700">
-          <CheckCircle className="w-4 h-4" />
-          <span>Started recording: {status.title}</span>
-        </div>
-      );
-    case 'recording_skipped_active':
-      return (
-        <div className="flex items-center gap-2 text-sm text-amber-700">
-          <AlertCircle className="w-4 h-4" />
-          <span>Skipped {status.title} — recording already active</span>
-        </div>
-      );
-    case 'candidate_found':
-      return (
-        <div className="flex items-center gap-2 text-sm text-gray-700">
-          <Info className="w-4 h-4" />
-          <span>Next candidate: {status.title}</span>
-        </div>
-      );
-    case 'skipped':
-      return (
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <Info className="w-4 h-4" />
-          <span>Skipped: {status.reason}</span>
-        </div>
-      );
-    case 'error':
-      return (
-        <div className="flex items-center gap-2 text-sm text-red-700">
-          <AlertCircle className="w-4 h-4" />
-          <span>Error: {status.message}</span>
-        </div>
-      );
-    case 'stopped':
-      return (
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <Info className="w-4 h-4" />
-          <span>Scheduler stopped</span>
-        </div>
-      );
-    default:
-      return (
-        <div className="text-sm text-gray-600">
-          <pre className="text-xs">{JSON.stringify(status, null, 2)}</pre>
-        </div>
-      );
-  }
 }

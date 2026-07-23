@@ -42,6 +42,7 @@ fn video_event(status: EventResponseStatus) -> CalendarEvent {
         response_status: status,
         category: EventCategory::Timed,
         is_cancelled: false,
+        organizer_is_current_user: false,
     }
 }
 
@@ -172,4 +173,30 @@ async fn calendar_domain_fake_provider_returns_typed_missing_event_error() {
             occurrence_key: EventOccurrenceKey::new("missing:occurrence"),
         })
     );
+}
+
+#[test]
+fn calendar_events_sort_by_start_time_ascending() {
+    // Given: three events out of chronological order.
+    let _clock = FakeClock::new(instant(1_783_522_800));
+    let mut late = video_event(EventResponseStatus::Accepted);
+    let mut mid = video_event(EventResponseStatus::Accepted);
+    let mut early = video_event(EventResponseStatus::Accepted);
+
+    late.time_range = CalendarTimeRange::new(instant(1_783_530_000), instant(1_783_533_600))
+        .expect("valid range");
+    mid.time_range = CalendarTimeRange::new(instant(1_783_526_400), instant(1_783_530_000))
+        .expect("valid range");
+    early.time_range = CalendarTimeRange::new(instant(1_783_522_800), instant(1_783_526_400))
+        .expect("valid range");
+
+    let mut events = vec![late.clone(), early.clone(), mid.clone()];
+
+    // When: sorted by start time (mirroring the command behavior).
+    events.sort_by_key(|e| e.time_range.start);
+
+    // Then: order is earliest → latest.
+    assert_eq!(events[0].id, early.id);
+    assert_eq!(events[1].id, mid.id);
+    assert_eq!(events[2].id, late.id);
 }

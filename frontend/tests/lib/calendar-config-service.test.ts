@@ -40,6 +40,10 @@ const mockInvoke = mock((command: string, args?: Record<string, unknown>) => {
     return Promise.resolve(CUSTOM_CALENDAR_SETTINGS);
   }
 
+  if (command === 'skip_calendar_occurrence') {
+    return Promise.resolve(undefined);
+  }
+
   return Promise.reject(new Error(`No mock handler registered for command: ${command}`));
 });
 
@@ -84,5 +88,21 @@ describe('ConfigService calendar settings', () => {
   test('calendar settings expose Apple as the only v1 provider literal', () => {
     expect(DEFAULT_CALENDAR_SETTINGS.provider).toBe('apple');
     expect(CUSTOM_CALENDAR_SETTINGS.provider).toBe('apple');
+  });
+
+  test('skipCalendarOccurrence calls skip_calendar_occurrence with event and start', async () => {
+    const service = new ConfigService();
+
+    await service.skipCalendarOccurrence('evt-1', '2026-07-08T14:00:00Z');
+
+    expect(calls).toEqual([
+      {
+        command: 'skip_calendar_occurrence',
+        args: {
+          eventId: 'evt-1',
+          occurrenceStart: '2026-07-08T14:00:00Z',
+        },
+      },
+    ]);
   });
 });

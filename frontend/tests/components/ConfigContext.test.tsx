@@ -1,6 +1,11 @@
 import { describe, expect, test, afterEach } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ConfigProvider, useConfig } from '../../src/contexts/ConfigContext';
+import {
+  ConfigProvider,
+  reconcileCalendarDerivedItems,
+  reconcileCalendarPermissionStatus,
+  useConfig,
+} from '../../src/contexts/ConfigContext';
 import { DEFAULT_BETA_FEATURES } from '../../src/types/betaFeatures';
 
 function ConfigProbe(): string {
@@ -127,5 +132,44 @@ describe('ConfigProvider SSR determinism', () => {
     );
 
     expect(htmlWithStorage).toBe(htmlNoStorage);
+  });
+});
+
+describe('calendar permission reconciliation', () => {
+  test('keeps granted permission when refresh returns transient unknown status', () => {
+    expect(reconcileCalendarPermissionStatus('unknown', null, 'authorized')).toBe('authorized');
+  });
+
+  test('keeps granted permission when refresh returns transient not determined status', () => {
+    expect(reconcileCalendarPermissionStatus('not_determined', null, 'full_access')).toBe('full_access');
+  });
+
+  test('does not keep granted permission when backend reports explicit denial', () => {
+    expect(reconcileCalendarPermissionStatus('denied', null, 'authorized')).toBe('denied');
+  });
+});
+
+describe('calendar derived item reconciliation', () => {
+  const previous = [{ id: 'cal-work', title: 'Work' }];
+  const next = [{ id: 'cal-personal', title: 'Personal' }];
+
+  test('keeps previous non-empty items when readable refresh returns transient empty list', () => {
+    expect(reconcileCalendarDerivedItems(previous, [], 'authorized')).toBe(previous);
+  });
+
+  test('allows first readable empty result to stay empty', () => {
+    expect(reconcileCalendarDerivedItems([], [], 'authorized')).toEqual([]);
+  });
+
+  test('replaces previous items when readable refresh returns non-empty list', () => {
+    expect(reconcileCalendarDerivedItems(previous, next, 'full_access')).toBe(next);
+  });
+
+  test('clears previous items when permission is no longer readable', () => {
+    expect(reconcileCalendarDerivedItems(previous, [], 'denied')).toEqual([]);
+  });
+
+  test('clears fetched items when permission is no longer readable', () => {
+    expect(reconcileCalendarDerivedItems(previous, next, 'restricted')).toEqual([]);
   });
 });

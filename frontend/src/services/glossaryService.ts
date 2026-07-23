@@ -36,13 +36,17 @@ export class GlossaryService {
 
   /**
    * Sync the glossary to the Knowledge Graph for the active profile.
-   * Backend: `api_sync_glossary_to_knowledge_graph` (no args)
+   * Backend: `api_sync_glossary_to_knowledge_graph(previousGlossary?: Glossary)`
    * Uses the global active KG profile only — does not query per-meeting selection.
+   * Passes the previous glossary state so Rust can compute a per-entry diff.
    * Returns a sync result with profile info, success/failure status, and skip reasons.
    */
-  async syncGlossaryToKnowledgeGraph(): Promise<GlossarySyncResult> {
+  async syncGlossaryToKnowledgeGraph(
+    previousGlossary?: Glossary
+  ): Promise<GlossarySyncResult> {
     return invoke<GlossarySyncResult>(
-      'api_sync_glossary_to_knowledge_graph'
+      'api_sync_glossary_to_knowledge_graph',
+      { previousGlossary }
     );
   }
 
