@@ -29,7 +29,7 @@ use sqlx::SqlitePool;
 
 use super::config::{
     KnowledgeGraphProfileWithoutSecrets, KnowledgeGraphSettingsWithoutSecrets, PolyConfig,
-    PreferencesConfig, SummaryConfig, TranscriptConfig,
+    PreferencesConfig, SummaryConfig, TranscriptConfig, WebSocketServerConfig,
 };
 use super::ConfigRepository;
 use crate::knowledge_graph::config::KnowledgeGraphSettings;
@@ -97,6 +97,7 @@ impl LegacyConfigExtractor {
             knowledge_graph,
             preferences: PreferencesConfig::default(),
             calendar: Default::default(),
+            websocket_server: WebSocketServerConfig::default(),
         })
     }
 

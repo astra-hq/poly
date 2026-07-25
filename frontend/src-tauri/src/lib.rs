@@ -57,6 +57,7 @@ pub mod poly_config;
 pub mod process_path;
 pub mod providers;
 pub mod secrets;
+pub mod websocket_server;
 pub mod state;
 pub mod summary;
 pub mod tray;
@@ -546,6 +547,29 @@ pub fn run() {
                 }
             } else {
                 log::warn!("Could not resolve app data dir; local bridge not started");
+            }
+
+            {
+                let app_state = _app.state::<state::AppState>();
+                match app_state.config_repo.load_or_create_default() {
+                    Ok(config) => {
+                        let ws_config = config.websocket_server;
+                        let bind = ws_config.bind_address.clone();
+                        let port = ws_config.port;
+                        let _ws_handle = websocket_server::start_websocket_server(
+                            bind.clone(),
+                            port,
+                        );
+                        log::info!(
+                            "WebSocket server started on ws://{}:{}",
+                            bind,
+                            port
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load config for WebSocket server: {}", e);
+                    }
+                }
             }
 
             Ok(())

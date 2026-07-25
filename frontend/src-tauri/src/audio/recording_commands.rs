@@ -244,7 +244,9 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         let now = chrono::Local::now();
         format!("Meeting {}", now.format("%Y-%m-%d_%H-%M-%S"))
     });
-    manager.set_meeting_name(Some(effective_meeting_name));
+    manager.set_meeting_name(Some(effective_meeting_name.clone()));
+    let meeting_id = uuid::Uuid::new_v4().to_string();
+    manager.set_meeting_id(Some(meeting_id.clone()));
 
     // Set up error callback
     let app_for_error = app.clone();
@@ -306,6 +308,24 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
                 if let Ok(manager_guard) = RECORDING_MANAGER.lock() {
                     if let Some(manager) = manager_guard.as_ref() {
                         manager.add_transcript_segment(segment);
+
+                        if let Some(broadcaster) = crate::websocket_server::broadcaster::get_broadcaster() {
+                            if let Some(mid) = manager.get_meeting_id() {
+                                broadcaster.broadcast(
+                                    crate::websocket_server::broadcaster::WsMessage::TranscriptionChunk(
+                                        crate::websocket_server::broadcaster::TranscriptionChunkPayload {
+                                            meeting_id: mid,
+                                            meeting_title: manager.get_meeting_name().unwrap_or_default(),
+                                            speaker: "Unknown".to_string(),
+                                            text: update.text.clone(),
+                                            is_final: !update.is_partial,
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                            chunk_index: update.sequence_id,
+                                        }
+                                    )
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -325,6 +345,18 @@ pub async fn start_recording_with_meeting_name<R: Runtime>(
         }),
     )
     .map_err(|e| e.to_string())?;
+
+    if let Some(broadcaster) = crate::websocket_server::broadcaster::get_broadcaster() {
+        broadcaster.broadcast(
+            crate::websocket_server::broadcaster::WsMessage::MeetingStarted(
+                crate::websocket_server::broadcaster::MeetingStartedPayload {
+                    meeting_id: meeting_id.clone(),
+                    title: effective_meeting_name.clone(),
+                    started_at: chrono::Utc::now().timestamp(),
+                }
+            )
+        );
+    }
 
     // Update tray menu to reflect recording state
     crate::tray::update_tray_menu(&app);
@@ -429,7 +461,9 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         let now = chrono::Local::now();
         format!("Meeting {}", now.format("%Y-%m-%d_%H-%M-%S"))
     });
-    manager.set_meeting_name(Some(effective_meeting_name));
+    manager.set_meeting_name(Some(effective_meeting_name.clone()));
+    let meeting_id = uuid::Uuid::new_v4().to_string();
+    manager.set_meeting_id(Some(meeting_id.clone()));
 
     // Set up error callback
     let app_for_error = app.clone();
@@ -491,6 +525,24 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
                 if let Ok(manager_guard) = RECORDING_MANAGER.lock() {
                     if let Some(manager) = manager_guard.as_ref() {
                         manager.add_transcript_segment(segment);
+
+                        if let Some(broadcaster) = crate::websocket_server::broadcaster::get_broadcaster() {
+                            if let Some(mid) = manager.get_meeting_id() {
+                                broadcaster.broadcast(
+                                    crate::websocket_server::broadcaster::WsMessage::TranscriptionChunk(
+                                        crate::websocket_server::broadcaster::TranscriptionChunkPayload {
+                                            meeting_id: mid,
+                                            meeting_title: manager.get_meeting_name().unwrap_or_default(),
+                                            speaker: "Unknown".to_string(),
+                                            text: update.text.clone(),
+                                            is_final: !update.is_partial,
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                            chunk_index: update.sequence_id,
+                                        }
+                                    )
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -513,6 +565,18 @@ pub async fn start_recording_with_devices_and_meeting<R: Runtime>(
         }),
     )
     .map_err(|e| e.to_string())?;
+
+    if let Some(broadcaster) = crate::websocket_server::broadcaster::get_broadcaster() {
+        broadcaster.broadcast(
+            crate::websocket_server::broadcaster::WsMessage::MeetingStarted(
+                crate::websocket_server::broadcaster::MeetingStartedPayload {
+                    meeting_id: meeting_id.clone(),
+                    title: effective_meeting_name.clone(),
+                    started_at: chrono::Utc::now().timestamp(),
+                }
+            )
+        );
+    }
 
     // Update tray menu to reflect recording state
     crate::tray::update_tray_menu(&app);
@@ -566,6 +630,9 @@ pub async fn stop_recording<R: Runtime>(
     };
 
     let (stop_result, manager_for_cleanup) = stop_result;
+
+    let meeting_id_for_ws = manager_for_cleanup.as_ref().and_then(|m| m.get_meeting_id());
+    let meeting_name_for_ws = manager_for_cleanup.as_ref().and_then(|m| m.get_meeting_name());
 
     match stop_result {
         Ok(_) => {
@@ -921,6 +988,21 @@ pub async fn stop_recording<R: Runtime>(
     )
     .map_err(|e| e.to_string())?;
 
+    if let (Some(broadcaster), Some(mid)) = (
+        crate::websocket_server::broadcaster::get_broadcaster(),
+        meeting_id_for_ws
+    ) {
+        broadcaster.broadcast(
+            crate::websocket_server::broadcaster::WsMessage::MeetingEnded(
+                crate::websocket_server::broadcaster::MeetingEndedPayload {
+                    meeting_id: mid,
+                    ended_at: chrono::Utc::now().timestamp(),
+                    has_summary: false,
+                }
+            )
+        );
+    }
+
     // Update tray menu to reflect stopped state
     crate::tray::update_tray_menu(&app);
 
@@ -973,6 +1055,19 @@ pub async fn pause_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), String
         )
         .map_err(|e| e.to_string())?;
 
+        if let Some(broadcaster) = crate::websocket_server::broadcaster::get_broadcaster() {
+            if let Some(mid) = manager.get_meeting_id() {
+                broadcaster.broadcast(
+                    crate::websocket_server::broadcaster::WsMessage::MeetingPaused(
+                        crate::websocket_server::broadcaster::MeetingPausedPayload {
+                            meeting_id: mid,
+                            paused_at: chrono::Utc::now().timestamp(),
+                        }
+                    )
+                );
+            }
+        }
+
         // Update tray menu to reflect paused state
         crate::tray::update_tray_menu(&app);
 
@@ -1006,6 +1101,19 @@ pub async fn resume_recording<R: Runtime>(app: AppHandle<R>) -> Result<(), Strin
             }),
         )
         .map_err(|e| e.to_string())?;
+
+        if let Some(broadcaster) = crate::websocket_server::broadcaster::get_broadcaster() {
+            if let Some(mid) = manager.get_meeting_id() {
+                broadcaster.broadcast(
+                    crate::websocket_server::broadcaster::WsMessage::MeetingResumed(
+                        crate::websocket_server::broadcaster::MeetingResumedPayload {
+                            meeting_id: mid,
+                            resumed_at: chrono::Utc::now().timestamp(),
+                        }
+                    )
+                );
+            }
+        }
 
         // Update tray menu to reflect resumed state
         crate::tray::update_tray_menu(&app);

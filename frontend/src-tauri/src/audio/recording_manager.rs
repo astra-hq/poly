@@ -468,6 +468,14 @@ impl RecordingManager {
         self.recording_saver.set_meeting_name(name);
     }
 
+    pub fn set_meeting_id(&mut self, id: Option<String>) {
+        self.recording_saver.set_meeting_id(id);
+    }
+
+    pub fn get_meeting_id(&self) -> Option<String> {
+        self.recording_saver.get_meeting_id()
+    }
+
     /// Set safe calendar context for this recording session.
     ///
     /// Provider kind, event id, occurrence times, event title, and metadata

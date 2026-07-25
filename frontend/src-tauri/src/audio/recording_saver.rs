@@ -53,6 +53,7 @@ pub struct RecordingSaver {
     incremental_saver: Option<Arc<AsyncMutex<IncrementalAudioSaver>>>,
     meeting_folder: Option<PathBuf>,
     meeting_name: Option<String>,
+    meeting_id: Option<String>,
     metadata: Option<MeetingMetadata>,
     calendar_context: Option<CalendarRecordingContext>,
     transcript_segments: Arc<Mutex<Vec<TranscriptSegment>>>,
@@ -66,6 +67,7 @@ impl RecordingSaver {
             incremental_saver: None,
             meeting_folder: None,
             meeting_name: None,
+            meeting_id: None,
             metadata: None,
             calendar_context: None,
             transcript_segments: Arc::new(Mutex::new(Vec::new())),
@@ -77,6 +79,16 @@ impl RecordingSaver {
     /// Set the meeting name for this recording session
     pub fn set_meeting_name(&mut self, name: Option<String>) {
         self.meeting_name = name;
+    }
+
+    /// Set the meeting ID for this recording session
+    pub fn set_meeting_id(&mut self, id: Option<String>) {
+        self.meeting_id = id;
+    }
+
+    /// Get the meeting ID for this recording session
+    pub fn get_meeting_id(&self) -> Option<String> {
+        self.meeting_id.clone()
     }
 
     /// Set device information in metadata

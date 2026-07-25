@@ -491,6 +491,20 @@ impl CalendarRecordingScheduler {
                     start_utc
                 );
 
+                let starts_in_minutes = (start_utc - now.as_utc()).num_minutes();
+                if let Some(broadcaster) = crate::websocket_server::broadcaster::get_broadcaster() {
+                    broadcaster.broadcast(
+                        crate::websocket_server::broadcaster::WsMessage::MeetingScheduled(
+                            crate::websocket_server::broadcaster::MeetingScheduledPayload {
+                                meeting_id: event_id.as_str().to_string(),
+                                title: event_title.clone(),
+                                scheduled_at: start_utc.timestamp(),
+                                starts_in_minutes,
+                            }
+                        )
+                    );
+                }
+
                 // Persist dedupe state BEFORE starting recording — prevents
                 // double-start if another tick fires during recording init.
                 {

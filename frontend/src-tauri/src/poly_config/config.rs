@@ -284,6 +284,32 @@ impl Default for PreferencesConfig {
 /// Raw API keys and other secrets are **never** serialized to this file;
 /// they live in the separate `SecretStore`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WebSocketServerConfig {
+    #[serde(default = "default_websocket_port")]
+    pub port: u16,
+
+    #[serde(default = "default_websocket_bind_address")]
+    pub bind_address: String,
+}
+
+const fn default_websocket_port() -> u16 {
+    9876
+}
+
+fn default_websocket_bind_address() -> String {
+    "127.0.0.1".to_string()
+}
+
+impl Default for WebSocketServerConfig {
+    fn default() -> Self {
+        Self {
+            port: default_websocket_port(),
+            bind_address: default_websocket_bind_address(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PolyConfig {
     /// Global list of LLM provider configurations.
     #[serde(default)]
@@ -303,6 +329,9 @@ pub struct PolyConfig {
 
     #[serde(default)]
     pub calendar: CalendarConfig,
+
+    #[serde(default, rename = "websocket_server")]
+    pub websocket_server: WebSocketServerConfig,
 }
 
 impl Default for PolyConfig {
@@ -334,6 +363,7 @@ impl Default for PolyConfig {
             knowledge_graph: KnowledgeGraphSettingsWithoutSecrets::default(),
             preferences: PreferencesConfig::default(),
             calendar: CalendarConfig::default(),
+            websocket_server: WebSocketServerConfig::default(),
         }
     }
 }
